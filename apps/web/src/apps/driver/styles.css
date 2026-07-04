@@ -1,0 +1,415 @@
+.driver-app {
+  min-height: 100vh;
+  background: #f6f8fb;
+  color: #172033;
+  padding: 14px 14px 92px;
+}
+
+.driver-header {
+  align-items: center;
+  background: #172033;
+  border-radius: 8px;
+  color: white;
+  display: flex;
+  justify-content: space-between;
+  padding: 18px;
+}
+
+.driver-header span,
+.driver-card-head span,
+.driver-stop span,
+.driver-metrics span,
+.driver-earnings-hero span {
+  color: #718096;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.driver-header span {
+  color: #a7b1c2;
+}
+
+.driver-header h1 {
+  font-size: 22px;
+  font-weight: 900;
+  margin: 2px 0 0;
+}
+
+.driver-availability,
+.driver-button {
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 16px;
+  font-weight: 900;
+  gap: 8px;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0 18px;
+}
+
+.driver-availability {
+  background: #48556a;
+  color: white;
+  min-width: 126px;
+}
+
+.driver-availability.on,
+.driver-button {
+  background: #1f9d80;
+  color: white;
+}
+
+.driver-button.secondary {
+  background: #172033;
+}
+
+.driver-button.nav {
+  margin-top: 14px;
+  text-decoration: none;
+  width: 100%;
+}
+
+.driver-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.driver-content,
+.driver-page {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.driver-login-card,
+.driver-delivery-card,
+.driver-status-card,
+.driver-list,
+.driver-profile-card,
+.driver-settings-card,
+.driver-earnings-hero {
+  background: white;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(23, 32, 51, 0.08);
+  padding: 16px;
+}
+
+.driver-login-card {
+  margin: 44px auto 0;
+  max-width: 430px;
+}
+
+.driver-login-card h1 {
+  font-size: 28px;
+  font-weight: 950;
+  margin: 12px 0 4px;
+}
+
+.driver-login-card p {
+  color: #667085;
+  margin: 0 0 18px;
+}
+
+.driver-mark,
+.driver-avatar {
+  align-items: center;
+  background: #172033;
+  border-radius: 8px;
+  color: white;
+  display: flex;
+  font-size: 22px;
+  font-weight: 950;
+  height: 54px;
+  justify-content: center;
+  width: 54px;
+}
+
+.driver-login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.driver-login-form label {
+  color: #4b5565;
+  display: grid;
+  font-size: 14px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.driver-login-form input {
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  font-size: 16px;
+  min-height: 52px;
+  padding: 0 14px;
+}
+
+.driver-error,
+.driver-offline,
+.driver-state,
+.driver-empty {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+}
+
+.driver-error {
+  background: #fff1f2;
+  color: #be123c;
+  font-weight: 800;
+}
+
+.driver-offline {
+  background: #fff7ed;
+  color: #9a3412;
+  font-weight: 800;
+}
+
+.driver-state,
+.driver-empty {
+  background: white;
+  border: 1px dashed #dbe3ec;
+  color: #667085;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 160px;
+  text-align: center;
+}
+
+.driver-empty p {
+  color: #172033;
+  font-size: 18px;
+  font-weight: 900;
+  margin: 0;
+}
+
+.driver-empty span {
+  font-size: 14px;
+}
+
+.driver-metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.driver-metrics.stacked {
+  grid-template-columns: 1fr;
+}
+
+.driver-metrics div {
+  background: white;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.driver-metrics strong,
+.driver-earnings-hero strong {
+  display: block;
+  font-size: 24px;
+  font-weight: 950;
+  margin-top: 4px;
+}
+
+.driver-card-head {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+}
+
+.driver-card-head h2 {
+  font-size: 26px;
+  font-weight: 950;
+  margin: 2px 0 0;
+}
+
+.driver-card-head > strong {
+  color: #1f9d80;
+  font-size: 22px;
+}
+
+.driver-stop {
+  border-top: 1px solid #dbe3ec;
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.driver-stop strong {
+  display: block;
+  font-size: 18px;
+}
+
+.driver-stop p {
+  color: #667085;
+  margin: 4px 0;
+}
+
+.driver-stop a,
+.driver-profile-card a {
+  align-items: center;
+  color: #1f9d80;
+  display: inline-flex;
+  font-weight: 900;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.driver-status-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.driver-status-card strong {
+  display: block;
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.driver-status-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.driver-status-grid button {
+  background: #f8fafc;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  color: #172033;
+  font-size: 15px;
+  font-weight: 900;
+  min-height: 50px;
+}
+
+.driver-status-grid button.active {
+  background: #172033;
+  color: white;
+}
+
+.driver-list {
+  display: grid;
+  gap: 10px;
+}
+
+.driver-list h2 {
+  font-size: 18px;
+  font-weight: 950;
+  margin: 0 0 4px;
+}
+
+.driver-list-row {
+  align-items: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  padding: 13px;
+}
+
+.driver-list-row strong,
+.driver-list-row span {
+  display: block;
+}
+
+.driver-list-row span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.driver-earnings-hero {
+  background: #172033;
+  color: white;
+}
+
+.driver-earnings-hero span {
+  color: #a7b1c2;
+}
+
+.driver-profile-card {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+}
+
+.driver-profile-card h2 {
+  font-size: 24px;
+  font-weight: 950;
+  margin: 10px 0 0;
+}
+
+.driver-profile-card p {
+  color: #667085;
+  margin: 3px 0 10px;
+}
+
+.driver-settings-card {
+  display: grid;
+  gap: 14px;
+}
+
+.driver-settings-card > div {
+  display: flex;
+  gap: 10px;
+}
+
+.driver-settings-card strong,
+.driver-settings-card span {
+  display: block;
+}
+
+.driver-settings-card span {
+  color: #667085;
+  font-size: 14px;
+}
+
+.driver-bottom-nav {
+  background: white;
+  border-top: 1px solid #dbe3ec;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  left: 0;
+  padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+  position: fixed;
+  right: 0;
+  z-index: 20;
+}
+
+.driver-bottom-nav button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #667085;
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  font-weight: 900;
+  gap: 3px;
+  min-height: 54px;
+}
+
+.driver-bottom-nav button.active {
+  background: #e8f6f2;
+  color: #1f9d80;
+}
+
+@media (min-width: 760px) {
+  .driver-app {
+    margin: 0 auto;
+    max-width: 560px;
+  }
+}

@@ -1,0 +1,566 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  RESTAURANT_OWNER
+  RESTAURANT_MANAGER
+  KITCHEN_STAFF
+  DRIVER
+  CUSTOMER
+}
+
+enum RestaurantStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum BusinessType {
+  RESTAURANT
+  COFFEE_SHOP
+  BAKERY
+  FOOD_TRUCK
+  CONVENIENCE_STORE
+  GAS_STATION_FOOD_SHOP
+  LIQUOR_STORE
+  OTHER_FOOD_RETAIL
+}
+
+enum BusinessModule {
+  RESTAURANT_ORDERING
+  PICKUP
+  DELIVERY
+  DRIVER_MANAGEMENT
+  LOYALTY
+  COUPONS
+  DELIVERY_ZONES
+  FOOD_CATALOG
+}
+
+enum OrderType {
+  PICKUP
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  PREPARING
+  READY
+  PICKED_UP
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  ARRIVED_AT_RESTAURANT
+  PICKED_UP
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum SubscriptionPlanCode {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum CustomerSegment {
+  NEW_CUSTOMER
+  ACTIVE_CUSTOMER
+  VIP_CUSTOMER
+  AT_RISK_CUSTOMER
+  INACTIVE_CUSTOMER
+}
+
+enum RewardType {
+  FREE_DRINK
+  FREE_APPETIZER
+  DISCOUNT_COUPON
+  FREE_DELIVERY
+}
+
+enum CouponType {
+  FIXED_DISCOUNT
+  PERCENTAGE_DISCOUNT
+  FREE_DELIVERY
+  BOGO_PLACEHOLDER
+}
+
+enum DomainStatus {
+  NOT_CONFIGURED
+  PENDING_VERIFICATION
+  VERIFIED
+  ACTIVE
+  ERROR
+}
+
+enum SslStatus {
+  NOT_CONFIGURED
+  PENDING
+  ACTIVE
+  ERROR
+}
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  passwordHash    String
+  name            String
+  phone           String?
+  role            UserRole
+  restaurantId    String?
+  restaurant      Restaurant?      @relation(fields: [restaurantId], references: [id])
+  staffProfile    RestaurantStaff?
+  customerProfile Customer?
+  driverProfile   Driver?
+  auditLogs       AuditLog[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Restaurant {
+  id                  String                     @id @default(cuid())
+  name                String
+  businessName        String?
+  businessType        BusinessType               @default(RESTAURANT)
+  enabledModules      BusinessModule[]           @default([RESTAURANT_ORDERING, PICKUP, DELIVERY, DRIVER_MANAGEMENT, LOYALTY, COUPONS, DELIVERY_ZONES, FOOD_CATALOG])
+  slug                String                     @unique
+  status              RestaurantStatus           @default(PENDING)
+  description         String?
+  brandingJson        Json?
+  settingsJson        Json?
+  logoUrl             String?
+  phone               String?
+  email               String?
+  address             String?
+  city                String?
+  state               String?
+  zip                 String?
+  timezone            String                     @default("America/Denver")
+  deliveryEnabled     Boolean                    @default(true)
+  pickupEnabled       Boolean                    @default(true)
+  deliveryFeeCents    Int                        @default(399)
+  deliveryZoneJson    Json?
+  loyaltySettingsJson Json?
+  storeHoursJson      Json?
+  users               User[]
+  staff               RestaurantStaff[]
+  customers           Customer[]
+  drivers             Driver[]
+  categories          MenuCategory[]
+  menuItems           MenuItem[]
+  orders              Order[]
+  deliveries          Delivery[]
+  coupons             Coupon[]
+  loyaltyRewards      LoyaltyReward[]
+  locations           RestaurantLocation[]
+  websiteSettings     RestaurantWebsiteSettings?
+  domains             RestaurantDomain[]
+  galleryImages       RestaurantGalleryImage[]
+  socialLinks         RestaurantSocialLink[]
+  subscriptions       TenantSubscription[]
+  auditLogs           AuditLog[]
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+}
+
+model RestaurantStaff {
+  id           String     @id @default(cuid())
+  restaurantId String
+  userId       String     @unique
+  role         UserRole
+  active       Boolean    @default(true)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  user         User       @relation(fields: [userId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Customer {
+  id                 String          @id @default(cuid())
+  restaurantId       String
+  userId             String?         @unique
+  name               String
+  email              String
+  phone              String?
+  defaultAddress     String?
+  notes              String?
+  segment            CustomerSegment @default(NEW_CUSTOMER)
+  birthday           DateTime?
+  favoriteOrdersJson Json?
+  favoriteItemsJson  Json?
+  restaurant         Restaurant      @relation(fields: [restaurantId], references: [id])
+  user               User?           @relation(fields: [userId], references: [id])
+  orders             Order[]
+  loyaltyPoints      LoyaltyPoint[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  @@unique([restaurantId, email])
+}
+
+model Driver {
+  id                 String     @id @default(cuid())
+  restaurantId       String
+  userId             String     @unique
+  available          Boolean    @default(false)
+  currentLat         Float?
+  currentLng         Float?
+  totalEarningsCents Int        @default(0)
+  totalTipsCents     Int        @default(0)
+  restaurant         Restaurant @relation(fields: [restaurantId], references: [id])
+  user               User       @relation(fields: [userId], references: [id])
+  deliveries         Delivery[]
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([id, restaurantId])
+}
+
+model MenuCategory {
+  id           String     @id @default(cuid())
+  restaurantId String
+  name         String
+  sortOrder    Int        @default(0)
+  active       Boolean    @default(true)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  items        MenuItem[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([id, restaurantId])
+}
+
+model MenuItem {
+  id                  String                @id @default(cuid())
+  restaurantId        String
+  categoryId          String
+  name                String
+  description         String?
+  imageUrl            String?
+  priceCents          Int
+  available           Boolean               @default(true)
+  preparationTimeMins Int                   @default(15)
+  featured            Boolean               @default(false)
+  recommended         Boolean               @default(false)
+  isGlutenFree        Boolean               @default(false)
+  isVegetarian        Boolean               @default(false)
+  isVegan             Boolean               @default(false)
+  isSpicy             Boolean               @default(false)
+  isDairyFree         Boolean               @default(false)
+  isNutFree           Boolean               @default(false)
+  restaurant          Restaurant            @relation(fields: [restaurantId], references: [id])
+  category            MenuCategory          @relation(fields: [categoryId], references: [id])
+  options             MenuItemOption[]
+  optionGroups        MenuItemOptionGroup[]
+  orderItems          OrderItem[]
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@unique([id, restaurantId])
+}
+
+model MenuItemOptionGroup {
+  id         String           @id @default(cuid())
+  menuItemId String
+  name       String
+  required   Boolean          @default(false)
+  minSelect  Int              @default(0)
+  maxSelect  Int              @default(1)
+  sortOrder  Int              @default(0)
+  menuItem   MenuItem         @relation(fields: [menuItemId], references: [id])
+  options    MenuItemOption[]
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+}
+
+model MenuItemOption {
+  id            String               @id @default(cuid())
+  menuItemId    String
+  optionGroupId String?
+  name          String
+  priceCents    Int                  @default(0)
+  required      Boolean              @default(false)
+  isDefault     Boolean              @default(false)
+  sortOrder     Int                  @default(0)
+  menuItem      MenuItem             @relation(fields: [menuItemId], references: [id])
+  optionGroup   MenuItemOptionGroup? @relation(fields: [optionGroupId], references: [id])
+}
+
+model Order {
+  id               String               @id @default(cuid())
+  restaurantId     String
+  customerId       String
+  orderNumber      String
+  type             OrderType
+  status           OrderStatus          @default(PENDING)
+  subtotalCents    Int
+  discountCents    Int                  @default(0)
+  couponCode       String?
+  deliveryFeeCents Int                  @default(0)
+  taxCents         Int                  @default(0)
+  tipCents         Int                  @default(0)
+  totalCents       Int
+  deliveryAddress  String?
+  notes            String?
+  restaurant       Restaurant           @relation(fields: [restaurantId], references: [id])
+  customer         Customer             @relation(fields: [customerId], references: [id])
+  items            OrderItem[]
+  statusHistory    OrderStatusHistory[]
+  delivery         Delivery?
+  payment          Payment?
+  loyaltyPoints    LoyaltyPoint[]
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@unique([restaurantId, orderNumber])
+  @@unique([id, restaurantId])
+}
+
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  menuItemId     String
+  name           String
+  quantity       Int
+  unitPriceCents Int
+  optionsJson    Json?
+  order          Order    @relation(fields: [orderId], references: [id])
+  menuItem       MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  changedBy String?
+  order     Order       @relation(fields: [orderId], references: [id])
+  createdAt DateTime    @default(now())
+}
+
+model Delivery {
+  id                String                  @id @default(cuid())
+  restaurantId      String
+  orderId           String                  @unique
+  driverId          String?
+  status            DeliveryStatus          @default(ASSIGNED)
+  baseEarningsCents Int                     @default(0)
+  tipCents          Int                     @default(0)
+  pickupAddress     String
+  dropoffAddress    String
+  restaurant        Restaurant              @relation(fields: [restaurantId], references: [id])
+  order             Order                   @relation(fields: [orderId], references: [id])
+  driver            Driver?                 @relation(fields: [driverId], references: [id])
+  statusHistory     DeliveryStatusHistory[]
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@unique([id, driverId])
+}
+
+model DeliveryStatusHistory {
+  id         String         @id @default(cuid())
+  deliveryId String
+  status     DeliveryStatus
+  note       String?
+  changedBy  String?
+  delivery   Delivery       @relation(fields: [deliveryId], references: [id])
+  createdAt  DateTime       @default(now())
+}
+
+model Payment {
+  id                   String        @id @default(cuid())
+  orderId              String        @unique
+  provider             String        @default("stripe_placeholder")
+  providerPaymentId    String?
+  providerClientSecret String?
+  status               PaymentStatus @default(PENDING)
+  amountCents          Int
+  technologyFeeCents   Int           @default(0)
+  restaurantNetCents   Int
+  driverTipCents       Int           @default(0)
+  failureReason        String?
+  paidAt               DateTime?
+  refundedAt           DateTime?
+  order                Order         @relation(fields: [orderId], references: [id])
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+}
+
+model Coupon {
+  id                      String     @id @default(cuid())
+  restaurantId            String
+  code                    String
+  type                    CouponType @default(FIXED_DISCOUNT)
+  description             String?
+  percentOff              Int?
+  amountOffCents          Int?
+  freeDelivery            Boolean    @default(false)
+  usageLimit              Int?
+  redeemedCount           Int        @default(0)
+  minimumOrderAmountCents Int?
+  active                  Boolean    @default(true)
+  startsAt                DateTime?
+  expiresAt               DateTime?
+  restaurant              Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
+
+  @@unique([restaurantId, code])
+}
+
+model LoyaltyPoint {
+  id           String   @id @default(cuid())
+  restaurantId String
+  customerId   String
+  orderId      String?
+  points       Int
+  reason       String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  order        Order?   @relation(fields: [orderId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+model LoyaltyReward {
+  id             String     @id @default(cuid())
+  restaurantId   String
+  name           String
+  type           RewardType
+  pointsRequired Int
+  active         Boolean    @default(true)
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model RestaurantLocation {
+  id           String     @id @default(cuid())
+  restaurantId String
+  name         String
+  address      String?
+  phone        String?
+  timezone     String     @default("America/Denver")
+  settingsJson Json?
+  active       Boolean    @default(true)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model RestaurantWebsiteSettings {
+  id               String     @id @default(cuid())
+  restaurantId     String     @unique
+  websiteEnabled   Boolean    @default(true)
+  heroTitle        String?
+  heroSubtitle     String?
+  tagline          String?
+  cuisineType      String?
+  heroImageUrl     String?
+  logoUrl          String?
+  brandColor       String     @default("#1f9d80")
+  accentColor      String     @default("#f4b740")
+  aboutTitle       String?
+  aboutStory       String?
+  missionStatement String?
+  ownerStory       String?
+  specialOfferText String?
+  seoTitle         String?
+  seoDescription   String?
+  restaurant       Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+}
+
+model RestaurantDomain {
+  id               String       @id @default(cuid())
+  restaurantId     String
+  defaultSubdomain String
+  customDomain     String?
+  domainStatus     DomainStatus @default(NOT_CONFIGURED)
+  dnsTarget        String       @default("sites.loohar.com")
+  sslStatus        SslStatus    @default(NOT_CONFIGURED)
+  restaurant       Restaurant   @relation(fields: [restaurantId], references: [id])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([restaurantId, defaultSubdomain])
+  @@unique([customDomain])
+}
+
+model RestaurantGalleryImage {
+  id           String     @id @default(cuid())
+  restaurantId String
+  imageUrl     String
+  altText      String?
+  category     String     @default("food")
+  sortOrder    Int        @default(0)
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+}
+
+model RestaurantSocialLink {
+  id           String     @id @default(cuid())
+  restaurantId String
+  platform     String
+  url          String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+}
+
+model SubscriptionPlan {
+  id                String               @id @default(cuid())
+  code              SubscriptionPlanCode @unique
+  name              String
+  monthlyPriceCents Int
+  technologyFeeBps  Int                  @default(0)
+  maxLocations      Int?
+  maxDrivers        Int?
+  featuresJson      Json?
+  subscriptions     TenantSubscription[]
+}
+
+model TenantSubscription {
+  id                 String           @id @default(cuid())
+  restaurantId       String
+  planId             String
+  active             Boolean          @default(true)
+  currentPeriodStart DateTime         @default(now())
+  currentPeriodEnd   DateTime?
+  restaurant         Restaurant       @relation(fields: [restaurantId], references: [id])
+  plan               SubscriptionPlan @relation(fields: [planId], references: [id])
+}
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  restaurantId String?
+  actorUserId  String?
+  action       String
+  entityType   String
+  entityId     String?
+  metadataJson Json?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id])
+  actor        User?       @relation(fields: [actorUserId], references: [id])
+  createdAt    DateTime    @default(now())
+}
