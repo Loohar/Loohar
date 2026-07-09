@@ -106,6 +106,7 @@ if (liveMode) {
   assertNoLocalUrls("Production tenant host no-localhost URLs", tenantHostSite);
   await requestJson("Production upload endpoint rejects anonymous", `${apiOrigin}/api/uploads/gallery`, { method: "POST", body: JSON.stringify({}) }, (response) => response.status === 401);
   await requestJson("Production CORS allows Loohar app origin", `${apiOrigin}/health`, { headers: { Origin: appOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === appOrigin);
+  await requestJson("Production CORS allows tenant subdomain origin", `${apiOrigin}/health`, { headers: { Origin: tenantSiteOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === tenantSiteOrigin);
   await requestJson("Production CORS disallows unexpected origin", `${apiOrigin}/health`, { headers: { Origin: "https://unexpected.example" } }, (response) => response.status >= 400 || response.headers.get("access-control-allow-origin") !== "https://unexpected.example");
 
   const email = process.env.PRODUCTION_SMOKE_EMAIL;
@@ -137,6 +138,7 @@ if (liveMode) {
   skip("Production driver QR route", "Requires live driver session after deployment");
   skip("Production forgot password generic response", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
   skip("Production CORS allows Loohar app origin", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production CORS allows tenant subdomain origin", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
   skip("Production CORS disallows unexpected origin", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
 }
 

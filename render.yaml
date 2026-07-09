@@ -1,0 +1,70 @@
+services:
+  - type: web
+    name: loohar-api
+    runtime: node
+    rootDir: apps/api
+    plan: starter
+    branch: main
+    buildCommand: npm install && npm run prisma:generate
+    startCommand: npm run start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: REFRESH_TOKEN_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: loohar-uploads
+      - key: APP_URL
+        value: https://app.loohar.com
+      - key: ADMIN_URL
+        value: https://admin.loohar.com
+      - key: API_URL
+        value: https://api.loohar.com
+      - key: PLATFORM_URL
+        value: https://loohar.com
+      - key: DRIVER_APP_URL
+        value: https://driver.loohar.com
+      - key: TENANT_ROOT_DOMAIN
+        value: loohar.com
+      - key: PUBLIC_SITE_FALLBACK_URL
+        value: https://sites.loohar.com
+      - key: CORS_ORIGINS
+        value: https://loohar.com,https://www.loohar.com,https://admin.loohar.com,https://app.loohar.com,https://driver.loohar.com,https://sites.loohar.com
+      - key: ALLOW_LOCAL_CORS
+        value: "false"
+      - key: ALLOW_TENANT_SUBDOMAIN_CORS
+        value: "true"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: Loohar Security Team <noreply@loohar.com>
+      - key: EMAIL_REPLY_TO
+        value: support@loohar.com
+      - key: EMAIL_LOGO_URL
+        value: https://loohar.com/logo.png
+      - key: RESET_PASSWORD_EXPIRES_MINUTES
+        value: "30"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false

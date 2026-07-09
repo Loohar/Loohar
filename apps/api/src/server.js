@@ -19,7 +19,7 @@ import uploadRoutes from "./routes/uploads.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
-import { productionOriginAllowlist } from "./config/urls.js";
+import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -32,7 +32,9 @@ if (isProduction && configuredCorsOrigins.includes("*")) {
   throw new Error("Wildcard CORS is not allowed in production. Set CORS_ORIGINS to explicit Loohar domains.");
 }
 const localDevHosts = new Set(["localhost", ["127", "0", "0", "1"].join("."), "::1"]);
+const reservedCorsSubdomains = new Set(["admin", "api", "app", "driver", "sites", "www"]);
 const allowLocalCors = !isProduction || process.env.ALLOW_LOCAL_CORS === "true";
+const allowTenantSubdomainCors = process.env.ALLOW_TENANT_SUBDOMAIN_CORS === "true";
 function isLocalDevOrigin(origin = "") {
   try {
     const url = new URL(origin);
@@ -41,9 +43,21 @@ function isLocalDevOrigin(origin = "") {
     return false;
   }
 }
+function isTenantSubdomainOrigin(origin = "") {
+  if (!allowTenantSubdomainCors) return false;
+  try {
+    const url = new URL(origin);
+    const rootDomain = tenantRootDomain();
+    if (url.protocol !== "https:" || !url.hostname.endsWith(`.${rootDomain}`)) return false;
+    const subdomain = url.hostname.slice(0, -(rootDomain.length + 1));
+    return Boolean(subdomain) && !subdomain.includes(".") && !reservedCorsSubdomains.has(subdomain);
+  } catch {
+    return false;
+  }
+}
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || configuredCorsOrigins.includes(origin) || (!isProduction && configuredCorsOrigins.includes("*")) || (allowLocalCors && isLocalDevOrigin(origin))) {
+    if (!origin || configuredCorsOrigins.includes(origin) || isTenantSubdomainOrigin(origin) || (!isProduction && configuredCorsOrigins.includes("*")) || (allowLocalCors && isLocalDevOrigin(origin))) {
       callback(null, true);
       return;
     }
