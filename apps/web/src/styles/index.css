@@ -55,8 +55,50 @@ textarea {
     @apply grid gap-3 md:grid-cols-3;
   }
 
+  .app-header {
+    @apply border-b border-line bg-white;
+  }
+
+  .app-header-inner {
+    @apply mx-auto flex w-full max-w-[1800px] flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-4 lg:px-6;
+  }
+
+  .app-brand {
+    @apply flex min-w-0 shrink-0 items-center gap-3 md:max-w-[300px] lg:max-w-[360px] xl:max-w-[430px];
+  }
+
+  .app-brand-icon {
+    @apply grid h-11 w-11 shrink-0 place-items-center rounded-md bg-ink text-white;
+  }
+
+  .app-brand-copy {
+    @apply min-w-0;
+  }
+
+  .app-menu-toggle {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-black text-ink md:hidden;
+  }
+
+  .app-nav {
+    @apply hidden min-w-0 flex-col gap-2 md:flex md:flex-1 md:flex-row md:flex-nowrap md:items-center md:justify-start md:overflow-x-auto md:pb-1;
+  }
+
+  .app-nav.open {
+    @apply flex w-full;
+  }
+
+  .app-nav .nav-tab:first-child {
+    margin-left: auto;
+  }
+
+  @media (max-width: 767px) {
+    .app-nav .nav-tab:first-child {
+      margin-left: 0;
+    }
+  }
+
   .nav-tab {
-    @apply inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-bold text-slate-600 transition hover:border-slate-400 hover:text-ink;
+    @apply inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-line bg-white px-3 text-sm font-bold text-slate-600 transition hover:border-slate-400 hover:text-ink;
   }
 
   .nav-tab.active {
@@ -77,6 +119,35 @@ textarea {
 
   .search {
     @apply hidden min-h-10 items-center gap-2 rounded-md border border-line bg-slate-50 px-3 text-sm font-semibold text-slate-400 md:flex;
+  }
+
+  .food-business-toolbar {
+    @apply mb-4 flex flex-col justify-between gap-3 lg:flex-row lg:items-center;
+  }
+
+  .food-business-toolbar-controls {
+    @apply flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto lg:flex-nowrap lg:justify-end;
+  }
+
+  .food-business-search,
+  .food-business-count {
+    @apply flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-500;
+  }
+
+  .food-business-search {
+    @apply w-full sm:w-64 lg:w-72;
+  }
+
+  .food-business-search input {
+    @apply min-w-0 flex-1 bg-transparent text-sm font-semibold text-ink outline-none;
+  }
+
+  .food-business-filter {
+    @apply w-full sm:w-56 lg:w-60;
+  }
+
+  .food-business-count {
+    @apply w-full shrink-0 whitespace-nowrap sm:w-auto;
   }
 
   .table {
@@ -143,6 +214,26 @@ textarea {
     @apply h-28 w-28 shrink-0 rounded-md object-cover;
   }
 
+  .order-layout {
+    @apply grid gap-5 xl:grid-cols-[minmax(0,1fr)_390px] xl:items-start;
+  }
+
+  .order-cart-panel {
+    @apply h-fit xl:sticky xl:top-24 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto;
+  }
+
+  .mobile-cart-summary {
+    @apply fixed inset-x-0 bottom-0 z-40 flex items-center justify-between gap-3 border-t border-line bg-white px-4 py-3 shadow-2xl xl:hidden;
+  }
+
+  .mobile-cart-summary div {
+    @apply grid gap-1 text-sm text-slate-500;
+  }
+
+  .mobile-cart-summary strong {
+    @apply text-base text-ink;
+  }
+
   .storefront {
     @apply flex flex-col justify-between gap-5 rounded-md border border-line bg-white p-5 shadow-soft md:flex-row md:items-end;
   }
@@ -153,6 +244,10 @@ textarea {
 
   .storefront p:last-child {
     @apply mt-2 max-w-2xl text-slate-500;
+  }
+
+  .loohar-hero {
+    @apply bg-cover bg-center;
   }
 
   .summary-line {
@@ -180,6 +275,50 @@ textarea {
     @apply mt-1 text-sm;
   }
 
+  .kds-shell {
+    @apply space-y-6;
+  }
+
+  .kds-grid {
+    @apply grid gap-4 lg:grid-cols-2;
+  }
+
+  .kds-card {
+    @apply rounded-md border border-line bg-white p-5 shadow-soft;
+  }
+
+  .kds-card.new {
+    @apply border-rose-200;
+  }
+
+  .kds-card.ready {
+    @apply border-amber-300;
+  }
+
+  .kds-card h3 {
+    @apply mt-1 text-2xl font-black text-ink;
+  }
+
+  .kds-card p {
+    @apply text-sm text-slate-500;
+  }
+
+  .kds-item {
+    @apply rounded-md bg-slate-50 p-3;
+  }
+
+  .kds-item strong {
+    @apply text-base text-ink;
+  }
+
+  .kds-action {
+    @apply inline-flex min-h-14 items-center justify-center rounded-md border border-line bg-white px-4 py-3 text-center text-sm font-black text-slate-700 transition hover:border-mint hover:text-mint;
+  }
+
+  .kds-action.active {
+    @apply border-mint bg-mint text-white;
+  }
+
   .empty-state {
     @apply rounded-md border border-dashed border-line bg-slate-50 p-4 text-center;
   }
@@ -194,6 +333,14 @@ textarea {
 
   .site-shell {
     @apply min-h-screen bg-[#fbfbf8] px-4 py-5 text-slate-700;
+    font-family: var(--body-font, Inter, ui-sans-serif, system-ui, sans-serif);
+  }
+
+  .site-shell h1,
+  .site-shell h2,
+  .site-shell h3,
+  .site-shell .panel-title {
+    font-family: var(--heading-font, inherit);
   }
 
   .site-shell.premium {
@@ -242,6 +389,15 @@ textarea {
     background: var(--brand, #1f9d80);
   }
 
+  .site-logo-img {
+    @apply h-14 w-14 rounded-md object-cover shadow-soft;
+  }
+
+  .site-brand-mark {
+    @apply grid h-11 w-11 place-items-center rounded-md text-lg font-black text-white;
+    background: var(--brand, #1f9d80);
+  }
+
   .site-menu-toggle {
     @apply inline-flex min-h-11 items-center justify-center rounded-md border border-line bg-white px-4 py-2 text-sm font-black text-ink md:hidden;
   }
@@ -270,6 +426,7 @@ textarea {
 
   .lux-hero {
     @apply mt-5 min-h-[560px] rounded-md bg-cover bg-center p-5 shadow-soft md:p-10;
+    background: linear-gradient(90deg, rgba(8,18,16,.92), rgba(8,18,16,.55)), var(--brand, #1f9d80);
   }
 
   .lux-hero-content {
@@ -358,6 +515,14 @@ textarea {
     background: var(--accent, #c9a45c);
   }
 
+  .lux-badge.available {
+    @apply bg-emerald-100 text-emerald-700;
+  }
+
+  .lux-badge.unavailable {
+    @apply bg-rose-100 text-rose-700;
+  }
+
   .diet-badge {
     @apply bg-slate-100 text-slate-600;
   }
@@ -440,6 +605,98 @@ textarea {
     @apply grid min-h-56 place-items-center rounded-md border border-line bg-slate-100 p-4 text-center text-sm font-bold text-slate-500;
   }
 
+  .map-frame {
+    @apply h-72 w-full rounded-md border border-line bg-slate-100;
+  }
+
+  .public-order-page {
+    @apply pb-20 xl:pb-0;
+  }
+
+  .public-order-hero {
+    @apply mb-5 grid gap-4 rounded-md border border-line bg-white p-4 shadow-soft md:grid-cols-[260px_1fr] md:items-center;
+  }
+
+  .public-order-hero img {
+    @apply h-56 w-full rounded-md object-cover md:h-full;
+  }
+
+  .public-order-hero h3 {
+    @apply mt-2 text-3xl font-black text-ink;
+  }
+
+  .public-order-hero p {
+    @apply mt-2 text-slate-500;
+  }
+
+  .discover-shell {
+    @apply min-h-screen bg-[#f7f8fb] text-slate-700;
+  }
+
+  .discover-hero {
+    @apply bg-ink px-4 py-6 text-white;
+  }
+
+  .discover-hero .site-brand {
+    @apply mx-auto max-w-7xl text-white;
+  }
+
+  .discover-copy {
+    @apply mx-auto mt-10 max-w-7xl pb-8;
+  }
+
+  .discover-copy h1 {
+    @apply mt-3 max-w-4xl text-4xl font-black leading-tight md:text-6xl;
+  }
+
+  .discover-copy p:last-child {
+    @apply mt-4 max-w-2xl text-lg leading-8 text-white/70;
+  }
+
+  .discover-main {
+    @apply mx-auto max-w-7xl px-4 py-6;
+  }
+
+  .discover-toolbar {
+    @apply -mt-16 relative z-10;
+  }
+
+  .discover-search-grid {
+    @apply grid gap-3 md:grid-cols-4;
+  }
+
+  .discover-actions {
+    @apply mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end;
+  }
+
+  .discover-grid {
+    @apply grid gap-4 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .discover-card {
+    @apply overflow-hidden rounded-md border border-line bg-white shadow-soft;
+  }
+
+  .discover-card > img {
+    @apply h-52 w-full object-cover;
+  }
+
+  .discover-card-body {
+    @apply p-4;
+  }
+
+  .discover-card h2 {
+    @apply mt-3 text-2xl font-black text-ink;
+  }
+
+  .discover-card p {
+    @apply mt-2 text-sm leading-6 text-slate-500;
+  }
+
+  .discover-address {
+    @apply font-semibold text-slate-600;
+  }
+
   .modal-backdrop {
     @apply fixed inset-0 z-50 grid place-items-center bg-black/50 p-4;
   }
@@ -477,7 +734,11 @@ textarea {
   }
 
   .site-image {
-    @apply grid min-h-52 place-items-center rounded-md border border-dashed border-line bg-slate-100 p-4 text-center text-sm font-bold text-slate-400;
+    @apply grid min-h-52 place-items-center overflow-hidden rounded-md border border-dashed border-line bg-slate-100 p-4 text-center text-sm font-bold text-slate-400;
+  }
+
+  .site-image img {
+    @apply h-full min-h-52 w-full rounded-md object-cover;
   }
 
   .site-grid {
@@ -502,5 +763,42 @@ textarea {
 
   .site-footer {
     @apply mt-8 flex flex-col gap-2 border-t border-line py-5 text-sm font-semibold text-slate-500 md:flex-row md:items-center md:justify-between;
+  }
+
+  .tip-selector {
+    @apply rounded-md border border-line bg-slate-50 p-3;
+  }
+
+  .tip-button {
+    @apply inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white px-3 py-2 text-sm font-black text-slate-700 transition hover:border-mint hover:text-mint;
+  }
+
+  .tip-button.active {
+    @apply border-mint bg-mint text-white;
+  }
+
+  .tracking-shell {
+    @apply min-h-screen bg-[#f7f8fb] px-4 py-6 text-slate-700;
+  }
+
+  .tracking-brand,
+  .tracking-card {
+    @apply mx-auto max-w-5xl;
+  }
+
+  .tracking-card {
+    @apply mt-6 rounded-md border border-line bg-white p-5 shadow-soft;
+  }
+
+  .tracking-status {
+    @apply rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .tracking-status p {
+    @apply mt-3 text-lg font-black text-ink;
+  }
+
+  .tracking-status a {
+    @apply mt-2 inline-flex text-sm font-bold text-mint;
   }
 }

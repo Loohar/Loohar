@@ -1,7 +1,23 @@
 import jwt from "jsonwebtoken";
 
-const accessSecret = () => process.env.JWT_SECRET || "dev-access-secret";
-const refreshSecret = () => process.env.JWT_REFRESH_SECRET || "dev-refresh-secret";
+function requiredSecret(name, fallback) {
+  const value = process.env[name];
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`${name} must be set in production`);
+  }
+  return fallback;
+}
+
+const accessSecret = () => requiredSecret("JWT_SECRET", "dev-access-secret");
+const refreshSecret = () => {
+  const value = process.env.REFRESH_TOKEN_SECRET || process.env.JWT_REFRESH_SECRET;
+  if (value) return value;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("REFRESH_TOKEN_SECRET must be set in production");
+  }
+  return "dev-refresh-secret";
+};
 
 export function signAccessToken(user) {
   return jwt.sign(
@@ -22,4 +38,3 @@ export function verifyAccessToken(token) {
 export function verifyRefreshToken(token) {
   return jwt.verify(token, refreshSecret());
 }
-

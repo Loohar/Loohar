@@ -164,6 +164,12 @@ export const demoRestaurant = {
   slug: "demo-bistro",
   description: "Modern American bistro cooking with seasonal ingredients, elegant comfort food, and restaurant-owned pickup and delivery.",
   address: "100 Main St, Denver, CO",
+  city: "Denver",
+  state: "CO",
+  zip: "80202",
+  latitude: 39.752,
+  longitude: -104.998,
+  deliveryRadiusMiles: 6,
   phone: "555-0101",
   email: "hello@demobistro.local",
   deliveryFeeCents: 399,
@@ -243,7 +249,8 @@ export const demoGrowth = {
 export const demoRestaurants = [
   { id: "res-1", name: "Demo Bistro", businessName: "Demo Bistro", businessType: "RESTAURANT", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"], slug: "demo-bistro", status: "ACTIVE", _count: { orders: 128, drivers: 6, customers: 842 }, subscriptions: [{ plan: { name: "Professional" } }] },
   { id: "res-2", name: "Northside Tacos", businessName: "Northside Tacos", businessType: "RESTAURANT", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "DELIVERY_ZONES"], slug: "northside-tacos", status: "ACTIVE", _count: { orders: 76, drivers: 3, customers: 410 }, subscriptions: [{ plan: { name: "Starter" } }] },
-  { id: "res-loohar", name: "Loohar Restaurant", businessName: "Loohar Restaurant", businessType: "RESTAURANT", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"], slug: "loohar-restaurant", status: "ACTIVE", email: "subash.sunar@loohar.com", phone: "3032462749", address: "5371 Laredo Street", city: "Denver", state: "CO", zip: "80239", _count: { orders: 24, drivers: 1, customers: 86 }, subscriptions: [{ plan: { name: "Professional", code: "PROFESSIONAL" } }] },
+  { id: "res-loohar", name: "Loohar Restaurant", businessName: "Loohar Restaurant", businessType: "RESTAURANT", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"], slug: "loohar-restaurant", status: "ACTIVE", email: "hello@loohar.com", phone: "3032462749", address: "5371 Laredo Street", city: "Denver", state: "CO", zip: "80239", _count: { orders: 24, drivers: 1, customers: 86 }, subscriptions: [{ plan: { name: "Professional", code: "PROFESSIONAL" } }] },
+  { id: "res-archie", name: "Archie's Lodge", businessName: "Archie's Lodge", businessType: "RESTAURANT", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"], slug: "archie-s-lodge", status: "ACTIVE", email: "hello@archieslodge.local", phone: "555-0707", address: "1600 Wazee St", city: "Denver", state: "CO", zip: "80202", _count: { orders: 31, drivers: 2, customers: 118 }, subscriptions: [{ plan: { name: "Professional" } }] },
   { id: "res-3", name: "Morning Pour", businessName: "Morning Pour", businessType: "COFFEE_SHOP", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "LOYALTY", "FOOD_CATALOG"], slug: "morning-pour", status: "ACTIVE", _count: { orders: 44, drivers: 0, customers: 220 }, subscriptions: [{ plan: { name: "Starter" } }] },
   { id: "res-4", name: "Sweet Rise Bakery", businessName: "Sweet Rise Bakery", businessType: "BAKERY", enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "LOYALTY", "FOOD_CATALOG"], slug: "sweet-rise-bakery", status: "ACTIVE", _count: { orders: 38, drivers: 0, customers: 180 }, subscriptions: [{ plan: { name: "Starter" } }] },
   { id: "res-5", name: "Mile High Fuel Market", businessName: "Mile High Fuel Market", businessType: "GAS_STATION_FOOD_SHOP", enabledModules: ["FOOD_CATALOG", "PICKUP"], slug: "mile-high-fuel-market", status: "ACTIVE", _count: { orders: 0, drivers: 0, customers: 35 }, subscriptions: [{ plan: { name: "Starter" } }] },
@@ -273,7 +280,11 @@ export const demoDomain = {
   defaultSubdomain: "demo-bistro",
   customDomain: null,
   domainStatus: "NOT_CONFIGURED",
-  dnsTarget: "sites.loohar.com",
+  primaryDomain: "demo-bistro.loohar.com",
+  canonicalDomain: "demo-bistro.loohar.com",
+  defaultUrl: "https://demo-bistro.loohar.com",
+  canonicalUrl: "https://demo-bistro.loohar.com",
+  dnsTarget: "cname.vercel-dns.com",
   sslStatus: "NOT_CONFIGURED"
 };
 
@@ -365,10 +376,25 @@ const looharCategories = [
   ] }
 ];
 
+const archieCategories = [
+  { id: "archie-starters", name: "Starters", items: [
+    item({ id: "archie-pretzel", name: "Warm Lodge Pretzel", description: "Soft pretzel, beer cheese, mustard, smoked salt.", priceCents: 995, image: img("photo-1600891964599-f61ba0e24092"), featured: true, badges: ["Vegetarian"], optionGroups: [demoModifierGroups.sauces, demoModifierGroups.dietary] }),
+    item({ id: "archie-wings", name: "Maple Chili Wings", description: "Crisp wings with maple chili glaze and ranch.", priceCents: 1395, image: img("photo-1567620832903-9fc6debc209f"), recommended: true, badges: ["Spicy"], optionGroups: [demoModifierGroups.sauces, demoModifierGroups.spice] })
+  ] },
+  { id: "archie-mains", name: "Lodge Mains", items: [
+    item({ id: "archie-burger", name: "Lodge Burger", description: "Double patty, cheddar, grilled onion, pickle, lodge sauce.", priceCents: 1695, image: img("photo-1568901346375-23c9450c58cd"), featured: true, optionGroups: [demoModifierGroups.veggies, demoModifierGroups.side, demoModifierGroups.sauces] }),
+    item({ id: "archie-pot-pie", name: "Chicken Pot Pie", description: "Roasted chicken, vegetables, flaky herb crust.", priceCents: 1895, image: img("photo-1543352634-a1c51d9f1fa7"), recommended: true, optionGroups: [demoModifierGroups.dietary] })
+  ] },
+  { id: "archie-desserts", name: "Desserts", items: [
+    item({ id: "archie-cobbler", name: "Skillet Berry Cobbler", description: "Warm berry cobbler, oat crumble, vanilla cream.", priceCents: 895, image: img("photo-1488477181946-6428a0291777"), featured: true, badges: ["Vegetarian"], optionGroups: compactOptionGroups })
+  ] }
+];
+
 const tenantSiteProfiles = {
   "demo-bistro": { categories: demoCategories, tagline: "Seasonal American Bistro", cuisineType: "Modern American", heroTitle: "Seasonal Bistro Dining, Delivered Direct", heroSubtitle: demoWebsiteSettings.heroSubtitle, heroImageUrl: demoWebsiteSettings.heroImageUrl, brandColor: "#10231f", accentColor: "#c9a45c", offer: "Use BISTRO10 for 10% off direct ordering.", gallery: demoGallery },
   "northside-tacos": { categories: tacoCategories, tagline: "Mexican Street Tacos", cuisineType: "Tacos & Burritos", heroTitle: "Street Tacos Without Marketplace Fees", heroSubtitle: "Fast tacos, burritos, bowls, pickup, and local delivery from the Northside kitchen.", heroImageUrl: img("photo-1565299585323-38d6b0865b47", 1800), logoUrl: img("photo-1551504734-5ee1c4a1479b", 500), brandColor: "#7c2d12", accentColor: "#facc15", offer: "Use TACO10 for direct-order savings." },
   "loohar-restaurant": { categories: looharCategories, tagline: "Direct Denver Ordering", cuisineType: "Local Restaurant", heroTitle: "Loohar Restaurant Direct Ordering", heroSubtitle: "Pickup and delivery from Loohar Restaurant at 5371 Laredo Street, Denver, CO 80239.", heroImageUrl: img("photo-1546069901-ba9599a7e63c", 1800), logoUrl: img("photo-1528735602780-2552fd46c7af", 500), brandColor: "#111827", accentColor: "#f59e0b", offer: "Use LOOHAR10 for direct ordering savings." },
+  "archie-s-lodge": { categories: archieCategories, tagline: "Comfort Food Lodge", cuisineType: "American Comfort Food", heroTitle: "Lodge Comfort Food, Ordered Direct", heroSubtitle: "Cozy starters, burgers, mains, desserts, pickup, and restaurant-owned delivery from Archie's Lodge.", heroImageUrl: img("photo-1550966871-3ed3cdb5ed0c", 1800), logoUrl: img("photo-1568901346375-23c9450c58cd", 500), brandColor: "#334155", accentColor: "#f97316", offer: "Use LODGE10 for direct ordering savings." },
   "morning-pour": { categories: coffeeCategories, tagline: "Neighborhood Coffee & Espresso Bar", cuisineType: "Coffee Shop", heroTitle: "Coffee, Espresso, and Breakfast Pickup", heroSubtitle: "A warm neighborhood coffee bar for espresso, pastries, breakfast sandwiches, and quick pickup.", heroImageUrl: img("photo-1495474472287-4d71bcdd2085", 1800), logoUrl: img("photo-1509042239860-f550ce710b93", 500), brandColor: "#4b2e1f", accentColor: "#d6a15f", offer: "Earn points on every morning pickup." },
   "sweet-rise-bakery": { categories: bakeryCategories, tagline: "Fresh Bakery & Custom Pastries", cuisineType: "Bakery", heroTitle: "Breads, Cakes, and Pastries Baked Daily", heroSubtitle: "Fresh loaves, cakes, cookies, breakfast pastries, and catering trays from a neighborhood bakery.", heroImageUrl: img("photo-1517433670267-08bbd4be890f", 1800), logoUrl: img("photo-1464349095431-e9a21285b5f3", 500), brandColor: "#831843", accentColor: "#f9a8d4", offer: "BAKERY10 for first-time direct orders." },
   "mile-high-fuel-market": { categories: marketCategories, tagline: "Fuel, Snacks & Fresh Food Market", cuisineType: "Gas Station Food Market", heroTitle: "Hot Food and Market Essentials On the Go", heroSubtitle: "Quick pickup for hot food, coffee, snacks, drinks, and grocery essentials.", heroImageUrl: img("photo-1571091718767-18b5b1457add", 1800), logoUrl: img("photo-1542838132-92c53300491e", 500), brandColor: "#0f766e", accentColor: "#f97316", offer: "Fast pickup for road-trip essentials." },

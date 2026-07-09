@@ -6,7 +6,10 @@ const prisma = new PrismaClient();
 
 const passwords = {
   admin: "Admin123!",
+  looharSuperAdmin: "Welcome12!",
+  looharOwner: "Welcome2026!",
   owner: "Owner123!",
+  staff: "Staff123!",
   driver: "Driver123!",
   customer: "Customer123!"
 };
@@ -15,7 +18,27 @@ async function hash(password) {
   return bcrypt.hash(password, 12);
 }
 
+async function hasPermanentPassword(email) {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true }
+  });
+  if (!user) return false;
+  return Boolean(user.passwordChangedAt || (!user.forcePasswordChange && !user.temporaryPassword));
+}
+
 const demoImage = (id) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=1200&q=80`;
+const restaurantLocationDefaults = {
+  "demo-bistro": { city: "Denver", state: "CO", zip: "80202", latitude: 39.752, longitude: -104.998, deliveryRadiusMiles: 6 },
+  "northside-tacos": { city: "Denver", state: "CO", zip: "80211", latitude: 39.761, longitude: -105.012, deliveryRadiusMiles: 5 },
+  "loohar-restaurant": { city: "Denver", state: "CO", zip: "80239", latitude: 39.792, longitude: -104.775, deliveryRadiusMiles: 7 },
+  "archie-s-lodge": { city: "Denver", state: "CO", zip: "80202", latitude: 39.753, longitude: -104.999, deliveryRadiusMiles: 6 },
+  "morning-pour": { city: "Denver", state: "CO", zip: "80205", latitude: 39.759, longitude: -104.985, deliveryRadiusMiles: 2 },
+  "sweet-rise-bakery": { city: "Denver", state: "CO", zip: "80203", latitude: 39.736, longitude: -104.984, deliveryRadiusMiles: 2 },
+  "rolling-dumpling-truck": { city: "Denver", state: "CO", zip: "80202", latitude: 39.751, longitude: -104.995, deliveryRadiusMiles: 1 },
+  "mile-high-fuel-market": { city: "Denver", state: "CO", zip: "80216", latitude: 39.779, longitude: -104.972, deliveryRadiusMiles: 3 },
+  "cork-bottle": { city: "Denver", state: "CO", zip: "80206", latitude: 39.722, longitude: -104.956, deliveryRadiusMiles: 5 }
+};
 
 function seedOptionGroups(itemId) {
   return [
@@ -89,25 +112,78 @@ async function seedPlans() {
   ]);
 }
 
-async function seedRestaurant({ restaurant, owner, drivers, customers, categories, couponCode, planId }) {
-  const savedRestaurant = await prisma.restaurant.upsert({
-    where: { slug: restaurant.slug },
-    update: restaurant,
+function permissionsForRole(role) {
+  const permissions = {
+    RESTAURANT_MANAGER: ["orders", "kitchen", "employees", "drivers", "inventory", "reports", "settings"],
+    CASHIER: ["orders", "receipts", "customers"],
+    KITCHEN_STAFF: ["kitchen", "orders"],
+    RESTAURANT_OWNER: ["all"]
+  };
+  return permissions[role] || ["orders"];
+}
+
+async function seedEmployee({ restaurant, email, name, phone, role }) {
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { name, phone, restaurantId: restaurant.id, role, status: "ACTIVE" },
     create: {
-      ...restaurant,
+      email,
+      name,
+      phone,
+      passwordHash: await hash(passwords.staff),
+      role,
+      restaurantId: restaurant.id,
+      status: "ACTIVE"
+    }
+  });
+  await prisma.restaurantStaff.upsert({
+    where: { userId: user.id },
+    update: { restaurantId: restaurant.id, role, active: true, permissionsJson: permissionsForRole(role) },
+    create: { userId: user.id, restaurantId: restaurant.id, role, active: true, permissionsJson: permissionsForRole(role) }
+  });
+  return user;
+}
+
+async function seedRestaurant({ restaurant, owner, drivers, customers, categories, couponCode, planId }) {
+  const restaurantRecord = {
+    deliveryRadiusMiles: 5,
+    ...(restaurantLocationDefaults[restaurant.slug] || {}),
+    ...restaurant
+  };
+  const savedRestaurant = await prisma.restaurant.upsert({
+    where: { slug: restaurantRecord.slug },
+    update: restaurantRecord,
+    create: {
+      ...restaurantRecord,
       subscriptions: { create: { planId } }
     }
   });
 
+  const ownerHasPermanentPassword = await hasPermanentPassword(owner.email);
+  const ownerIsTemporary = Boolean(owner.forcePasswordChange) && !ownerHasPermanentPassword;
   const ownerUser = await prisma.user.upsert({
     where: { email: owner.email },
-    update: { name: owner.name, restaurantId: savedRestaurant.id, role: "RESTAURANT_OWNER" },
+    update: {
+      name: owner.name,
+      restaurantId: savedRestaurant.id,
+      role: "RESTAURANT_OWNER",
+      status: "ACTIVE",
+      ...(ownerHasPermanentPassword ? {} : {
+        forcePasswordChange: Boolean(owner.forcePasswordChange),
+        temporaryPassword: ownerIsTemporary,
+        ...(owner.password ? { passwordHash: await hash(owner.password) } : {})
+      })
+    },
     create: {
       email: owner.email,
       name: owner.name,
-      passwordHash: await hash(passwords.owner),
+      passwordHash: await hash(owner.password || passwords.owner),
       role: "RESTAURANT_OWNER",
-      restaurantId: savedRestaurant.id
+      restaurantId: savedRestaurant.id,
+      status: "ACTIVE",
+      forcePasswordChange: Boolean(owner.forcePasswordChange),
+      temporaryPassword: Boolean(owner.forcePasswordChange),
+      passwordChangedAt: owner.forcePasswordChange ? null : new Date()
     }
   });
   await prisma.restaurantStaff.upsert({
@@ -236,6 +312,47 @@ async function seedRestaurant({ restaurant, owner, drivers, customers, categorie
     create: { id: `${savedRestaurant.slug}-main-location`, restaurantId: savedRestaurant.id, name: `${savedRestaurant.name} Main`, address: savedRestaurant.address, phone: savedRestaurant.phone, timezone: savedRestaurant.timezone }
   });
 
+  await prisma.restaurantPrinterSettings.upsert({
+    where: { restaurantId: savedRestaurant.id },
+    update: { kitchenPrinterName: "Kitchen Printer", kitchenPrinterEnabled: true, frontCounterPrinterName: "Front Counter", frontCounterPrinterEnabled: true, provider: "browser_print" },
+    create: { restaurantId: savedRestaurant.id, kitchenPrinterName: "Kitchen Printer", kitchenPrinterEnabled: true, frontCounterPrinterName: "Front Counter", frontCounterPrinterEnabled: true, provider: "browser_print" }
+  });
+
+  await prisma.restaurantNotificationSettings.upsert({
+    where: { restaurantId: savedRestaurant.id },
+    update: { smsEnabled: false, emailEnabled: true, orderConfirmationEmail: true, receiptEmail: true, welcomeEmail: true },
+    create: { restaurantId: savedRestaurant.id, smsEnabled: false, emailEnabled: true, orderConfirmationEmail: true, receiptEmail: true, welcomeEmail: true }
+  });
+
+  if (savedRestaurant.deliveryEnabled) {
+    const zones = [
+      { name: "Zone A", radiusMiles: 3, deliveryFeeCents: savedRestaurant.deliveryFeeCents || 399, minimumOrderCents: 1500 },
+      { name: "Zone B", radiusMiles: 6, deliveryFeeCents: (savedRestaurant.deliveryFeeCents || 399) + 200, minimumOrderCents: 2500 },
+      { name: "Zone C", radiusMiles: 10, deliveryFeeCents: (savedRestaurant.deliveryFeeCents || 399) + 400, minimumOrderCents: 3500 }
+    ];
+    for (const zone of zones) {
+      await prisma.deliveryZone.upsert({
+        where: { restaurantId_name: { restaurantId: savedRestaurant.id, name: zone.name } },
+        update: { ...zone, active: true, mapSettingsJson: { provider: "future_map_integration" } },
+        create: { ...zone, restaurantId: savedRestaurant.id, active: true, mapSettingsJson: { provider: "future_map_integration" } }
+      });
+    }
+  }
+
+  const inventoryItems = [
+    { name: "Chicken", quantity: 42, unit: "lb", costCents: 2600, lowStockAt: 10 },
+    { name: "Rice", quantity: 80, unit: "lb", costCents: 1200, lowStockAt: 20 },
+    { name: "Cheese", quantity: 24, unit: "lb", costCents: 1800, lowStockAt: 8 },
+    { name: "Tomatoes", quantity: 18, unit: "case", costCents: 1800, lowStockAt: 5 }
+  ];
+  for (const item of inventoryItems) {
+    await prisma.inventoryItem.upsert({
+      where: { restaurantId_name: { restaurantId: savedRestaurant.id, name: item.name } },
+      update: { ...item, active: true },
+      create: { ...item, restaurantId: savedRestaurant.id, active: true }
+    });
+  }
+
   return { restaurant: savedRestaurant, owner: ownerUser, drivers: savedDrivers, customers: savedCustomers, items: savedItems };
 }
 
@@ -298,10 +415,29 @@ async function seedWebsiteAssets(restaurant, overrides = {}) {
       seoDescription: overrides.seoDescription || restaurant.description
     }
   });
+  const defaultHost = `${restaurant.slug}.loohar.com`;
   await prisma.restaurantDomain.upsert({
     where: { restaurantId_defaultSubdomain: { restaurantId: restaurant.id, defaultSubdomain: restaurant.slug } },
-    update: { customDomain: overrides.customDomain || null, domainStatus: overrides.domainStatus || "NOT_CONFIGURED", dnsTarget: "sites.loohar.com", sslStatus: overrides.sslStatus || "NOT_CONFIGURED" },
-    create: { restaurantId: restaurant.id, defaultSubdomain: restaurant.slug, customDomain: overrides.customDomain || null, domainStatus: overrides.domainStatus || "NOT_CONFIGURED", dnsTarget: "sites.loohar.com", sslStatus: overrides.sslStatus || "NOT_CONFIGURED" }
+    update: {
+      primaryDomain: overrides.customDomain && overrides.domainStatus === "ACTIVE" ? overrides.customDomain : defaultHost,
+      canonicalDomain: overrides.customDomain && overrides.domainStatus === "ACTIVE" ? overrides.customDomain : defaultHost,
+      customDomain: overrides.customDomain || null,
+      domainStatus: overrides.domainStatus || "NOT_CONFIGURED",
+      dnsTarget: overrides.dnsTarget || "cname.vercel-dns.com",
+      sslStatus: overrides.sslStatus || "NOT_CONFIGURED",
+      domainVerifiedAt: ["VERIFIED", "SSL_PENDING", "ACTIVE"].includes(overrides.domainStatus) ? new Date() : null
+    },
+    create: {
+      restaurantId: restaurant.id,
+      defaultSubdomain: restaurant.slug,
+      primaryDomain: overrides.customDomain && overrides.domainStatus === "ACTIVE" ? overrides.customDomain : defaultHost,
+      canonicalDomain: overrides.customDomain && overrides.domainStatus === "ACTIVE" ? overrides.customDomain : defaultHost,
+      customDomain: overrides.customDomain || null,
+      domainStatus: overrides.domainStatus || "NOT_CONFIGURED",
+      dnsTarget: overrides.dnsTarget || "cname.vercel-dns.com",
+      sslStatus: overrides.sslStatus || "NOT_CONFIGURED",
+      domainVerifiedAt: ["VERIFIED", "SSL_PENDING", "ACTIVE"].includes(overrides.domainStatus) ? new Date() : null
+    }
   });
   await prisma.restaurantGalleryImage.deleteMany({ where: { restaurantId: restaurant.id } });
   await prisma.restaurantSocialLink.deleteMany({ where: { restaurantId: restaurant.id } });
@@ -334,6 +470,8 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
   const subtotalCents = items.reduce((sum, item) => sum + item.menuItem.priceCents * item.quantity, 0);
   const deliveryFeeCents = type === "DELIVERY" ? restaurant.deliveryFeeCents : 0;
   const taxCents = Math.round(subtotalCents * 0.0825);
+  const restaurantTipCents = type === "DELIVERY" ? 0 : tipCents;
+  const driverTipCents = type === "DELIVERY" ? tipCents : 0;
   const totalCents = subtotalCents + deliveryFeeCents + taxCents + tipCents;
 
   await prisma.payment.deleteMany({ where: { orderId: id } });
@@ -355,6 +493,11 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
       deliveryFeeCents,
       taxCents,
       tipCents,
+      restaurantTipCents,
+      driverTipCents,
+      tipType: tipCents > 0 ? "SEEDED" : "NONE",
+      tipStatus: tipCents > 0 ? "COLLECTED" : "NONE",
+      tipCollectedAt: tipCents > 0 ? new Date() : null,
       totalCents,
       deliveryAddress,
       notes: "Seed sample order",
@@ -382,6 +525,11 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
       deliveryFeeCents,
       taxCents,
       tipCents,
+      restaurantTipCents,
+      driverTipCents,
+      tipType: tipCents > 0 ? "SEEDED" : "NONE",
+      tipStatus: tipCents > 0 ? "COLLECTED" : "NONE",
+      tipCollectedAt: tipCents > 0 ? new Date() : null,
       totalCents,
       deliveryAddress,
       notes: "Seed sample order",
@@ -406,8 +554,8 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
       status: "AUTHORIZED",
       amountCents: totalCents,
       technologyFeeCents: Math.round(totalCents * 0.005),
-      restaurantNetCents: totalCents - Math.round(totalCents * 0.005) - tipCents,
-      driverTipCents: tipCents
+      restaurantNetCents: totalCents - Math.round(totalCents * 0.005) - driverTipCents,
+      driverTipCents
     }
   });
 
@@ -418,10 +566,13 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
         orderId: order.id,
         driverId: driver.id,
         status: status === "DELIVERED" ? "DELIVERED" : "ASSIGNED",
+        claimedAt: status === "DELIVERED" ? new Date() : null,
+        pickedUpAt: status === "DELIVERED" ? new Date() : null,
+        deliveredAt: status === "DELIVERED" ? new Date() : null,
         pickupAddress: restaurant.address,
         dropoffAddress: deliveryAddress,
         baseEarningsCents: 650,
-        tipCents,
+        tipCents: driverTipCents,
         statusHistory: { create: [{ status: "ASSIGNED", note: "Seed driver assignment" }] }
       }
     });
@@ -442,17 +593,52 @@ async function seedOrder({ id, orderNumber, restaurant, customer, items, driver,
 
 async function main() {
   const [starter, professional, enterprise] = await seedPlans();
+  const isProductionSeed = process.env.NODE_ENV === "production";
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@platform.local" },
-    update: { name: "Platform Admin", role: "SUPER_ADMIN" },
+    update: { name: "Platform Admin", role: "SUPER_ADMIN", status: isProductionSeed ? "DISABLED" : "ACTIVE" },
     create: {
       email: "admin@platform.local",
       name: "Platform Admin",
       passwordHash: await hash(passwords.admin),
-      role: "SUPER_ADMIN"
+      role: "SUPER_ADMIN",
+      status: isProductionSeed ? "DISABLED" : "ACTIVE",
+      passwordChangedAt: new Date()
     }
   });
+
+  const looharSuperAdminHasPermanentPassword = await hasPermanentPassword("subash.sunar@loohar.com");
+  const looharSuperAdmin = await prisma.user.upsert({
+    where: { email: "subash.sunar@loohar.com" },
+    update: {
+      name: "Subash Sunar",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      restaurantId: null,
+      mfaEnabled: false,
+      mfaSetupStatus: "NOT_CONFIGURED",
+      mfaSecret: null,
+      mfaVerifiedAt: null,
+      ...(looharSuperAdminHasPermanentPassword ? {} : {
+        passwordHash: await hash(passwords.looharSuperAdmin),
+        forcePasswordChange: true,
+        temporaryPassword: true
+      })
+    },
+    create: {
+      email: "subash.sunar@loohar.com",
+      name: "Subash Sunar",
+      passwordHash: await hash(passwords.looharSuperAdmin),
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      forcePasswordChange: true,
+      temporaryPassword: true,
+      mfaEnabled: false,
+      mfaSetupStatus: "NOT_CONFIGURED"
+    }
+  });
+  await prisma.restaurantStaff.deleteMany({ where: { userId: looharSuperAdmin.id } });
 
   const demo = await seedRestaurant({
     planId: professional.id,
@@ -530,6 +716,10 @@ async function main() {
     ]
   });
 
+  await seedEmployee({ restaurant: demo.restaurant, email: "manager@demobistro.local", name: "Rina Manager", phone: "555-0188", role: "RESTAURANT_MANAGER" });
+  await seedEmployee({ restaurant: demo.restaurant, email: "cashier@demobistro.local", name: "Casey Cashier", phone: "555-0122", role: "CASHIER" });
+  await seedEmployee({ restaurant: demo.restaurant, email: "kitchen@demobistro.local", name: "Kai Kitchen", phone: "555-0199", role: "KITCHEN_STAFF" });
+
   const tacos = await seedRestaurant({
     planId: starter.id,
     couponCode: "TACO10",
@@ -558,8 +748,8 @@ async function main() {
         name: "Tacos",
         sortOrder: 1,
         items: [
-          { id: "seed-carnitas-taco", name: "Carnitas Taco", description: "Slow pork, salsa verde, onion, cilantro.", priceCents: 495, preparationTimeMins: 8, options: [{ name: "Add guacamole", priceCents: 175 }] },
-          { id: "seed-veggie-taco", name: "Veggie Taco", description: "Roasted mushrooms, peppers, crema.", priceCents: 450, preparationTimeMins: 8, options: [] }
+          { id: "seed-carnitas-taco", name: "Carnitas Taco", description: "Slow pork, salsa verde, onion, cilantro.", priceCents: 495, imageUrl: demoImage("photo-1565299585323-38d6b0865b47"), preparationTimeMins: 8, options: [{ name: "Add guacamole", priceCents: 175 }] },
+          { id: "seed-veggie-taco", name: "Veggie Taco", description: "Roasted mushrooms, peppers, crema.", priceCents: 450, imageUrl: demoImage("photo-1551504734-5ee1c4a1479b"), preparationTimeMins: 8, options: [] }
         ]
       }
     ]
@@ -577,7 +767,7 @@ async function main() {
       status: "ACTIVE",
       description: "Local restaurant direct ordering for pickup and delivery in Denver.",
       phone: "3032462749",
-      email: "subash.sunar@loohar.com",
+      email: "hello@loohar.com",
       address: "5371 Laredo Street",
       city: "Denver",
       state: "CO",
@@ -590,7 +780,7 @@ async function main() {
       loyaltySettingsJson: { pointsPerDollar: 1, welcomeBonus: 100, birthdayRewardsPlaceholder: true, referralRewardPlaceholder: true },
       storeHoursJson: { monday: "10:00 AM - 9:00 PM", tuesday: "10:00 AM - 9:00 PM", wednesday: "10:00 AM - 9:00 PM", thursday: "10:00 AM - 9:00 PM", friday: "10:00 AM - 10:00 PM", saturday: "10:00 AM - 10:00 PM" }
     },
-    owner: { email: "subash.sunar@loohar.com", name: "Subash Sunar" },
+    owner: { email: "rowner@loohar.com", name: "Loohar Restaurant Owner", password: passwords.looharOwner, forcePasswordChange: true },
     drivers: [{ email: "driver@loohar.com", name: "Loohar Driver", phone: "555-5372", available: true, currentLat: 39.793, currentLng: -104.775 }],
     customers: [{ email: "customer@loohar.com", name: "Loohar Customer", phone: "555-5373", defaultAddress: "5600 Tower Rd, Denver, CO" }],
     categories: [
@@ -614,9 +804,72 @@ async function main() {
     ]
   });
 
+  await seedEmployee({ restaurant: loohar.restaurant, email: "kitchen@loohar.com", name: "Loohar Kitchen", phone: "555-5374", role: "KITCHEN_STAFF" });
+  await seedEmployee({ restaurant: loohar.restaurant, email: "manager@loohar.com", name: "Loohar Manager", phone: "555-5375", role: "RESTAURANT_MANAGER" });
+
+  const archie = await seedRestaurant({
+    planId: professional.id,
+    couponCode: "LODGE10",
+    restaurant: {
+      name: "Archie's Lodge",
+      businessName: "Archie's Lodge",
+      businessType: "RESTAURANT",
+      enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"],
+      slug: "archie-s-lodge",
+      status: "ACTIVE",
+      description: "Cozy lodge-style comfort food, direct pickup, and local delivery.",
+      phone: "555-0707",
+      email: "hello@archieslodge.local",
+      address: "1600 Wazee St",
+      city: "Denver",
+      state: "CO",
+      zip: "80202",
+      timezone: "America/Denver",
+      deliveryEnabled: true,
+      pickupEnabled: true,
+      deliveryFeeCents: 399,
+      brandingJson: { primaryColor: "#334155", accentColor: "#f97316" },
+      loyaltySettingsJson: { pointsPerDollar: 1, welcomeBonus: 100 },
+      storeHoursJson: { monday: "11:00 AM - 9:00 PM", tuesday: "11:00 AM - 9:00 PM", wednesday: "11:00 AM - 9:00 PM", thursday: "11:00 AM - 9:00 PM", friday: "11:00 AM - 10:00 PM", saturday: "10:00 AM - 10:00 PM", sunday: "10:00 AM - 8:00 PM" }
+    },
+    owner: { email: "owner@archieslodge.local", name: "Archie Lodge Owner" },
+    drivers: [{ email: "driver@archieslodge.local", name: "Morgan Lodge", phone: "555-0733", available: true, currentLat: 39.753, currentLng: -104.999 }],
+    customers: [{ email: "customer@archieslodge.local", name: "Nora Guest", phone: "555-0766", defaultAddress: "1701 Wynkoop St, Denver, CO" }],
+    categories: [
+      {
+        id: "seed-archie-starters",
+        name: "Starters",
+        sortOrder: 1,
+        items: [
+          seedItem("seed-archie-pretzel", "Warm Lodge Pretzel", "Soft pretzel, beer cheese, mustard, smoked salt.", 995, demoImage("photo-1600891964599-f61ba0e24092"), { featured: true, isVegetarian: true }),
+          seedItem("seed-archie-wings", "Maple Chili Wings", "Crisp wings with maple chili glaze and ranch.", 1395, demoImage("photo-1567620832903-9fc6debc209f"), { recommended: true, isSpicy: true })
+        ]
+      },
+      {
+        id: "seed-archie-mains",
+        name: "Lodge Mains",
+        sortOrder: 2,
+        items: [
+          seedItem("seed-archie-burger", "Lodge Burger", "Double patty, cheddar, grilled onion, pickle, lodge sauce.", 1695, demoImage("photo-1568901346375-23c9450c58cd"), { featured: true }),
+          seedItem("seed-archie-pot-pie", "Chicken Pot Pie", "Roasted chicken, vegetables, flaky herb crust.", 1895, demoImage("photo-1543352634-a1c51d9f1fa7"), { recommended: true })
+        ]
+      },
+      {
+        id: "seed-archie-desserts",
+        name: "Desserts",
+        sortOrder: 3,
+        items: [
+          seedItem("seed-archie-cobbler", "Skillet Berry Cobbler", "Warm berry cobbler, oat crumble, vanilla cream.", 895, demoImage("photo-1488477181946-6428a0291777"), { featured: true, isVegetarian: true })
+        ]
+      }
+    ]
+  });
+  await seedEmployee({ restaurant: archie.restaurant, email: "kitchen@archieslodge.local", name: "Archie Kitchen", phone: "555-0774", role: "KITCHEN_STAFF" });
+
   await seedRewards(demo.restaurant.id);
   await seedRewards(tacos.restaurant.id);
   await seedRewards(loohar.restaurant.id);
+  await seedRewards(archie.restaurant.id);
   await prisma.customer.updateMany({ where: { restaurantId: demo.restaurant.id, email: "customer@demo.local" }, data: { segment: "VIP_CUSTOMER", notes: "High-value delivery guest. Likes bowls and avocado." } });
   await prisma.customer.updateMany({ where: { restaurantId: demo.restaurant.id, email: "jon.customer@demo.local" }, data: { segment: "ACTIVE_CUSTOMER", notes: "Usually orders pickup during lunch." } });
   await prisma.menuItem.updateMany({ where: { id: "grilled-salmon" }, data: { featured: true, recommended: true } });
@@ -650,8 +903,8 @@ async function main() {
         name: "Coffee",
         sortOrder: 1,
         items: [
-          { id: "seed-latte", name: "Vanilla Latte", description: "Espresso, steamed milk, vanilla.", priceCents: 575, preparationTimeMins: 5, options: [{ name: "Oat milk", priceCents: 75 }] },
-          { id: "seed-cold-brew", name: "Cold Brew", description: "Slow-steeped house cold brew.", priceCents: 495, preparationTimeMins: 3, options: [] }
+          { id: "seed-latte", name: "Vanilla Latte", description: "Espresso, steamed milk, vanilla.", priceCents: 575, imageUrl: demoImage("photo-1509042239860-f550ce710b93"), preparationTimeMins: 5, featured: true, options: [{ name: "Oat milk", priceCents: 75 }] },
+          { id: "seed-cold-brew", name: "Cold Brew", description: "Slow-steeped house cold brew.", priceCents: 495, imageUrl: demoImage("photo-1517701604599-bb29b565090c"), preparationTimeMins: 3, recommended: true, options: [] }
         ]
       }
     ]
@@ -685,8 +938,8 @@ async function main() {
         name: "Pastries",
         sortOrder: 1,
         items: [
-          { id: "seed-croissant", name: "Butter Croissant", description: "Flaky, buttery, baked daily.", priceCents: 425, preparationTimeMins: 3, options: [] },
-          { id: "seed-cinnamon-roll", name: "Cinnamon Roll", description: "Cream cheese icing, warm spice.", priceCents: 525, preparationTimeMins: 4, options: [] }
+          { id: "seed-croissant", name: "Butter Croissant", description: "Flaky, buttery, baked daily.", priceCents: 425, imageUrl: demoImage("photo-1555507036-ab1f4038808a"), preparationTimeMins: 3, featured: true, options: [] },
+          { id: "seed-cinnamon-roll", name: "Cinnamon Roll", description: "Cream cheese icing, warm spice.", priceCents: 525, imageUrl: demoImage("photo-1509365465985-25d11c17e812"), preparationTimeMins: 4, recommended: true, options: [] }
         ]
       }
     ]
@@ -720,13 +973,13 @@ async function main() {
         name: "Dumplings",
         sortOrder: 1,
         items: [
-          { id: "seed-pork-dumplings", name: "Pork Dumplings", description: "Six pan-seared dumplings with chili crisp.", priceCents: 995, preparationTimeMins: 9, options: [] }
+          { id: "seed-pork-dumplings", name: "Pork Dumplings", description: "Six pan-seared dumplings with chili crisp.", priceCents: 995, imageUrl: demoImage("photo-1496116218417-1a781b1c416c"), preparationTimeMins: 9, featured: true, options: [] }
         ]
       }
     ]
   });
 
-  const cork = await seedRestaurant({
+  const fuelMarket = await seedRestaurant({
     planId: starter.id,
     couponCode: "FUELFOOD10",
     restaurant: {
@@ -748,10 +1001,29 @@ async function main() {
     owner: { email: "owner@milehighfuelmarket.local", name: "Mile High Fuel Market Owner" },
     drivers: [],
     customers: [],
-    categories: []
+    categories: [
+      {
+        id: "seed-fuel-hot-food",
+        name: "Hot Food",
+        sortOrder: 1,
+        items: [
+          { id: "seed-fuel-breakfast-burrito", name: "Breakfast Burrito", description: "Egg, potato, cheese, and green chile.", priceCents: 699, imageUrl: demoImage("photo-1565299585323-38d6b0865b47"), preparationTimeMins: 6, featured: true, options: [] },
+          { id: "seed-fuel-hot-dog", name: "Market Hot Dog", description: "Classic hot dog with condiment packets.", priceCents: 399, imageUrl: demoImage("photo-1619740455993-9e612b1af08a"), preparationTimeMins: 4, options: [] }
+        ]
+      },
+      {
+        id: "seed-fuel-snacks",
+        name: "Snacks & Drinks",
+        sortOrder: 2,
+        items: [
+          { id: "seed-fuel-trail-mix", name: "Trail Mix", description: "Salty-sweet snack blend for the road.", priceCents: 499, imageUrl: demoImage("photo-1599599810769-bcde5a160d32"), preparationTimeMins: 1, recommended: true, options: [] },
+          { id: "seed-fuel-cold-drink", name: "Cold Bottled Drink", description: "Chilled beverage from the market cooler.", priceCents: 299, imageUrl: demoImage("photo-1523362628745-0c100150b504"), preparationTimeMins: 1, options: [] }
+        ]
+      }
+    ]
   });
 
-  await seedRestaurant({
+  const cork = await seedRestaurant({
     planId: professional.id,
     couponCode: "CORK10",
     restaurant: {
@@ -773,8 +1045,33 @@ async function main() {
     owner: { email: "owner@corkbottle.local", name: "Cork Bottle Owner" },
     drivers: [{ email: "driver@corkbottle.local", name: "Jordan Bottle", phone: "555-0633", available: true, currentLat: 39.74, currentLng: -104.99 }],
     customers: [],
-    categories: []
+    categories: [
+      {
+        id: "seed-cork-wine",
+        name: "Wine",
+        sortOrder: 1,
+        items: [
+          { id: "seed-cork-pinot", name: "Willamette Pinot Noir", description: "Elegant red wine with cherry and spice notes.", priceCents: 2895, imageUrl: demoImage("photo-1510812431401-41d2bd2722f3"), preparationTimeMins: 2, featured: true, options: [] },
+          { id: "seed-cork-sauv-blanc", name: "Marlborough Sauvignon Blanc", description: "Bright citrus, tropical fruit, crisp finish.", priceCents: 1995, imageUrl: demoImage("photo-1506377247377-2a5b3b417ebb"), preparationTimeMins: 2, options: [] }
+        ]
+      },
+      {
+        id: "seed-cork-beer-mixers",
+        name: "Beer & Mixers",
+        sortOrder: 2,
+        items: [
+          { id: "seed-cork-local-ipa", name: "Local IPA 6-Pack", description: "Hoppy local craft IPA.", priceCents: 1395, imageUrl: demoImage("photo-1608270586620-248524c67de9"), preparationTimeMins: 2, recommended: true, options: [] },
+          { id: "seed-cork-tonic", name: "Premium Tonic Water", description: "Four-pack tonic mixer.", priceCents: 795, imageUrl: demoImage("photo-1544145945-f90425340c7e"), preparationTimeMins: 1, options: [] }
+        ]
+      }
+    ]
   });
+
+  await seedRewards(coffee.restaurant.id);
+  await seedRewards(bakery.restaurant.id);
+  await seedRewards(fuel.restaurant.id);
+  await seedRewards(fuelMarket.restaurant.id);
+  await seedRewards(cork.restaurant.id);
 
   await seedOrder({
     id: "seed-order-demo-1",
@@ -838,20 +1135,27 @@ async function main() {
   await seedWebsiteAssets(demo.restaurant, { brandColor: "#1f9d80", accentColor: "#f4b740", heroSubtitle: "Fresh bowls, sandwiches, pickup, and neighborhood delivery without marketplace fees.", specialOfferText: "Use BISTRO10 for 10% off direct ordering." });
   await seedWebsiteAssets(tacos.restaurant, { brandColor: "#c2410c", accentColor: "#facc15", heroSubtitle: "Fast tacos, bowls, and delivery from the Northside kitchen.", specialOfferText: "TACO10 saves 10% on direct orders." });
   await seedWebsiteAssets(loohar.restaurant, { brandColor: "#111827", accentColor: "#f59e0b", tagline: "Direct Denver Ordering", cuisineType: "Local Restaurant", heroTitle: "Loohar Restaurant Direct Ordering", heroSubtitle: "Pickup and delivery from Loohar Restaurant at 5371 Laredo Street, Denver, CO 80239.", specialOfferText: "Use LOOHAR10 for direct ordering savings.", seoTitle: "Loohar Restaurant | Direct Online Ordering" });
+  await seedWebsiteAssets(archie.restaurant, { brandColor: "#334155", accentColor: "#f97316", tagline: "Comfort Food Lodge", cuisineType: "American Comfort Food", heroTitle: "Lodge Comfort Food, Ordered Direct", heroSubtitle: "Cozy starters, burgers, mains, desserts, pickup, and restaurant-owned delivery from Archie's Lodge.", specialOfferText: "Use LODGE10 for direct ordering savings.", seoTitle: "Archie's Lodge | Direct Online Ordering" });
   await seedWebsiteAssets(coffee.restaurant, { brandColor: "#6f4e37", accentColor: "#86efac", heroSubtitle: "Coffee, pastries, and quick pickup ordering.", specialOfferText: "Earn points on every morning pickup." });
   await seedWebsiteAssets(bakery.restaurant, { brandColor: "#be185d", accentColor: "#fbbf24", heroSubtitle: "Fresh pastries, cakes, and pickup ordering.", specialOfferText: "BAKERY10 for first-time direct orders." });
-  await seedWebsiteAssets(fuel.restaurant, { brandColor: "#0f766e", accentColor: "#f97316", heroSubtitle: "Prepared snacks and food market favorites.", specialOfferText: "Food catalog and pickup foundation." });
+  await seedWebsiteAssets(fuel.restaurant, { brandColor: "#0f766e", accentColor: "#f97316", heroSubtitle: "Dumplings and street food pickup from the truck window.", specialOfferText: "Truck pickup ordering and loyalty." });
+  await seedWebsiteAssets(fuelMarket.restaurant, { brandColor: "#0f766e", accentColor: "#f97316", heroSubtitle: "Prepared snacks and food market favorites.", specialOfferText: "Food catalog and pickup foundation." });
   await seedWebsiteAssets(cork.restaurant, { brandColor: "#581c87", accentColor: "#f59e0b", heroSubtitle: "Regulated delivery foundation where legally allowed.", specialOfferText: "Direct delivery where legally permitted." });
 
   console.log({
     plans: [starter.name, professional.name, enterprise.name],
-    foodBusinesses: [demo.restaurant.slug, tacos.restaurant.slug, loohar.restaurant.slug, coffee.restaurant.slug, bakery.restaurant.slug, "rolling-dumpling-truck", "mile-high-fuel-market", "cork-bottle"],
-    logins: {
-      superAdmin: `admin@platform.local / ${passwords.admin}`,
-      restaurantOwner: `owner@demobistro.local / ${passwords.owner}`,
-      looharOwner: `subash.sunar@loohar.com / ${passwords.owner}`,
-      driver: `driver@demobistro.local / ${passwords.driver}`,
-      customer: `customer@demo.local / ${passwords.customer}`
+    foodBusinesses: [demo.restaurant.slug, tacos.restaurant.slug, loohar.restaurant.slug, archie.restaurant.slug, coffee.restaurant.slug, bakery.restaurant.slug, "rolling-dumpling-truck", "mile-high-fuel-market", "cork-bottle"],
+    seededAccounts: {
+      superAdmin: "admin@platform.local",
+      restaurantOwner: "owner@demobistro.local",
+      looharSuperAdmin: "subash.sunar@loohar.com",
+      looharOwner: "rowner@loohar.com",
+      manager: "manager@demobistro.local",
+      cashier: "cashier@demobistro.local",
+      kitchenStaff: "kitchen@demobistro.local",
+      driver: "driver@demobistro.local",
+      customer: "customer@demo.local",
+      passwordOutput: "redacted"
     }
   });
 }

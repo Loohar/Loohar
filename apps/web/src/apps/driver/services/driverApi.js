@@ -4,6 +4,10 @@ export function loginDriver(credentials) {
   return api("/api/auth/login", { method: "POST", body: credentials });
 }
 
+export function demoLoginDriver() {
+  return api("/api/auth/demo-login", { method: "POST", body: { role: "DRIVER" } });
+}
+
 export function getDriverMe(token) {
   return api("/api/driver/me", { token });
 }
@@ -26,6 +30,18 @@ export function acceptDelivery(token, deliveryId) {
 
 export function updateDeliveryStatus(token, deliveryId, status) {
   return api(`/api/driver/deliveries/${deliveryId}/status`, { method: "PATCH", token, body: { status } });
+}
+
+export function getDriverOrder(token, orderId) {
+  return api(`/api/driver/orders/${orderId}`, { token });
+}
+
+export function claimDriverOrder(token, orderId) {
+  return api(`/api/driver/orders/${orderId}/claim`, { method: "POST", token });
+}
+
+export function updateDriverOrderStatus(token, orderId, status) {
+  return api(`/api/driver/orders/${orderId}/status`, { method: "PATCH", token, body: { status } });
 }
 
 export function getDriverEarnings(token) {

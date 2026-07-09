@@ -6,6 +6,7 @@ export function bindRealtime(io) {
     socket.on("join:restaurant", (restaurantId) => socket.join(`restaurant:${restaurantId}`));
     socket.on("join:order", (orderId) => socket.join(`order:${orderId}`));
     socket.on("join:driver", (driverId) => socket.join(`driver:${driverId}`));
+    socket.on("join:kitchen", (restaurantId) => socket.join(`kitchen:${restaurantId}`));
   });
 }
 
@@ -21,3 +22,7 @@ export function emitDeliveryUpdate(delivery) {
   if (delivery.driverId) ioRef.to(`driver:${delivery.driverId}`).emit("delivery:update", delivery);
 }
 
+export function emitKitchenUpdate(order) {
+  if (!ioRef) return;
+  ioRef.to(`kitchen:${order.restaurantId}`).emit("kitchen:update", order);
+}

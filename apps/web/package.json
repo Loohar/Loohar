@@ -5,22 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "VITE_APP_URL=https://app.loohar.com VITE_API_URL=https://api.loohar.com VITE_ADMIN_URL=https://admin.loohar.com VITE_PLATFORM_URL=https://loohar.com VITE_TENANT_ROOT_DOMAIN=loohar.com VITE_PUBLIC_SITE_FALLBACK_URL=https://sites.loohar.com VITE_PUBLIC_SITE_URL=https://sites.loohar.com VITE_DRIVER_URL=https://driver.loohar.com vite build",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "eslint ."
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7",
+    "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.468.0",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "vite": "^6.0.7"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.17.0",
     "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17",
-    "eslint": "^9.17.0"
+    "tailwindcss": "^3.4.17"
   }
 }

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
-import { createCheckoutSession } from "../services/paymentService.js";
+import { createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, normalizeTipInput, trackingExpiresAt } from "../services/orderWorkflowService.js";
+import { assertStripeConfigured, createCheckoutSession } from "../services/paymentService.js";
 
 const router = Router();
 
@@ -21,10 +22,10 @@ router.get("/restaurants/:slug", async (req, res, next) => {
     });
     if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Business not found" });
     const orderingEnabled = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType);
-    const placeholder = orderingEnabled
+    const moduleNotice = orderingEnabled
       ? null
       : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, placeholder });
+    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, moduleNotice });
   } catch (error) {
     next(error);
   }
@@ -44,10 +45,10 @@ router.get("/sites/:slug", async (req, res, next) => {
     });
     if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Business not found" });
     const orderingEnabled = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType);
-    const placeholder = orderingEnabled
+    const moduleNotice = orderingEnabled
       ? null
       : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, placeholder });
+    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, moduleNotice });
   } catch (error) {
     next(error);
   }
@@ -64,6 +65,11 @@ export const createOrderSchema = z.object({
     type: z.enum(["PICKUP", "DELIVERY"]),
     deliveryAddress: z.string().optional(),
     tipCents: z.number().int().nonnegative().default(0),
+    restaurantTipCents: z.number().int().nonnegative().optional(),
+    driverTipCents: z.number().int().nonnegative().optional(),
+    customTipCents: z.number().int().nonnegative().optional(),
+    tipPercentage: z.number().int().min(0).max(100).optional(),
+    tipType: z.string().optional(),
     couponCode: z.string().optional(),
     notes: z.string().optional(),
     items: z.array(z.object({
@@ -129,9 +135,12 @@ export async function createOrder(req, res, next) {
     const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");
     const effectiveDeliveryFeeCents = freeDelivery ? 0 : deliveryFeeCents;
     const taxCents = Math.round(subtotalCents * 0.0825);
-    const totalCents = Math.max(0, subtotalCents - discountCents) + effectiveDeliveryFeeCents + taxCents + req.body.tipCents;
+    const tipBreakdown = normalizeTipInput({ body: req.body, orderType: req.body.type, subtotalCents });
+    const totalCents = Math.max(0, subtotalCents - discountCents) + effectiveDeliveryFeeCents + taxCents + tipBreakdown.tipCents;
     const orderNumber = `${Date.now().toString().slice(-6)}`;
+    assertStripeConfigured();
 
+    const initialTrackingToken = createTrackingToken();
     const order = await prisma.order.create({
       data: {
         restaurantId: restaurant.id,
@@ -144,7 +153,9 @@ export async function createOrder(req, res, next) {
         couponCode: coupon?.code || null,
         deliveryFeeCents: effectiveDeliveryFeeCents,
         taxCents,
-        tipCents: req.body.tipCents,
+        ...tipBreakdown,
+        trackingTokenHash: hashToken(initialTrackingToken),
+        trackingTokenExpiresAt: trackingExpiresAt(),
         totalCents,
         customer: {
           connectOrCreate: {
@@ -166,13 +177,24 @@ export async function createOrder(req, res, next) {
         },
         statusHistory: { create: { status: "PENDING", note: "Order placed by customer" } }
       },
-      include: { items: true, customer: true, statusHistory: true }
+      include: { items: true, customer: true, restaurant: { include: { domains: true } }, statusHistory: true }
     });
 
-    const checkout = await createCheckoutSession({ order });
-    const { checkoutUrl, publishableKey, ...paymentData } = checkout;
-    const payment = await prisma.payment.create({ data: { orderId: order.id, ...paymentData } });
-    res.status(201).json({ order, payment, checkoutUrl, publishableKey });
+    try {
+      const checkout = await createCheckoutSession({ order });
+      const { checkoutUrl, publishableKey, ...paymentData } = checkout;
+      const payment = await prisma.payment.create({ data: { orderId: order.id, ...paymentData } });
+      res.status(201).json({ order, payment, checkoutUrl, publishableKey, tracking: { token: initialTrackingToken, ...customerTrackingUrls(order, initialTrackingToken) } });
+    } catch (paymentError) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          status: "CANCELLED",
+          statusHistory: { create: { status: "CANCELLED", note: "Stripe checkout could not be initialized" } }
+        }
+      });
+      throw paymentError;
+    }
   } catch (error) {
     next(error);
   }
@@ -183,13 +205,20 @@ router.post("/sites/:slug/orders", attachRestaurantIdBySlug, validate(createOrde
 
 export async function getOrderStatus(req, res, next) {
   try {
+    const token = req.query.token?.toString();
+    if (token) {
+      const tracked = await findOrderForTracking(req.params.orderId, token);
+      if (!tracked) return res.status(403).json({ error: "Invalid or expired tracking token" });
+      if (req.params.slug && tracked.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
+      return res.json({ order: limitedTrackingOrder(tracked) });
+    }
     const order = await prisma.order.findUnique({
       where: { id: req.params.orderId },
       include: { restaurant: true, customer: true, items: true, statusHistory: true, delivery: { include: { statusHistory: true, driver: { include: { user: true } } } } }
     });
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (req.params.slug && order.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
-    res.json({ order });
+    res.json({ order: limitedTrackingOrder(order) });
   } catch (error) {
     next(error);
   }

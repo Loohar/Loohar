@@ -1,17 +1,20 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { requireAuth, requireRole, requireTenantAccess } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
-import { notifyDriverAssignment, notifyOrderStatusUpdate, notifyWelcomeEmail } from "../services/notificationService.js";
-import { emitDeliveryUpdate, emitOrderUpdate } from "../services/realtimeService.js";
-import { createImageUploadPlaceholder } from "../services/uploadService.js";
+import { sendAccountSetupEmail } from "../services/accountAccessService.js";
+import { notifyDriverAssignment, notifyOrderStatusUpdate } from "../services/notificationService.js";
+import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } from "../services/orderWorkflowService.js";
+import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
+import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
 
 const router = Router();
-const restaurantRoles = ["RESTAURANT_OWNER", "RESTAURANT_MANAGER", "KITCHEN_STAFF"];
+const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 router.use(requireAuth, requireRole(...restaurantRoles, "SUPER_ADMIN"), requireTenantAccess);
 
 function restaurantIdFor(req) {
@@ -52,6 +55,119 @@ function segmentForCustomer(customer) {
   if (daysSinceLastOrder > 45) return "AT_RISK_CUSTOMER";
   return "ACTIVE_CUSTOMER";
 }
+
+function permissionsForRole(role) {
+  const permissions = {
+    TENANT_OWNER: ["all"],
+    RESTAURANT_ADMIN: ["all"],
+    RESTAURANT_OWNER: ["all"],
+    RESTAURANT_MANAGER: ["orders", "kitchen", "employees", "drivers", "inventory", "reports", "settings"],
+    CASHIER: ["orders", "receipts", "customers"],
+    KITCHEN_STAFF: ["kitchen", "orders"],
+    DRIVER: ["deliveries"]
+  };
+  return permissions[role] || ["orders"];
+}
+
+function sanitizeEmployeeRole(role = "KITCHEN_STAFF") {
+  const allowed = ["RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"];
+  return allowed.includes(role) ? role : "KITCHEN_STAFF";
+}
+
+function generateTemporaryPassword() {
+  return `Temp-${crypto.randomBytes(9).toString("base64url")}1!`;
+}
+
+function kitchenTicketText(order) {
+  const lines = [
+    `KITCHEN TICKET #${order.orderNumber}`,
+    `${order.type} - ${order.customer?.name || "Customer"}`,
+    order.deliveryAddress ? `Delivery: ${order.deliveryAddress}` : "Pickup",
+    ""
+  ];
+  order.items.forEach((item) => {
+    lines.push(`${item.quantity}x ${item.name}`);
+    const modifiers = Array.isArray(item.optionsJson) ? item.optionsJson : [];
+    modifiers.forEach((modifier) => lines.push(`  + ${modifier.group ? `${modifier.group}: ` : ""}${modifier.name}`));
+  });
+  if (order.notes) lines.push("", `Instructions: ${order.notes}`);
+  return lines.join("\n");
+}
+
+function customerReceiptText(order) {
+  const lines = [
+    `RECEIPT #${order.orderNumber}`,
+    `${order.customer?.name || "Customer"} - ${order.type}`,
+    ""
+  ];
+  order.items.forEach((item) => lines.push(`${item.quantity}x ${item.name} ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((item.quantity * item.unitPriceCents) / 100)}`));
+  lines.push(
+    "",
+    `Subtotal: ${(order.subtotalCents / 100).toFixed(2)}`,
+    `Tax: ${(order.taxCents / 100).toFixed(2)}`,
+    `Restaurant Tip: ${((order.restaurantTipCents || 0) / 100).toFixed(2)}`,
+    `Driver Tip: ${((order.driverTipCents ?? order.tipCents ?? 0) / 100).toFixed(2)}`,
+    `Delivery: ${(order.deliveryFeeCents / 100).toFixed(2)}`,
+    `Total: ${(order.totalCents / 100).toFixed(2)}`
+  );
+  return lines.join("\n");
+}
+
+const websiteEditableFields = [
+  "websiteEnabled",
+  "heroTitle",
+  "heroSubtitle",
+  "tagline",
+  "cuisineType",
+  "heroImageUrl",
+  "logoUrl",
+  "brandColor",
+  "accentColor",
+  "headingFont",
+  "bodyFont",
+  "sectionSettingsJson",
+  "storeHoursJson",
+  "aboutTitle",
+  "aboutStory",
+  "missionStatement",
+  "ownerStory",
+  "specialOfferText",
+  "seoTitle",
+  "seoDescription"
+];
+
+function websiteUpdateData(body = {}) {
+  return Object.fromEntries(websiteEditableFields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]]));
+}
+
+function pickEditable(body = {}, fields = []) {
+  return Object.fromEntries(fields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]]));
+}
+
+const printerEditableFields = [
+  "kitchenPrinterName",
+  "kitchenPrinterEnabled",
+  "frontCounterPrinterName",
+  "frontCounterPrinterEnabled",
+  "autoPrintKitchenTickets",
+  "autoPrintCustomerReceipts",
+  "provider",
+  "settingsJson"
+];
+
+const notificationEditableFields = [
+  "smsEnabled",
+  "emailEnabled",
+  "orderConfirmedSms",
+  "orderReadySms",
+  "outForDeliverySms",
+  "deliveredSms",
+  "orderConfirmationEmail",
+  "receiptEmail",
+  "passwordResetEmail",
+  "welcomeEmail",
+  "providerSettingsJson"
+];
 
 router.get("/me", async (req, res, next) => {
   try {
@@ -307,10 +423,6 @@ router.post("/menu-items/:itemId/options", createItemOptionGroup);
 router.patch("/menu-items/:itemId/options/:optionGroupId", updateItemOptionGroup);
 router.delete("/menu-items/:itemId/options/:optionGroupId", deleteItemOptionGroup);
 
-router.post("/:restaurantId/uploads/image-placeholder", async (req, res) => {
-  res.json(await createImageUploadPlaceholder({ fileName: req.body.fileName || "food.jpg", restaurantId: restaurantIdFor(req) }));
-});
-
 router.get("/:restaurantId/orders", async (req, res, next) => {
   try {
     const orders = await prisma.order.findMany({
@@ -336,6 +448,7 @@ router.patch("/:restaurantId/orders/:orderId/status", async (req, res, next) => 
     });
     await Promise.allSettled([notifyOrderStatusUpdate({ order })]);
     emitOrderUpdate(order);
+    emitKitchenUpdate(order);
     res.json({ order });
   } catch (error) {
     next(error);
@@ -353,7 +466,7 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
         restaurantId,
         orderId: order.id,
         driverId: req.body.driverId,
-        tipCents: order.tipCents,
+        tipCents: order.driverTipCents ?? order.tipCents,
         baseEarningsCents: req.body.baseEarningsCents || 500,
         pickupAddress: req.body.pickupAddress || order.restaurant.address || "Restaurant pickup",
         dropoffAddress: order.deliveryAddress || req.body.dropoffAddress || "Customer dropoff",
@@ -364,6 +477,61 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
     });
     await Promise.allSettled([notifyDriverAssignment({ delivery })]);
     emitDeliveryUpdate(delivery);
+    res.json({ delivery });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/dispatch", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const [drivers, deliveries] = await Promise.all([
+      prisma.driver.findMany({ where: { restaurantId }, include: { user: true, deliveries: { where: { status: { not: "DELIVERED" } }, include: { order: { include: { customer: true } } } } }, orderBy: { updatedAt: "desc" } }),
+      prisma.delivery.findMany({ where: { restaurantId, status: { not: "DELIVERED" } }, include: { driver: { include: { user: true } }, order: { include: { customer: true, items: true } } }, orderBy: { createdAt: "desc" } })
+    ]);
+    const availableDrivers = drivers.filter((driver) => driver.user.status === "ACTIVE" && driver.available && driver.deliveries.length === 0);
+    const busyDrivers = drivers.filter((driver) => driver.user.status === "ACTIVE" && driver.deliveries.length > 0);
+    const offlineDrivers = drivers.filter((driver) => driver.user.status !== "ACTIVE" || (!driver.available && driver.deliveries.length === 0));
+    res.json({ availableDrivers, busyDrivers, offlineDrivers, deliveries });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/deliveries/:deliveryId/assign-driver", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const driver = await prisma.driver.findUnique({ where: { id_restaurantId: { id: req.body.driverId, restaurantId } }, include: { user: true } });
+    if (!driver || driver.user.status !== "ACTIVE") return res.status(404).json({ error: "Available driver not found" });
+    const existing = await prisma.delivery.findFirst({ where: { id: req.params.deliveryId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Delivery not found" });
+    const delivery = await prisma.delivery.update({
+      where: { id: existing.id },
+      data: { driverId: driver.id, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", note: "Delivery assigned from dispatch center", changedBy: req.user.id } } },
+      include: { driver: { include: { user: true } }, order: { include: { customer: true, restaurant: true, items: true } }, statusHistory: true }
+    });
+    await Promise.allSettled([notifyDriverAssignment({ delivery })]);
+    emitDeliveryUpdate(delivery);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "delivery.assigned", entityType: "Delivery", entityId: delivery.id, metadata: { driverId: driver.id } });
+    res.json({ delivery });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/deliveries/:deliveryId/cancel-assignment", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.delivery.findFirst({ where: { id: req.params.deliveryId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Delivery not found" });
+    const delivery = await prisma.delivery.update({
+      where: { id: existing.id },
+      data: { driverId: null, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", note: "Driver assignment cancelled", changedBy: req.user.id } } },
+      include: { order: { include: { customer: true, restaurant: true, items: true } }, statusHistory: true }
+    });
+    emitDeliveryUpdate(delivery);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "delivery.assignment_cancelled", entityType: "Delivery", entityId: delivery.id });
     res.json({ delivery });
   } catch (error) {
     next(error);
@@ -381,12 +549,12 @@ router.get("/:restaurantId/drivers", async (req, res, next) => {
 
 router.post("/:restaurantId/drivers", async (req, res, next) => {
   try {
-    const passwordHash = await bcrypt.hash(req.body.password || "Driver123!", 12);
+    const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const user = await prisma.user.create({
-      data: { email: req.body.email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId: restaurantIdFor(req) }
+      data: { email: req.body.email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId: restaurantIdFor(req), forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
     const driver = await prisma.driver.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id } });
-    await Promise.allSettled([notifyWelcomeEmail({ user })]);
+    await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ driver });
   } catch (error) {
     next(error);
@@ -404,13 +572,126 @@ router.get("/:restaurantId/staff", async (req, res, next) => {
 
 router.post("/:restaurantId/staff", async (req, res, next) => {
   try {
-    const passwordHash = await bcrypt.hash(req.body.password || "Staff123!", 12);
+    const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const user = await prisma.user.create({
-      data: { email: req.body.email, name: req.body.name, passwordHash, role: req.body.role, restaurantId: restaurantIdFor(req) }
+      data: { email: req.body.email, name: req.body.name, passwordHash, role: req.body.role, restaurantId: restaurantIdFor(req), phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
-    const staff = await prisma.restaurantStaff.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id, role: req.body.role } });
-    await Promise.allSettled([notifyWelcomeEmail({ user })]);
+    const staff = await prisma.restaurantStaff.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id, role: req.body.role, permissionsJson: req.body.permissionsJson || permissionsForRole(req.body.role) } });
+    await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ staff });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/employees", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const [staff, drivers] = await Promise.all([
+      prisma.restaurantStaff.findMany({ where: { restaurantId }, include: { user: true }, orderBy: { createdAt: "desc" } }),
+      prisma.driver.findMany({ where: { restaurantId }, include: { user: true, deliveries: { where: { status: { not: "DELIVERED" } } } }, orderBy: { createdAt: "desc" } })
+    ]);
+    const staffEmployees = staff.map((employee) => ({
+      id: employee.userId,
+      profileId: employee.id,
+      profileType: "STAFF",
+      name: employee.user.name,
+      email: employee.user.email,
+      phone: employee.user.phone,
+      role: employee.role,
+      status: employee.user.status,
+      active: employee.active,
+      permissions: employee.permissionsJson || permissionsForRole(employee.role)
+    }));
+    const driverEmployees = drivers.map((driver) => ({
+      id: driver.userId,
+      profileId: driver.id,
+      profileType: "DRIVER",
+      name: driver.user.name,
+      email: driver.user.email,
+      phone: driver.user.phone,
+      role: "DRIVER",
+      status: driver.user.status,
+      active: driver.user.status === "ACTIVE",
+      available: driver.available,
+      busy: driver.deliveries.length > 0,
+      permissions: permissionsForRole("DRIVER")
+    }));
+    res.json({ employees: [...staffEmployees, ...driverEmployees] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/employees", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const role = sanitizeEmployeeRole(req.body.role);
+    const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
+    const user = await prisma.user.create({
+      data: { email: req.body.email, name: req.body.name || req.body.email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status || "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+    });
+    if (role === "DRIVER") {
+      await prisma.driver.create({ data: { restaurantId, userId: user.id, available: Boolean(req.body.available) } });
+    } else {
+      await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, active: req.body.status !== "SUSPENDED", permissionsJson: req.body.permissionsJson || permissionsForRole(role) } });
+    }
+    await Promise.allSettled([sendAccountSetupEmail({ user })]);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.created", entityType: "User", entityId: user.id, metadata: { role } });
+    res.status(201).json({ employee: { id: user.id, name: user.name, email: user.email, phone: user.phone, role, status: user.status } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
+    if (!existing) return res.status(404).json({ error: "Employee not found" });
+    const role = req.body.role ? sanitizeEmployeeRole(req.body.role) : existing.role;
+    const user = await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        ...(req.body.name ? { name: req.body.name } : {}),
+        ...(req.body.email ? { email: req.body.email } : {}),
+        ...(req.body.phone !== undefined ? { phone: req.body.phone } : {}),
+        ...(req.body.status ? { status: req.body.status } : {}),
+        role
+      }
+    });
+    if (role === "DRIVER") {
+      if (existing.staffProfile) await prisma.restaurantStaff.delete({ where: { id: existing.staffProfile.id } });
+      await prisma.driver.upsert({
+        where: { userId: user.id },
+        update: { available: Boolean(req.body.available) },
+        create: { restaurantId, userId: user.id, available: Boolean(req.body.available) }
+      });
+    } else {
+      if (existing.driverProfile) await prisma.driver.delete({ where: { id: existing.driverProfile.id } });
+      await prisma.restaurantStaff.upsert({
+        where: { userId: user.id },
+        update: { role, active: user.status === "ACTIVE", permissionsJson: req.body.permissionsJson || permissionsForRole(role) },
+        create: { restaurantId, userId: user.id, role, active: user.status === "ACTIVE", permissionsJson: req.body.permissionsJson || permissionsForRole(role) }
+      });
+    }
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.updated", entityType: "User", entityId: user.id, metadata: { role, status: user.status } });
+    res.json({ employee: { id: user.id, name: user.name, email: user.email, phone: user.phone, role, status: user.status } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/employees/:employeeId/disable", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
+    if (!existing) return res.status(404).json({ error: "Employee not found" });
+    const user = await prisma.user.update({ where: { id: existing.id }, data: { status: "SUSPENDED" }, include: { staffProfile: true, driverProfile: true } });
+    if (user.staffProfile) await prisma.restaurantStaff.update({ where: { id: user.staffProfile.id }, data: { active: false } });
+    if (user.driverProfile) await prisma.driver.update({ where: { id: user.driverProfile.id }, data: { available: false } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.disabled", entityType: "User", entityId: user.id });
+    res.json({ employee: { id: user.id, status: "SUSPENDED" } });
   } catch (error) {
     next(error);
   }
@@ -556,14 +837,297 @@ router.post("/:restaurantId/loyalty/rewards", async (req, res, next) => {
   }
 });
 
+router.get("/:restaurantId/printing", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const settings = await prisma.restaurantPrinterSettings.upsert({
+      where: { restaurantId },
+      update: {},
+      create: { restaurantId }
+    });
+    res.json({ settings, printerTargets: ["browser_print", "star_micronics_future", "epson_future", "thermal_printer_future"] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/printing", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const data = pickEditable(req.body, printerEditableFields);
+    const settings = await prisma.restaurantPrinterSettings.upsert({
+      where: { restaurantId },
+      update: data,
+      create: { ...data, restaurantId }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "printing.updated", entityType: "RestaurantPrinterSettings", entityId: settings.id });
+    res.json({ settings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function printOrder(req, res, next, kind) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const order = await prisma.order.findUnique({
+      where: { id_restaurantId: { id: req.params.orderId, restaurantId } },
+      include: receiptOrderInclude()
+    });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    const ticket = kind === "kitchen" ? kitchenTicketText(order) : customerReceiptText(order);
+    const issued = await issueOrderTrackingToken(order.id);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: kind === "kitchen" ? "print.kitchen_ticket" : "print.customer_receipt", entityType: "Order", entityId: order.id });
+    res.json({ printJob: { kind, provider: "browser_print", orderId: order.id, orderNumber: order.orderNumber, ticket }, receipt: buildReceiptPayload(issued.order, { kind, trackingToken: issued.trackingToken }) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/:restaurantId/orders/:orderId/receipt", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const order = await prisma.order.findUnique({
+      where: { id_restaurantId: { id: req.params.orderId, restaurantId } },
+      include: receiptOrderInclude()
+    });
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    const issued = await issueOrderTrackingToken(order.id);
+    res.json({ receipt: buildReceiptPayload(issued.order, { kind: req.query.kind?.toString() || "customer", trackingToken: issued.trackingToken }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/orders/:orderId/print-kitchen-ticket", (req, res, next) => printOrder(req, res, next, "kitchen"));
+router.post("/:restaurantId/orders/:orderId/print-customer-receipt", (req, res, next) => printOrder(req, res, next, "receipt"));
+router.post("/:restaurantId/orders/:orderId/print-driver-slip", (req, res, next) => printOrder(req, res, next, "driver"));
+
+router.get("/:restaurantId/notification-settings", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const settings = await prisma.restaurantNotificationSettings.upsert({
+      where: { restaurantId },
+      update: {},
+      create: { restaurantId }
+    });
+    res.json({ settings, providers: { sms: process.env.SMS_PROVIDER || "console", email: process.env.EMAIL_PROVIDER || "console" } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/notification-settings", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const data = pickEditable(req.body, notificationEditableFields);
+    const settings = await prisma.restaurantNotificationSettings.upsert({
+      where: { restaurantId },
+      update: data,
+      create: { ...data, restaurantId }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "notifications.updated", entityType: "RestaurantNotificationSettings", entityId: settings.id });
+    res.json({ settings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/delivery-zones", async (req, res, next) => {
+  try {
+    const zones = await prisma.deliveryZone.findMany({ where: { restaurantId: restaurantIdFor(req), active: true }, orderBy: { createdAt: "asc" } });
+    res.json({ zones });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/delivery-zones", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const zone = await prisma.deliveryZone.create({
+      data: {
+        restaurantId,
+        name: req.body.name,
+        radiusMiles: Number(req.body.radiusMiles || 0),
+        deliveryFeeCents: Number(req.body.deliveryFeeCents || 0),
+        minimumOrderCents: Number(req.body.minimumOrderCents || 0),
+        active: req.body.active !== false,
+        mapSettingsJson: req.body.mapSettingsJson || { provider: "map_placeholder" }
+      }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "delivery_zone.created", entityType: "DeliveryZone", entityId: zone.id });
+    res.status(201).json({ zone });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/delivery-zones/:zoneId", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.deliveryZone.findFirst({ where: { id: req.params.zoneId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Delivery zone not found" });
+    const zone = await prisma.deliveryZone.update({
+      where: { id: existing.id },
+      data: {
+        ...(req.body.name ? { name: req.body.name } : {}),
+        ...(req.body.radiusMiles !== undefined ? { radiusMiles: Number(req.body.radiusMiles) } : {}),
+        ...(req.body.deliveryFeeCents !== undefined ? { deliveryFeeCents: Number(req.body.deliveryFeeCents) } : {}),
+        ...(req.body.minimumOrderCents !== undefined ? { minimumOrderCents: Number(req.body.minimumOrderCents) } : {}),
+        ...(req.body.active !== undefined ? { active: Boolean(req.body.active) } : {}),
+        ...(req.body.mapSettingsJson !== undefined ? { mapSettingsJson: req.body.mapSettingsJson } : {})
+      }
+    });
+    res.json({ zone });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/:restaurantId/delivery-zones/:zoneId", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.deliveryZone.findFirst({ where: { id: req.params.zoneId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Delivery zone not found" });
+    const zone = await prisma.deliveryZone.update({ where: { id: existing.id }, data: { active: false } });
+    res.json({ zone });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/inventory", async (req, res, next) => {
+  try {
+    const items = await prisma.inventoryItem.findMany({ where: { restaurantId: restaurantIdFor(req), active: true }, orderBy: { name: "asc" } });
+    res.json({ items });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/inventory", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const item = await prisma.inventoryItem.create({
+      data: {
+        restaurantId,
+        name: req.body.name,
+        quantity: Number(req.body.quantity || 0),
+        unit: req.body.unit || "unit",
+        costCents: Number(req.body.costCents || 0),
+        lowStockAt: req.body.lowStockAt !== undefined ? Number(req.body.lowStockAt) : null,
+        notes: req.body.notes
+      }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "inventory.created", entityType: "InventoryItem", entityId: item.id });
+    res.status(201).json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/inventory/:itemId", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.inventoryItem.findFirst({ where: { id: req.params.itemId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Inventory item not found" });
+    const item = await prisma.inventoryItem.update({
+      where: { id: existing.id },
+      data: {
+        ...(req.body.name ? { name: req.body.name } : {}),
+        ...(req.body.quantity !== undefined ? { quantity: Number(req.body.quantity) } : {}),
+        ...(req.body.unit ? { unit: req.body.unit } : {}),
+        ...(req.body.costCents !== undefined ? { costCents: Number(req.body.costCents) } : {}),
+        ...(req.body.lowStockAt !== undefined ? { lowStockAt: Number(req.body.lowStockAt) } : {}),
+        ...(req.body.notes !== undefined ? { notes: req.body.notes } : {}),
+        ...(req.body.active !== undefined ? { active: Boolean(req.body.active) } : {})
+      }
+    });
+    res.json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/:restaurantId/inventory/:itemId", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.inventoryItem.findFirst({ where: { id: req.params.itemId, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Inventory item not found" });
+    const item = await prisma.inventoryItem.update({ where: { id: existing.id }, data: { active: false } });
+    res.json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/:restaurantId/reports/sales", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
     const [orders, payments] = await Promise.all([
-      prisma.order.groupBy({ by: ["status"], where: { restaurantId }, _count: true, _sum: { totalCents: true, tipCents: true } }),
+      prisma.order.groupBy({ by: ["status"], where: { restaurantId }, _count: true, _sum: { totalCents: true, tipCents: true, restaurantTipCents: true, driverTipCents: true } }),
       prisma.payment.aggregate({ where: { order: { restaurantId } }, _sum: { amountCents: true, restaurantNetCents: true, driverTipCents: true, technologyFeeCents: true } })
     ]);
     res.json({ orders, payments: payments._sum });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/reports/operations", async (req, res, next) => {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const [orders, customers, deliveries] = await Promise.all([
+      prisma.order.findMany({ where: { restaurantId }, include: { items: true }, orderBy: { createdAt: "desc" } }),
+      prisma.customer.findMany({ where: { restaurantId }, include: { orders: true } }),
+      prisma.delivery.findMany({ where: { restaurantId }, include: { driver: { include: { user: true } } } })
+    ]);
+    const nonCancelled = orders.filter((order) => order.status !== "CANCELLED");
+    const salesSince = (date) => nonCancelled.filter((order) => order.createdAt >= date).reduce((sum, order) => sum + order.totalCents, 0);
+    const itemStats = new Map();
+    nonCancelled.forEach((order) => order.items.forEach((item) => {
+      const current = itemStats.get(item.menuItemId) || { id: item.menuItemId, name: item.name, quantity: 0, revenueCents: 0 };
+      current.quantity += item.quantity;
+      current.revenueCents += item.quantity * item.unitPriceCents;
+      itemStats.set(item.menuItemId, current);
+    }));
+    const itemRows = [...itemStats.values()];
+    const driverRows = deliveries.reduce((rows, delivery) => {
+      const key = delivery.driverId || "unassigned";
+      const current = rows.get(key) || { driverId: delivery.driverId, name: delivery.driver?.user?.name || "Unassigned", deliveries: 0, tipsCents: 0, earningsCents: 0 };
+      if (delivery.status === "DELIVERED") current.deliveries += 1;
+      current.tipsCents += delivery.tipCents || 0;
+      current.earningsCents += (delivery.baseEarningsCents || 0) + (delivery.tipCents || 0);
+      rows.set(key, current);
+      return rows;
+    }, new Map());
+    res.json({
+      sales: {
+        dailySalesCents: salesSince(startOfDay),
+        weeklySalesCents: salesSince(startOfWeek),
+        monthlySalesCents: salesSince(startOfMonth),
+        totalTipsCents: nonCancelled.reduce((sum, order) => sum + (order.tipCents || 0), 0),
+        restaurantTipsCents: nonCancelled.reduce((sum, order) => sum + (order.restaurantTipCents || 0), 0),
+        driverTipsCents: nonCancelled.reduce((sum, order) => sum + (order.driverTipCents ?? order.tipCents ?? 0), 0)
+      },
+      items: {
+        topSellingItems: [...itemRows].sort((a, b) => b.quantity - a.quantity).slice(0, 10),
+        leastSellingItems: [...itemRows].sort((a, b) => a.quantity - b.quantity).slice(0, 10)
+      },
+      customers: {
+        newCustomers: customers.filter((customer) => customer.orders.length === 0).length,
+        returningCustomers: customers.filter((customer) => customer.orders.length > 1).length,
+        vipCustomers: customers.filter((customer) => customer.segment === "VIP_CUSTOMER").length
+      },
+      drivers: [...driverRows.values()]
+    });
   } catch (error) {
     next(error);
   }
@@ -594,7 +1158,9 @@ router.get("/:restaurantId/analytics", async (req, res, next) => {
         averageOrderValueCents: delivered.length ? Math.round(totalRevenueCents / delivered.length) : 0,
         deliveryOrders: delivered.filter((order) => order.type === "DELIVERY").length,
         pickupOrders: delivered.filter((order) => order.type === "PICKUP").length,
-        driverTipsCents: delivered.reduce((sum, order) => sum + order.tipCents, 0)
+        totalTipsCents: delivered.reduce((sum, order) => sum + (order.tipCents || 0), 0),
+        restaurantTipsCents: delivered.reduce((sum, order) => sum + (order.restaurantTipCents || 0), 0),
+        driverTipsCents: delivered.reduce((sum, order) => sum + (order.driverTipCents ?? order.tipCents ?? 0), 0)
       },
       charts: { salesTrend: [...byDay.values()], ordersTrend: [...byDay.values()], customerGrowth: [], loyaltyGrowth: [] },
       popularItems: [...itemStats.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 10)
@@ -648,10 +1214,11 @@ async function getWebsite(req, res, next) {
 async function updateWebsite(req, res, next) {
   try {
     const restaurantId = restaurantIdFor(req);
+    const data = websiteUpdateData(req.body);
     const website = await prisma.restaurantWebsiteSettings.upsert({
       where: { restaurantId },
-      update: req.body,
-      create: { ...req.body, restaurantId }
+      update: data,
+      create: { ...data, restaurantId }
     });
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id });
     res.json({ website });
@@ -665,7 +1232,7 @@ async function getDomain(req, res, next) {
     const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantIdFor(req) } });
     if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
     const domain = await ensureDomain(restaurant);
-    res.json({ domain, instructions: `Point your CNAME record to: ${DNS_TARGET}` });
+    res.json({ domain: domainInfoForRestaurant(restaurant, domain), instructions: `Create a CNAME record for www pointing to ${DNS_TARGET}` });
   } catch (error) {
     next(error);
   }
@@ -678,15 +1245,27 @@ async function updateDomain(req, res, next) {
     const existing = await ensureDomain(restaurant);
     const domain = await prisma.restaurantDomain.update({
       where: { id: existing.id },
-      data: {
-        customDomain: req.body.customDomain,
-        domainStatus: req.body.domainStatus || "PENDING_VERIFICATION",
-        dnsTarget: req.body.dnsTarget || DNS_TARGET,
-        sslStatus: req.body.sslStatus || "PENDING"
-      }
+      data: domainUpdateDataForRestaurant(restaurant, existing, req.body)
     });
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "domain.updated", entityType: "RestaurantDomain", entityId: domain.id });
-    res.json({ domain, instructions: `Point your CNAME record to: ${DNS_TARGET}` });
+    res.json({ domain: domainInfoForRestaurant(restaurant, domain), instructions: `Create a CNAME record for www pointing to ${DNS_TARGET}` });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function verifyDomain(req, res, next) {
+  try {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantIdFor(req) } });
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const existing = await ensureDomain(restaurant);
+    if (!existing.customDomain) return res.status(400).json({ error: "Add a custom domain before verification." });
+    const domain = await prisma.restaurantDomain.update({
+      where: { id: existing.id },
+      data: domainUpdateDataForRestaurant(restaurant, existing, { ...existing, domainStatus: "VERIFIED", sslStatus: "SSL_PENDING", canonicalDomain: req.body.canonicalDomain || existing.customDomain })
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "domain.verified", entityType: "RestaurantDomain", entityId: domain.id });
+    res.json({ domain: domainInfoForRestaurant(restaurant, domain), instructions: `Create a CNAME record for www pointing to ${DNS_TARGET}` });
   } catch (error) {
     next(error);
   }
@@ -754,6 +1333,7 @@ router.get("/website", getWebsite);
 router.patch("/website", updateWebsite);
 router.get("/domain", getDomain);
 router.patch("/domain", updateDomain);
+router.post("/domain/verify", verifyDomain);
 router.get("/gallery", getGallery);
 router.post("/gallery", addGalleryImage);
 router.delete("/gallery/:id", deleteGalleryImage);
@@ -764,6 +1344,7 @@ router.get("/:restaurantId/website", getWebsite);
 router.patch("/:restaurantId/website", updateWebsite);
 router.get("/:restaurantId/domain", getDomain);
 router.patch("/:restaurantId/domain", updateDomain);
+router.post("/:restaurantId/domain/verify", verifyDomain);
 router.get("/:restaurantId/gallery", getGallery);
 router.post("/:restaurantId/gallery", addGalleryImage);
 router.delete("/:restaurantId/gallery/:id", deleteGalleryImage);

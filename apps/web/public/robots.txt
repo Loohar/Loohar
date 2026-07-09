@@ -1,0 +1,19 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /restaurant
+Disallow: /restaurant/
+Disallow: /driver
+Disallow: /driver/
+Disallow: /kitchen
+Disallow: /kitchen/
+Disallow: /customer
+Disallow: /customer/
+Disallow: /login
+Disallow: /admin/login
+Disallow: /restaurant/login
+Disallow: /forgot-password
+Disallow: /reset-password/
+
+Sitemap: https://loohar.com/sitemap.xml

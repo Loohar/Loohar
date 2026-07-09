@@ -3,7 +3,9 @@ export const deliveryStatuses = [
   { value: "ARRIVED_AT_RESTAURANT", label: "Arrived" },
   { value: "PICKED_UP", label: "Picked up" },
   { value: "ON_THE_WAY", label: "On the way" },
-  { value: "DELIVERED", label: "Delivered" }
+  { value: "ARRIVED_AT_CUSTOMER", label: "At customer" },
+  { value: "DELIVERED", label: "Delivered" },
+  { value: "ISSUE_REPORTED", label: "Issue" }
 ];
 
 export function formatStatus(status = "ASSIGNED") {

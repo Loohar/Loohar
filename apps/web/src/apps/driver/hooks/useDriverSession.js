@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { clearSession, getStoredSession, isDriver, storeSession } from "../../../shared/auth.js";
-import { loginDriver } from "../services/driverApi.js";
+import { demoLoginDriver, loginDriver } from "../services/driverApi.js";
 
 export function useDriverSession() {
   const [session, setSession] = useState(() => getStoredSession());
@@ -25,7 +25,27 @@ export function useDriverSession() {
         return;
       }
       storeSession(payload);
-      setSession({ token: payload.accessToken, user: payload.user });
+      setSession({ token: payload.accessToken, refreshToken: payload.refreshToken, user: payload.user });
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function loginDemo() {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const payload = await demoLoginDriver();
+      if (!isDriver(payload.user)) {
+        clearSession();
+        setSession({ token: "", user: null });
+        setAuthError("Seeded development driver account is unavailable.");
+        return;
+      }
+      storeSession(payload);
+      setSession({ token: payload.accessToken, refreshToken: payload.refreshToken, user: payload.user });
     } catch (error) {
       setAuthError(error.message);
     } finally {
@@ -46,6 +66,7 @@ export function useDriverSession() {
     authError,
     authLoading,
     login,
+    loginDemo,
     logout
   };
 }

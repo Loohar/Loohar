@@ -1,13 +1,54 @@
 import { LogIn } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-export function DriverLogin({ authError, authLoading, login, apiOnline }) {
-  const [email, setEmail] = useState("driver@demobistro.local");
-  const [password, setPassword] = useState("Driver123!");
+export function DriverLogin({ authError, authLoading, login, loginDemo, apiOnline }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const userEditedCredentials = useRef(false);
+  const emailInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+
+  function clearLoginFields() {
+    setEmail("");
+    setPassword("");
+    if (emailInputRef.current) emailInputRef.current.value = "";
+    if (passwordInputRef.current) passwordInputRef.current.value = "";
+  }
+
+  function markCredentialEntry() {
+    userEditedCredentials.current = true;
+  }
+
+  useEffect(() => {
+    userEditedCredentials.current = false;
+    clearLoginFields();
+    const clearIfUntouched = () => {
+      if (!userEditedCredentials.current) {
+        clearLoginFields();
+      }
+    };
+    window.addEventListener("pageshow", clearIfUntouched);
+    document.addEventListener("visibilitychange", clearIfUntouched);
+    const timers = [80, 400, 1200].map((delay) => window.setTimeout(clearIfUntouched, delay));
+    const staleAutofillGuard = window.setInterval(clearIfUntouched, 250);
+    return () => {
+      window.removeEventListener("pageshow", clearIfUntouched);
+      document.removeEventListener("visibilitychange", clearIfUntouched);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.clearInterval(staleAutofillGuard);
+    };
+  }, []);
 
   function submit(event) {
     event.preventDefault();
     login({ email, password });
+    setPassword("");
+  }
+
+  function submitDemoLogin() {
+    userEditedCredentials.current = false;
+    clearLoginFields();
+    loginDemo();
   }
 
   return (
@@ -20,17 +61,42 @@ export function DriverLogin({ authError, authLoading, login, apiOnline }) {
         <form className="driver-login-form" onSubmit={submit}>
           <label>
             Email
-            <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+            <input
+              ref={emailInputRef}
+              value={email}
+              onKeyDown={markCredentialEntry}
+              onPaste={markCredentialEntry}
+              onDrop={markCredentialEntry}
+              onChange={(event) => {
+                setEmail(event.target.value);
+              }}
+              type="email"
+              name="username"
+              autoComplete="username"
+            />
           </label>
           <label>
             Password
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" />
+            <input
+              ref={passwordInputRef}
+              value={password}
+              onKeyDown={markCredentialEntry}
+              onPaste={markCredentialEntry}
+              onDrop={markCredentialEntry}
+              onChange={(event) => {
+                setPassword(event.target.value);
+              }}
+              type="password"
+              name="current-password"
+              autoComplete="current-password"
+            />
           </label>
           {authError ? <div className="driver-error">{authError}</div> : null}
           <button className="driver-button" disabled={authLoading || !apiOnline} type="submit">
             <LogIn size={20} />
             {authLoading ? "Signing in" : "Sign in"}
           </button>
+          {import.meta.env.DEV ? <button className="driver-button secondary" disabled={authLoading || !apiOnline} type="button" onClick={submitDemoLogin}>Use seeded development account</button> : null}
         </form>
       </section>
     </main>

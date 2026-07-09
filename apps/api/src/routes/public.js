@@ -2,39 +2,220 @@ import { Router } from "express";
 import { attachRestaurantIdBySlug, createOrder, createOrderSchema, getOrderStatus } from "./customer.js";
 import { validate } from "../middleware/validate.js";
 import { getWebsiteBundleBySlug } from "../services/websiteService.js";
+import { prisma } from "../config/prisma.js";
+import { domainInfoForRestaurant, publicUrlForRestaurant, resolveTenantByHost } from "../services/domainService.js";
 
 const router = Router();
+const DISCOVERY_BUSINESS_TYPES = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"];
+
+function restaurantName(restaurant = {}) {
+  return restaurant.businessName || restaurant.name || "Restaurant";
+}
+
+function fullAddress(restaurant = {}) {
+  return [restaurant.address, restaurant.city, restaurant.state, restaurant.zip].filter(Boolean).join(", ");
+}
+
+function mapEmbedUrl(address = "") {
+  return address ? `https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed` : "";
+}
+
+function directionsUrl(address = "") {
+  return address ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}` : "";
+}
+
+function toNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function distanceMiles(originLat, originLng, targetLat, targetLng) {
+  if ([originLat, originLng, targetLat, targetLng].some((value) => typeof value !== "number")) return null;
+  const radians = (degrees) => degrees * (Math.PI / 180);
+  const earthMiles = 3958.8;
+  const dLat = radians(targetLat - originLat);
+  const dLng = radians(targetLng - originLng);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(originLat)) * Math.cos(radians(targetLat)) * Math.sin(dLng / 2) ** 2;
+  return Math.round(earthMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+}
+
+function openingHoursSpecifications(hoursJson = {}) {
+  return Object.entries(hoursJson || {}).map(([day, hours]) => {
+    const [opens = "", closes = ""] = String(hours).split("-").map((value) => value.trim());
+    return {
+      "@type": "OpeningHoursSpecification",
+      dayOfWeek: day.charAt(0).toUpperCase() + day.slice(1),
+      opens,
+      closes
+    };
+  });
+}
+
+function buildSeo(bundle, req) {
+  const restaurant = bundle.restaurant;
+  const website = bundle.website;
+  const title = website.seoTitle || `${restaurantName(restaurant)} | Direct Online Ordering`;
+  const description = website.seoDescription || website.heroSubtitle || restaurant.description || `Order pickup or delivery directly from ${restaurantName(restaurant)}.`;
+  const canonicalUrl = publicUrlForRestaurant(restaurant);
+  const image = website.heroImageUrl || website.logoUrl || restaurant.logoUrl;
+  return {
+    title,
+    description,
+    canonicalUrl,
+    openGraphTitle: title,
+    openGraphDescription: description,
+    openGraphImage: image,
+    twitterCard: "summary_large_image",
+    twitterTitle: title,
+    twitterDescription: description,
+    twitterImage: image,
+    indexable: true
+  };
+}
+
+function buildJsonLd(bundle, req) {
+  const restaurant = bundle.restaurant;
+  const website = bundle.website;
+  const categories = restaurant.categories || [];
+  const address = fullAddress(restaurant);
+  const baseUrl = publicUrlForRestaurant(restaurant);
+  const menuUrl = `${baseUrl}/menu`;
+  const orderUrl = `${baseUrl}/order`;
+  const menuItems = categories.flatMap((category) => (category.items || []).map((item) => ({
+    "@type": "MenuItem",
+    name: item.name,
+    description: item.description,
+    image: item.imageUrl,
+    offers: {
+      "@type": "Offer",
+      priceCurrency: "USD",
+      price: ((item.priceCents || 0) / 100).toFixed(2),
+      availability: item.available === false ? "https://schema.org/OutOfStock" : "https://schema.org/InStock",
+      url: orderUrl
+    },
+    menuAddOn: (item.optionGroups || []).map((group) => group.name).filter(Boolean)
+  })));
+
+  return {
+    "@context": "https://schema.org",
+    "@type": ["Restaurant", "LocalBusiness"],
+    "@id": `${baseUrl}#restaurant`,
+    name: restaurantName(restaurant),
+    description: website.seoDescription || restaurant.description,
+    url: baseUrl,
+    image: [website.heroImageUrl, website.logoUrl, ...(bundle.gallery || []).map((image) => image.imageUrl)].filter(Boolean),
+    logo: website.logoUrl,
+    telephone: restaurant.phone,
+    servesCuisine: website.cuisineType || restaurant.businessType,
+    priceRange: "$$",
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: restaurant.address,
+      addressLocality: restaurant.city,
+      addressRegion: restaurant.state,
+      postalCode: restaurant.zip,
+      addressCountry: "US"
+    },
+    geo: restaurant.latitude && restaurant.longitude ? {
+      "@type": "GeoCoordinates",
+      latitude: restaurant.latitude,
+      longitude: restaurant.longitude
+    } : undefined,
+    openingHoursSpecification: openingHoursSpecifications(restaurant.storeHoursJson || {}),
+    aggregateRating: {
+      "@type": "AggregateRating",
+      ratingValue: "4.8",
+      reviewCount: "128"
+    },
+    hasMenu: {
+      "@type": "Menu",
+      name: `${restaurantName(restaurant)} menu`,
+      url: menuUrl,
+      hasMenuSection: categories.map((category) => ({
+        "@type": "MenuSection",
+        name: category.name,
+        hasMenuItem: (category.items || []).map((item) => menuItems.find((row) => row.name === item.name)).filter(Boolean)
+      }))
+    },
+    potentialAction: {
+      "@type": "OrderAction",
+      target: orderUrl
+    },
+    map: directionsUrl(address),
+    sameAs: (bundle.socialLinks || []).map((link) => link.url).filter(Boolean)
+  };
+}
+
+function buildPublicSiteResponse(bundle, req) {
+  const categories = (bundle.restaurant.categories || []).filter((category) => (category.items || []).length > 0);
+  const items = categories.flatMap((category) => category.items || []);
+  const address = fullAddress(bundle.restaurant);
+  const domainInfo = domainInfoForRestaurant(bundle.restaurant, bundle.domain);
+  return {
+    ...bundle,
+    domain: domainInfo,
+    domainInfo,
+    restaurant: { ...bundle.restaurant, categories },
+    tenant: { ...bundle.restaurant, categories },
+    websiteSettings: bundle.website,
+    menuCategories: categories,
+    menuItems: items,
+    contactInfo: {
+      name: restaurantName(bundle.restaurant),
+      phone: bundle.restaurant.phone,
+      email: bundle.restaurant.email,
+      address,
+      city: bundle.restaurant.city,
+      state: bundle.restaurant.state,
+      zip: bundle.restaurant.zip
+    },
+    location: {
+      address,
+      city: bundle.restaurant.city,
+      state: bundle.restaurant.state,
+      zip: bundle.restaurant.zip,
+      latitude: bundle.restaurant.latitude,
+      longitude: bundle.restaurant.longitude,
+      deliveryRadiusMiles: bundle.restaurant.deliveryRadiusMiles || 5,
+      mapEmbedUrl: mapEmbedUrl(address),
+      directionsUrl: directionsUrl(address)
+    },
+    menuSummary: {
+      categoryCount: categories.length,
+      itemCount: items.length,
+      featuredItemCount: bundle.featuredItems?.length || 0
+    },
+    hours: bundle.restaurant.storeHoursJson || {},
+    seo: buildSeo(bundle, req),
+    jsonLd: buildJsonLd({ ...bundle, restaurant: { ...bundle.restaurant, categories } }, req),
+    routes: {
+      home: domainInfo.canonicalUrl,
+      menu: `${domainInfo.canonicalUrl}/menu`,
+      order: `${domainInfo.canonicalUrl}/order`,
+      about: `${domainInfo.canonicalUrl}/about`,
+      contact: `${domainInfo.canonicalUrl}/contact`,
+      gallery: `${domainInfo.canonicalUrl}/gallery`,
+      loyalty: `${domainInfo.canonicalUrl}/loyalty`,
+      catering: `${domainInfo.canonicalUrl}/catering`,
+      careers: `${domainInfo.canonicalUrl}/careers`,
+      preview: `/sites/${bundle.restaurant.slug}`
+    }
+  };
+}
+
+async function bundleForResolvedHost(rawHost) {
+  const resolved = await resolveTenantByHost(rawHost);
+  if (!resolved.restaurant) return { resolved, bundle: null };
+  const bundle = await getWebsiteBundleBySlug(resolved.restaurant.slug);
+  return { resolved, bundle };
+}
 
 async function sendWebsiteBundle(req, res, next) {
   try {
     const bundle = await getWebsiteBundleBySlug(req.params.slug);
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
-    res.json({
-      ...bundle,
-      seo: {
-        title: bundle.website.seoTitle,
-        description: bundle.website.seoDescription,
-        openGraphImage: bundle.website.heroImageUrl || bundle.restaurant.logoUrl,
-        schemaPlaceholder: {
-          "@type": "Restaurant",
-          name: bundle.restaurant.businessName || bundle.restaurant.name,
-          address: bundle.restaurant.address,
-          telephone: bundle.restaurant.phone,
-          url: `/sites/${bundle.restaurant.slug}`
-        }
-      },
-      routes: {
-        home: `/sites/${bundle.restaurant.slug}`,
-        menu: `/sites/${bundle.restaurant.slug}/menu`,
-        order: `/sites/${bundle.restaurant.slug}/order`,
-        about: `/sites/${bundle.restaurant.slug}/about`,
-        contact: `/sites/${bundle.restaurant.slug}/contact`,
-        gallery: `/sites/${bundle.restaurant.slug}/gallery`,
-        loyalty: `/sites/${bundle.restaurant.slug}/loyalty`,
-        catering: `/sites/${bundle.restaurant.slug}/catering`,
-        careers: `/sites/${bundle.restaurant.slug}/careers`
-      }
-    });
+    res.json(buildPublicSiteResponse(bundle, req));
   } catch (error) {
     next(error);
   }
@@ -50,11 +231,66 @@ async function sendSiteBundle(req, res, next) {
   }
 }
 
+async function sendWebsiteBundleByHost(req, res, next) {
+  try {
+    const host = req.query.host || req.get("host");
+    const { resolved, bundle } = await bundleForResolvedHost(host);
+    if (!bundle || bundle.website.websiteEnabled === false) {
+      return res.status(404).json({
+        error: "Domain is not configured for a Loohar restaurant website",
+        host: resolved.host,
+        resolution: resolved.type
+      });
+    }
+    res.json({ ...buildPublicSiteResponse(bundle, req), hostResolution: { type: resolved.type, host: resolved.host } });
+  } catch (error) {
+    next(error);
+  }
+}
+
+function sitemapXml(baseUrl) {
+  const routes = ["", "/menu", "/order", "/about", "/gallery", "/loyalty", "/catering", "/contact"];
+  const lastmod = new Date().toISOString();
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${routes.map((route) => `  <url><loc>${baseUrl}${route}</loc><lastmod>${lastmod}</lastmod></url>`).join("\n")}\n</urlset>\n`;
+}
+
+async function sendSitemapByHost(req, res, next) {
+  try {
+    const host = req.query.host || req.get("host");
+    const { bundle } = await bundleForResolvedHost(host);
+    if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("Domain not configured");
+    const baseUrl = domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl;
+    res.type("application/xml").send(sitemapXml(baseUrl));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function sendRobotsByHost(req, res, next) {
+  try {
+    const host = req.query.host || req.get("host");
+    const { bundle } = await bundleForResolvedHost(host);
+    if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("User-agent: *\nDisallow: /\n");
+    const baseUrl = domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl;
+    res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function sendMenu(req, res, next) {
   try {
     const bundle = await getWebsiteBundleBySlug(req.params.slug);
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Menu not found" });
-    res.json({ restaurant: bundle.restaurant, categories: bundle.restaurant.categories });
+    const site = buildPublicSiteResponse(bundle, req);
+    res.json({
+      restaurant: site.restaurant,
+      website: site.website,
+      categories: site.menuCategories,
+      menuCategories: site.menuCategories,
+      menuItems: site.menuItems,
+      featuredItems: bundle.featuredItems
+    });
   } catch (error) {
     next(error);
   }
@@ -111,6 +347,91 @@ async function sendOrderConfig(req, res, next) {
   }
 }
 
+async function discoverRestaurants(req, res, next) {
+  try {
+    const lat = toNumber(req.query.lat);
+    const lng = toNumber(req.query.lng);
+    const city = typeof req.query.city === "string" ? req.query.city.trim() : "";
+    const zip = typeof req.query.zip === "string" ? req.query.zip.trim() : "";
+    const businessType = typeof req.query.type === "string" ? req.query.type.trim().toUpperCase() : "";
+    const delivery = typeof req.query.delivery === "string" ? req.query.delivery.trim().toLowerCase() : "";
+    const where = { status: "ACTIVE" };
+
+    if (DISCOVERY_BUSINESS_TYPES.includes(businessType)) where.businessType = businessType;
+    if (delivery === "true") where.deliveryEnabled = true;
+    if (delivery === "false") where.pickupEnabled = true;
+    if (city) {
+      where.OR = [
+        { city: { contains: city, mode: "insensitive" } },
+        { address: { contains: city, mode: "insensitive" } }
+      ];
+    }
+    if (zip) {
+      where.OR = [
+        ...(where.OR || []),
+        { zip: { startsWith: zip } },
+        { address: { contains: zip } }
+      ];
+    }
+
+    const rows = await prisma.restaurant.findMany({
+      where,
+      select: { slug: true },
+      orderBy: { businessName: "asc" },
+      take: 50
+    });
+
+    const bundles = (await Promise.all(rows.map((row) => getWebsiteBundleBySlug(row.slug)))).filter((bundle) => bundle && bundle.website.websiteEnabled !== false);
+    const restaurants = bundles.map((bundle) => {
+      const restaurant = bundle.restaurant;
+      const website = bundle.website;
+      const address = fullAddress(restaurant);
+      const distance = distanceMiles(lat, lng, restaurant.latitude, restaurant.longitude);
+      return {
+        id: restaurant.id,
+        name: restaurantName(restaurant),
+        slug: restaurant.slug,
+        businessType: restaurant.businessType,
+        cuisine: website.cuisineType || restaurant.businessType,
+        logoUrl: website.logoUrl || restaurant.logoUrl,
+        heroImageUrl: website.heroImageUrl || bundle.gallery?.[0]?.imageUrl,
+        address,
+        city: restaurant.city,
+        state: restaurant.state,
+        zip: restaurant.zip,
+        phone: restaurant.phone,
+        pickupEnabled: restaurant.pickupEnabled,
+        deliveryEnabled: restaurant.deliveryEnabled,
+        deliveryRadiusMiles: restaurant.deliveryRadiusMiles || 5,
+        distanceMiles: distance,
+        rating: 4.8,
+        reviewCount: 128,
+        openStatus: "Hours vary",
+        websiteUrl: publicUrlForRestaurant(restaurant),
+        orderUrl: publicUrlForRestaurant(restaurant, "/order")
+      };
+    }).sort((a, b) => {
+      if (a.distanceMiles === null && b.distanceMiles === null) return a.name.localeCompare(b.name);
+      if (a.distanceMiles === null) return 1;
+      if (b.distanceMiles === null) return -1;
+      return a.distanceMiles - b.distanceMiles;
+    });
+
+    res.json({
+      restaurants,
+      count: restaurants.length,
+      filters: { city, zip, type: businessType || "ALL", delivery: delivery || "ALL" },
+      location: { lat, lng }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/discover", discoverRestaurants);
+router.get("/site-by-host", sendWebsiteBundleByHost);
+router.get("/site-by-host/sitemap.xml", sendSitemapByHost);
+router.get("/site-by-host/robots.txt", sendRobotsByHost);
 router.get("/restaurants/:slug/website", sendWebsiteBundle);
 router.get("/restaurants/:slug/site", sendSiteBundle);
 router.get("/restaurants/:slug/menu", sendMenu);

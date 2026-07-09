@@ -9,17 +9,30 @@ datasource db {
 
 enum UserRole {
   SUPER_ADMIN
+  TENANT_OWNER
+  RESTAURANT_ADMIN
   RESTAURANT_OWNER
   RESTAURANT_MANAGER
+  CASHIER
   KITCHEN_STAFF
   DRIVER
   CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  INVITED
+  PASSWORD_RESET_REQUIRED
+  SUSPENDED
+  DELETED
 }
 
 enum RestaurantStatus {
   ACTIVE
   SUSPENDED
   PENDING
+  DELETED
 }
 
 enum BusinessType {
@@ -67,7 +80,9 @@ enum DeliveryStatus {
   ARRIVED_AT_RESTAURANT
   PICKED_UP
   ON_THE_WAY
+  ARRIVED_AT_CUSTOMER
   DELIVERED
+  ISSUE_REPORTED
   CANCELLED
 }
 
@@ -111,14 +126,18 @@ enum DomainStatus {
   NOT_CONFIGURED
   PENDING_VERIFICATION
   VERIFIED
+  SSL_PENDING
   ACTIVE
+  FAILED
   ERROR
 }
 
 enum SslStatus {
   NOT_CONFIGURED
   PENDING
+  SSL_PENDING
   ACTIVE
+  FAILED
   ERROR
 }
 
@@ -129,14 +148,37 @@ model User {
   name            String
   phone           String?
   role            UserRole
+  status          UserStatus       @default(ACTIVE)
+  forcePasswordChange Boolean      @default(false)
+  temporaryPassword Boolean        @default(false)
+  passwordChangedAt DateTime?
+  lastLoginAt    DateTime?
+  mfaEnabled      Boolean          @default(false)
+  mfaSetupStatus  String           @default("NOT_CONFIGURED")
+  mfaSecret       String?
+  mfaVerifiedAt   DateTime?
   restaurantId    String?
   restaurant      Restaurant?      @relation(fields: [restaurantId], references: [id])
   staffProfile    RestaurantStaff?
   customerProfile Customer?
   driverProfile   Driver?
+  passwordResetTokens PasswordResetToken[]
   auditLogs       AuditLog[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id])
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Restaurant {
@@ -158,6 +200,9 @@ model Restaurant {
   state               String?
   zip                 String?
   timezone            String                     @default("America/Denver")
+  latitude            Float?
+  longitude           Float?
+  deliveryRadiusMiles Float?
   deliveryEnabled     Boolean                    @default(true)
   pickupEnabled       Boolean                    @default(true)
   deliveryFeeCents    Int                        @default(399)
@@ -180,6 +225,10 @@ model Restaurant {
   galleryImages       RestaurantGalleryImage[]
   socialLinks         RestaurantSocialLink[]
   subscriptions       TenantSubscription[]
+  printerSettings     RestaurantPrinterSettings?
+  notificationSettings RestaurantNotificationSettings?
+  deliveryZones       DeliveryZone[]
+  inventoryItems      InventoryItem[]
   auditLogs           AuditLog[]
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
@@ -191,6 +240,7 @@ model RestaurantStaff {
   userId       String     @unique
   role         UserRole
   active       Boolean    @default(true)
+  permissionsJson Json?
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   user         User       @relation(fields: [userId], references: [id])
   createdAt    DateTime   @default(now())
@@ -321,9 +371,21 @@ model Order {
   deliveryFeeCents Int                  @default(0)
   taxCents         Int                  @default(0)
   tipCents         Int                  @default(0)
+  restaurantTipCents Int                @default(0)
+  driverTipCents  Int                  @default(0)
+  customTipCents  Int                  @default(0)
+  tipPercentage   Int?
+  tipType         String               @default("NONE")
+  tipStatus       String               @default("COLLECTED")
+  tipCollectedAt  DateTime?
+  tipCollectedByUserId String?
+  tipUpdatedAt    DateTime?
+  tipRefundedCents Int                 @default(0)
   totalCents       Int
   deliveryAddress  String?
   notes            String?
+  trackingTokenHash String?            @unique
+  trackingTokenExpiresAt DateTime?
   restaurant       Restaurant           @relation(fields: [restaurantId], references: [id])
   customer         Customer             @relation(fields: [customerId], references: [id])
   items            OrderItem[]
@@ -336,6 +398,7 @@ model Order {
 
   @@unique([restaurantId, orderNumber])
   @@unique([id, restaurantId])
+  @@index([trackingTokenExpiresAt])
 }
 
 model OrderItem {
@@ -370,6 +433,9 @@ model Delivery {
   tipCents          Int                     @default(0)
   pickupAddress     String
   dropoffAddress    String
+  claimedAt         DateTime?
+  pickedUpAt        DateTime?
+  deliveredAt       DateTime?
   restaurant        Restaurant              @relation(fields: [restaurantId], references: [id])
   order             Order                   @relation(fields: [orderId], references: [id])
   driver            Driver?                 @relation(fields: [driverId], references: [id])
@@ -396,6 +462,8 @@ model Payment {
   provider             String        @default("stripe_placeholder")
   providerPaymentId    String?
   providerClientSecret String?
+  stripeCustomerId     String?
+  stripePaymentIntentId String?
   status               PaymentStatus @default(PENDING)
   amountCents          Int
   technologyFeeCents   Int           @default(0)
@@ -481,6 +549,10 @@ model RestaurantWebsiteSettings {
   logoUrl          String?
   brandColor       String     @default("#1f9d80")
   accentColor      String     @default("#f4b740")
+  headingFont      String?
+  bodyFont         String?
+  sectionSettingsJson Json?
+  storeHoursJson   Json?
   aboutTitle       String?
   aboutStory       String?
   missionStatement String?
@@ -497,16 +569,21 @@ model RestaurantDomain {
   id               String       @id @default(cuid())
   restaurantId     String
   defaultSubdomain String
+  primaryDomain    String?
   customDomain     String?
+  canonicalDomain  String?
   domainStatus     DomainStatus @default(NOT_CONFIGURED)
   dnsTarget        String       @default("sites.loohar.com")
   sslStatus        SslStatus    @default(NOT_CONFIGURED)
+  domainVerifiedAt DateTime?
   restaurant       Restaurant   @relation(fields: [restaurantId], references: [id])
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
   @@unique([restaurantId, defaultSubdomain])
   @@unique([customDomain])
+  @@index([primaryDomain])
+  @@index([canonicalDomain])
 }
 
 model RestaurantGalleryImage {
@@ -529,6 +606,74 @@ model RestaurantSocialLink {
   createdAt    DateTime   @default(now())
 }
 
+model RestaurantPrinterSettings {
+  id                         String     @id @default(cuid())
+  restaurantId               String     @unique
+  kitchenPrinterName         String?
+  kitchenPrinterEnabled      Boolean    @default(false)
+  frontCounterPrinterName    String?
+  frontCounterPrinterEnabled Boolean    @default(false)
+  autoPrintKitchenTickets    Boolean    @default(false)
+  autoPrintCustomerReceipts  Boolean    @default(false)
+  provider                   String     @default("browser_print")
+  settingsJson               Json?
+  restaurant                 Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt                  DateTime   @default(now())
+  updatedAt                  DateTime   @updatedAt
+}
+
+model RestaurantNotificationSettings {
+  id                     String     @id @default(cuid())
+  restaurantId           String     @unique
+  smsEnabled             Boolean    @default(false)
+  emailEnabled           Boolean    @default(true)
+  orderConfirmedSms      Boolean    @default(false)
+  orderReadySms          Boolean    @default(false)
+  outForDeliverySms      Boolean    @default(false)
+  deliveredSms           Boolean    @default(false)
+  orderConfirmationEmail Boolean    @default(true)
+  receiptEmail           Boolean    @default(true)
+  passwordResetEmail     Boolean    @default(true)
+  welcomeEmail           Boolean    @default(true)
+  providerSettingsJson   Json?
+  restaurant             Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+}
+
+model DeliveryZone {
+  id                String     @id @default(cuid())
+  restaurantId      String
+  name              String
+  radiusMiles       Float
+  deliveryFeeCents  Int        @default(0)
+  minimumOrderCents Int        @default(0)
+  active            Boolean    @default(true)
+  mapSettingsJson   Json?
+  restaurant        Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([restaurantId, name])
+}
+
+model InventoryItem {
+  id           String     @id @default(cuid())
+  restaurantId String
+  name         String
+  quantity     Float      @default(0)
+  unit         String     @default("unit")
+  costCents    Int        @default(0)
+  lowStockAt   Float?
+  active       Boolean    @default(true)
+  notes        String?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([restaurantId, name])
+}
+
 model SubscriptionPlan {
   id                String               @id @default(cuid())
   code              SubscriptionPlanCode @unique
@@ -548,6 +693,9 @@ model TenantSubscription {
   active             Boolean          @default(true)
   currentPeriodStart DateTime         @default(now())
   currentPeriodEnd   DateTime?
+  renewalDate        DateTime?
+  stripeCustomerId   String?
+  stripeSubscriptionId String?
   restaurant         Restaurant       @relation(fields: [restaurantId], references: [id])
   plan               SubscriptionPlan @relation(fields: [planId], references: [id])
 }
