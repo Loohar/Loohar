@@ -573,7 +573,7 @@ model RestaurantDomain {
   customDomain     String?
   canonicalDomain  String?
   domainStatus     DomainStatus @default(NOT_CONFIGURED)
-  dnsTarget        String       @default("sites.loohar.com")
+  dnsTarget        String       @default("cname.vercel-dns.com")
   sslStatus        SslStatus    @default(NOT_CONFIGURED)
   domainVerifiedAt DateTime?
   restaurant       Restaurant   @relation(fields: [restaurantId], references: [id])

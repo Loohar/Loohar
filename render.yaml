@@ -33,7 +33,7 @@ services:
       - key: ADMIN_URL
         value: https://admin.loohar.com
       - key: API_URL
-        value: https://api.loohar.com
+        value: https://loohar.com/api
       - key: PLATFORM_URL
         value: https://loohar.com
       - key: DRIVER_APP_URL
@@ -41,9 +41,11 @@ services:
       - key: TENANT_ROOT_DOMAIN
         value: loohar.com
       - key: PUBLIC_SITE_FALLBACK_URL
-        value: https://sites.loohar.com
+        value: https://loohar.com
       - key: CORS_ORIGINS
-        value: https://loohar.com,https://www.loohar.com,https://admin.loohar.com,https://app.loohar.com,https://driver.loohar.com,https://sites.loohar.com,https://loohar.vercel.app
+        value: https://loohar.com,https://www.loohar.com,https://admin.loohar.com,https://app.loohar.com,https://driver.loohar.com,https://loohar.vercel.app
+      - key: TENANT_CNAME_TARGET
+        value: cname.vercel-dns.com
       - key: ALLOW_LOCAL_CORS
         value: "false"
       - key: ALLOW_TENANT_SUBDOMAIN_CORS

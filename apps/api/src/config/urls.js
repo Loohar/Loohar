@@ -1,9 +1,9 @@
 const productionUrls = {
   app: "https://app.loohar.com",
-  api: "https://api.loohar.com",
+  api: "https://loohar.com/api",
   admin: "https://admin.loohar.com",
   platform: "https://loohar.com",
-  publicSiteFallback: "https://sites.loohar.com",
+  publicSiteFallback: "https://loohar.com",
   driver: "https://driver.loohar.com"
 };
 

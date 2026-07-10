@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const apiOrigin = (process.env.PRODUCTION_SMOKE_API_URL || "https://api.loohar.com").replace(/\/+$/, "");
+const apiOrigin = (process.env.PRODUCTION_SMOKE_API_URL || "https://loohar.com").replace(/\/+$/, "");
 const appOrigin = (process.env.PRODUCTION_SMOKE_APP_URL || "https://app.loohar.com").replace(/\/+$/, "");
 const tenantRootDomain = process.env.PRODUCTION_SMOKE_TENANT_ROOT_DOMAIN || "loohar.com";
 const tenantSiteOrigin = (process.env.PRODUCTION_SMOKE_TENANT_SITE_URL || `https://loohar-restaurant.${tenantRootDomain}`).replace(/\/+$/, "");

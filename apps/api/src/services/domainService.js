@@ -1,7 +1,8 @@
 import { prisma } from "../config/prisma.js";
 import { tenantRootDomain } from "../config/urls.js";
 
-const reservedLooharHosts = new Set(["loohar.com", "www.loohar.com", "admin.loohar.com", "app.loohar.com", "driver.loohar.com", "api.loohar.com", "sites.loohar.com"]);
+const reservedLooharSubdomains = ["www", "admin", "app", "driver", "api", "sites"];
+const reservedLooharHosts = new Set(["loohar.com", ...reservedLooharSubdomains.map((subdomain) => `${subdomain}.${tenantRootDomain()}`)]);
 const verifiedDomainStatuses = new Set(["VERIFIED", "SSL_PENDING", "ACTIVE"]);
 const activeSslStatuses = new Set(["SSL_PENDING", "ACTIVE"]);
 const hostPattern = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.localhost$/;

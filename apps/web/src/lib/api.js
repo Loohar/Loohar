@@ -1,4 +1,4 @@
-const configuredApiUrl = import.meta.env.VITE_API_URL || "https://api.loohar.com";
+const configuredApiUrl = import.meta.env.VITE_API_URL || "/api";
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
 const configuredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
