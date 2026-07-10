@@ -33,6 +33,9 @@ export async function api(path, options = {}) {
       localStorage.removeItem("accessToken");
       localStorage.removeItem("refreshToken");
       localStorage.removeItem("user");
+      if (globalThis.window?.dispatchEvent && typeof globalThis.window.CustomEvent === "function") {
+        globalThis.window.dispatchEvent(new globalThis.window.CustomEvent("loohar:auth-expired"));
+      }
     }
     throw new Error(payload.error || `Request failed with ${response.status}`);
   }

@@ -54,6 +54,21 @@ function assertNoLocalUrls(name, payload) {
   else pass(name, "no localhost/loopback URLs");
 }
 
+function assertTenantIsolated(name, payload, expectedSlug, forbiddenTerms = []) {
+  const actualSlug = payload?.restaurant?.slug || payload?.tenant?.slug || payload?.slug || "";
+  const serialized = JSON.stringify(payload || {});
+  const leakedTerm = forbiddenTerms.find((term) => serialized.includes(term));
+  if (actualSlug !== expectedSlug) {
+    fail(name, `expected ${expectedSlug}, got ${actualSlug || "missing slug"}`);
+    return;
+  }
+  if (leakedTerm) {
+    fail(name, `contains forbidden cross-tenant term: ${leakedTerm}`);
+    return;
+  }
+  pass(name, expectedSlug);
+}
+
 function walkFiles(path, visitor) {
   if (!existsSync(path)) return;
   const stat = statSync(path);
@@ -104,6 +119,14 @@ if (liveMode) {
   assertNoLocalUrls("Production public site no-localhost URLs", publicSite);
   const tenantHostSite = await requestJson("Production tenant host resolver", `${apiOrigin}/api/public/site-by-host?host=loohar-restaurant.${tenantRootDomain}`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug));
   assertNoLocalUrls("Production tenant host no-localhost URLs", tenantHostSite);
+  const kathmanduForbidden = ["Demo Bistro", "demo-bistro", "Seasonal American Bistro"];
+  const kathmanduSite = await requestJson("Production Kathmandu site resolves exact tenant", `${apiOrigin}/api/public/sites/kathmandu-restaurant-ii`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
+  assertTenantIsolated("Production Kathmandu site has no Demo Bistro leakage", kathmanduSite, "kathmandu-restaurant-ii", kathmanduForbidden);
+  const kathmanduMenu = await requestJson("Production Kathmandu menu resolves exact tenant", `${apiOrigin}/api/public/sites/kathmandu-restaurant-ii/menu`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
+  assertTenantIsolated("Production Kathmandu menu has no Demo Bistro leakage", kathmanduMenu, "kathmandu-restaurant-ii", kathmanduForbidden);
+  const kathmanduHost = await requestJson("Production Kathmandu tenant host resolver", `${apiOrigin}/api/public/site-by-host?host=kathmandu-restaurant-ii.${tenantRootDomain}`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
+  assertTenantIsolated("Production Kathmandu host has no Demo Bistro leakage", kathmanduHost, "kathmandu-restaurant-ii", kathmanduForbidden);
+  await requestJson("Production unknown tenant returns 404", `${apiOrigin}/api/public/sites/not-a-real-loohar-tenant`, {}, (response) => response.status === 404);
   await requestJson("Production upload endpoint rejects anonymous", `${apiOrigin}/api/uploads/gallery`, { method: "POST", body: JSON.stringify({}) }, (response) => response.status === 401);
   await requestJson("Production CORS allows Loohar app origin", `${apiOrigin}/health`, { headers: { Origin: appOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === appOrigin);
   await requestJson("Production CORS allows tenant subdomain origin", `${apiOrigin}/health`, { headers: { Origin: tenantSiteOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === tenantSiteOrigin);
@@ -133,6 +156,11 @@ if (liveMode) {
   skip("Production create tenant safe check", "Set PRODUCTION_SMOKE_LIVE=true and smoke credentials after deployment");
   skip("Production public site fallback load", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
   skip("Production tenant host resolver", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production Kathmandu site resolves exact tenant", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production Kathmandu menu resolves exact tenant", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production Kathmandu tenant host resolver", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production Kathmandu tenant isolation", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
+  skip("Production unknown tenant returns 404", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
   skip("Production upload endpoint rejects anonymous", "Set PRODUCTION_SMOKE_LIVE=true after deployment");
   skip("Production order tracking route", "Requires live order token after deployment");
   skip("Production driver QR route", "Requires live driver session after deployment");

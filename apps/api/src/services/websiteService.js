@@ -84,7 +84,8 @@ function completeWebsiteSettings(restaurant, websiteSettings) {
 }
 
 function completeGallery(restaurant, galleryImages, website) {
-  const source = Array.isArray(galleryImages) && galleryImages.length ? galleryImages : DEFAULT_GALLERY_IMAGES.map((image, index) => ({
+  const ownedGalleryImages = (galleryImages || []).filter((image) => image.restaurantId === restaurant.id);
+  const source = ownedGalleryImages.length ? ownedGalleryImages : DEFAULT_GALLERY_IMAGES.map((image, index) => ({
     id: `${restaurant.slug || restaurant.id}-gallery-${index + 1}`,
     restaurantId: restaurant.id,
     sortOrder: index + 1,
@@ -102,10 +103,10 @@ function completeGallery(restaurant, galleryImages, website) {
   });
 }
 
-function completeCategories(categories, website) {
-  return (categories || []).map((category, categoryIndex) => ({
+function completeCategories(categories, website, restaurantId) {
+  return (categories || []).filter((category) => category.restaurantId === restaurantId).map((category, categoryIndex) => ({
     ...category,
-    items: (category.items || []).map((item, itemIndex) => ({
+    items: (category.items || []).filter((item) => item.restaurantId === restaurantId).map((item, itemIndex) => ({
       ...item,
       imageUrl: resolveImage(item.imageUrl, website.heroImageUrl, DEFAULT_MENU_IMAGES[(categoryIndex + itemIndex) % DEFAULT_MENU_IMAGES.length])
     }))
@@ -133,7 +134,7 @@ export async function getWebsiteBundleBySlug(slug) {
   const websiteRecord = restaurant.websiteSettings || await ensureWebsiteSettings(restaurant);
   const website = completeWebsiteSettings(restaurant, websiteRecord);
   const domain = domainInfoForRestaurant(restaurant, restaurant.domains[0] || await ensureDomain(restaurant));
-  const categories = completeCategories(restaurant.categories, website);
+  const categories = completeCategories(restaurant.categories, website, restaurant.id);
   const completedRestaurant = {
     ...restaurant,
     logoUrl: website.logoUrl,

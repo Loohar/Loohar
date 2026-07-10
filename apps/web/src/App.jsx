@@ -407,9 +407,21 @@ async function openReceiptPrintWindow(receipt) {
   printWindow.setTimeout(() => printWindow.print(), 500);
 }
 
-function normalizePublicRestaurant(payload) {
-  if (!payload) return demoRestaurant;
+function normalizePublicRestaurant(payload, fallback = demoRestaurant) {
+  if (!payload) return fallback;
   return payload.restaurant || payload;
+}
+
+function emptyPublicRestaurant(slug = "") {
+  return {
+    slug,
+    name: "Restaurant",
+    businessName: "Restaurant",
+    categories: [],
+    pickupEnabled: false,
+    deliveryEnabled: false,
+    deliveryFeeCents: 0
+  };
 }
 
 function readable(value = "") {
@@ -619,11 +631,11 @@ function websitePathParts() {
   const hostRoute = tenantHostRouteInfo();
   if (hostRoute.isTenantHost) {
     const [, page = "home"] = window.location.pathname.split("/");
-    return { slug: hostRoute.slug || "demo-bistro", page: page || "home", byHost: true, host: hostRoute.host };
+    return { slug: hostRoute.slug || "", page: page || "home", byHost: true, host: hostRoute.host };
   }
   const [, root, slug, page = "home"] = window.location.pathname.split("/");
   if (root !== "sites") return null;
-  return { slug: slug || "demo-bistro", page, byHost: false, host: "" };
+  return { slug: slug || "", page, byHost: false, host: "" };
 }
 
 function normalizeBrowserHost(value = window.location.hostname) {
@@ -682,67 +694,108 @@ function findFallbackByIdentity(items = [], source = {}, index = 0) {
   return items.find((item) => item.id === source.id || item.name === source.name) || items[index] || {};
 }
 
-function withSafePublicImages(liveBundle, fallbackBundle = demoWebsiteBundle("demo-bistro")) {
+function publicRestaurantName(profile = {}) {
+  return profile.businessName || profile.publicBusinessName || profile.name || "Restaurant";
+}
+
+function defaultPublicWebsiteFields(restaurant = {}) {
+  const name = publicRestaurantName(restaurant);
+  const cuisineType = restaurant.businessType ? readable(restaurant.businessType) : "Restaurant";
+  return {
+    websiteEnabled: true,
+    heroTitle: name,
+    heroSubtitle: restaurant.description || `Order directly from ${name}.`,
+    tagline: cuisineType,
+    cuisineType,
+    heroImageUrl: resolveImage(restaurant.brandingJson?.bannerImageUrl, restaurant.logoUrl, defaultLooharImage),
+    logoUrl: resolveImage(restaurant.logoUrl, restaurant.brandingJson?.bannerImageUrl, defaultLooharImage),
+    brandColor: restaurant.brandingJson?.primaryColor || "#111827",
+    accentColor: restaurant.brandingJson?.accentColor || "#f59e0b",
+    headingFont: "inherit",
+    bodyFont: "inherit",
+    sectionSettingsJson: websiteSectionDefaults,
+    aboutTitle: `About ${name}`,
+    aboutStory: restaurant.description || `${name} is preparing its restaurant story. Please check back soon.`,
+    missionStatement: "Serve guests directly with simple pickup, delivery, loyalty, and restaurant-owned ordering.",
+    ownerStory: "This restaurant is setting up its direct ordering website.",
+    specialOfferText: "Order direct for restaurant-owned rewards.",
+    seoTitle: `${name} | Direct Online Ordering`,
+    seoDescription: restaurant.description || `Order pickup or delivery directly from ${name}.`
+  };
+}
+
+function withSafePublicImages(liveBundle, fallbackBundle = null) {
   const live = liveBundle || {};
-  const fallback = fallbackBundle || demoWebsiteBundle("demo-bistro");
-  const liveRestaurant = live.restaurant || {};
-  const fallbackRestaurant = fallback.restaurant || demoRestaurant;
-  const liveWebsite = live.website || {};
-  const fallbackWebsite = fallback.website || demoWebsiteSettings;
-  const fallbackGallery = Array.isArray(fallback.gallery) && fallback.gallery.length ? fallback.gallery : demoGallery;
+  const usingDemoFallback = Boolean(fallbackBundle);
+  const fallback = fallbackBundle || {};
+  const liveRestaurant = live.restaurant || live.tenant || {};
+  const fallbackRestaurant = usingDemoFallback ? fallback.restaurant || demoRestaurant : {};
+  const baseRestaurant = usingDemoFallback ? { ...fallbackRestaurant, ...liveRestaurant } : { ...liveRestaurant };
+  const liveWebsite = live.website || live.websiteSettings || {};
+  const fallbackWebsite = usingDemoFallback ? fallback.website || demoWebsiteSettings : {};
+  const defaultWebsite = defaultPublicWebsiteFields(baseRestaurant);
+  const fallbackGallery = usingDemoFallback && Array.isArray(fallback.gallery) && fallback.gallery.length ? fallback.gallery : [];
   const liveGallery = Array.isArray(live.gallery) ? live.gallery : [];
-  const heroImageUrl = resolveImage(liveWebsite.heroImageUrl, fallbackWebsite.heroImageUrl || fallbackGallery[0]?.imageUrl);
+  const heroImageUrl = resolveImage(liveWebsite.heroImageUrl, fallbackWebsite.heroImageUrl || fallbackGallery[0]?.imageUrl, defaultWebsite.heroImageUrl);
   const logoUrl = resolveImage(liveWebsite.logoUrl || liveRestaurant.logoUrl, fallbackWebsite.logoUrl || fallbackRestaurant.logoUrl, heroImageUrl);
   const website = {
-    ...fallbackWebsite,
+    ...defaultWebsite,
+    ...(usingDemoFallback ? fallbackWebsite : {}),
     ...liveWebsite,
     heroImageUrl,
     logoUrl,
-    brandColor: liveWebsite.brandColor || fallbackWebsite.brandColor || "#1f9d80",
-    accentColor: liveWebsite.accentColor || fallbackWebsite.accentColor || "#f4b740"
+    brandColor: liveWebsite.brandColor || fallbackWebsite.brandColor || defaultWebsite.brandColor,
+    accentColor: liveWebsite.accentColor || fallbackWebsite.accentColor || defaultWebsite.accentColor,
+    sectionSettingsJson: { ...websiteSectionDefaults, ...(fallbackWebsite.sectionSettingsJson || {}), ...(liveWebsite.sectionSettingsJson || {}) }
   };
-  const sourceGallery = liveGallery.length ? liveGallery : fallbackGallery;
+  const sourceGallery = liveGallery.length ? liveGallery : usingDemoFallback ? fallbackGallery : [];
   const gallery = sourceGallery.map((image, index) => {
-    const fallbackImage = fallbackGallery[index] || fallbackGallery[0] || {};
+    const fallbackImage = usingDemoFallback ? fallbackGallery[index] || fallbackGallery[0] || {} : {};
     return {
-      ...fallbackImage,
+      ...(usingDemoFallback ? fallbackImage : {}),
       ...image,
       id: image.id || fallbackImage.id || `gallery-${index}`,
-      altText: image.altText || fallbackImage.altText || `${liveRestaurant.businessName || liveRestaurant.name || fallbackRestaurant.name || "Restaurant"} photo`,
+      altText: image.altText || fallbackImage.altText || `${publicRestaurantName(baseRestaurant)} photo`,
       imageUrl: resolveImage(image.imageUrl, fallbackImage.imageUrl, heroImageUrl)
     };
   });
-  const fallbackCategories = Array.isArray(fallbackRestaurant.categories) ? fallbackRestaurant.categories : [];
+  const fallbackCategories = usingDemoFallback && Array.isArray(fallbackRestaurant.categories) ? fallbackRestaurant.categories : [];
   const liveCategories = Array.isArray(liveRestaurant.categories) ? liveRestaurant.categories : [];
-  const sourceCategories = liveCategories.length ? liveCategories : fallbackCategories;
+  const sourceCategories = liveCategories.length ? liveCategories : usingDemoFallback ? fallbackCategories : [];
   const categories = sourceCategories.map((category, categoryIndex) => {
-    const fallbackCategory = findFallbackByIdentity(fallbackCategories, category, categoryIndex);
+    const fallbackCategory = usingDemoFallback ? findFallbackByIdentity(fallbackCategories, category, categoryIndex) : {};
     const sourceItems = Array.isArray(category.items) ? category.items : [];
     const fallbackItems = Array.isArray(fallbackCategory.items) ? fallbackCategory.items : [];
     const items = sourceItems.map((item, itemIndex) => {
-      const fallbackItem = findFallbackByIdentity(fallbackItems, item, itemIndex);
+      const fallbackItem = usingDemoFallback ? findFallbackByIdentity(fallbackItems, item, itemIndex) : {};
       return {
-        ...fallbackItem,
+        ...(usingDemoFallback ? fallbackItem : {}),
         ...item,
         imageUrl: resolveImage(item.imageUrl, fallbackItem.imageUrl, heroImageUrl)
       };
     });
-    return { ...fallbackCategory, ...category, items };
+    return { ...(usingDemoFallback ? fallbackCategory : {}), ...category, items };
   });
   const restaurant = {
-    ...fallbackRestaurant,
+    ...(usingDemoFallback ? fallbackRestaurant : {}),
     ...liveRestaurant,
+    name: liveRestaurant.name || liveRestaurant.businessName || fallbackRestaurant.name || "Restaurant",
+    businessName: liveRestaurant.businessName || liveRestaurant.publicBusinessName || liveRestaurant.name || fallbackRestaurant.businessName || fallbackRestaurant.name || "Restaurant",
     logoUrl,
     categories
   };
   return {
-    ...fallback,
+    ...(usingDemoFallback ? fallback : {}),
     ...live,
     restaurant,
+    tenant: { ...(live.tenant || restaurant), categories },
     website,
+    websiteSettings: website,
     gallery,
+    socialLinks: Array.isArray(live.socialLinks) ? live.socialLinks : usingDemoFallback && Array.isArray(fallback.socialLinks) ? fallback.socialLinks : [],
+    featuredItems: Array.isArray(live.featuredItems) ? live.featuredItems : categories.flatMap((category) => category.items || []).filter((item) => item.featured || item.recommended).slice(0, 8),
     seo: {
-      ...(fallback.seo || {}),
+      ...(usingDemoFallback ? fallback.seo || {} : {}),
       ...(live.seo || {}),
       openGraphImage: resolveImage(live.seo?.openGraphImage, fallback.seo?.openGraphImage, heroImageUrl)
     }
@@ -880,25 +933,32 @@ function PublicSiteSkeleton({ premium = false }) {
 
 function PublicRestaurantSite({ apiOnline }) {
   const route = websitePathParts();
-  const slug = route?.slug || "demo-bistro";
+  const slug = route?.slug || "";
   const page = route?.page || "home";
-  const [bundle, setBundle] = useState(() => apiOnline ? null : withSafePublicImages(demoWebsiteBundle(slug), demoWebsiteBundle(slug)));
+  const [bundle, setBundle] = useState(() => !apiOnline && slug ? withSafePublicImages(demoWebsiteBundle(slug), demoWebsiteBundle(slug)) : null);
   const [loading, setLoading] = useState(apiOnline);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const fallbackBundle = demoWebsiteBundle(slug);
+    if (!route || (!route.byHost && !slug)) {
+      setBundle(null);
+      setLoading(false);
+      setError("Restaurant website not found.");
+      return;
+    }
     if (!apiOnline) {
+      const fallbackBundle = demoWebsiteBundle(slug || "demo-bistro");
       setLoading(false);
       setBundle(withSafePublicImages(fallbackBundle, fallbackBundle));
       return;
     }
     setLoading(true);
     setError("");
+    setBundle(null);
     const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/sites/${slug}`;
     api(endpoint)
       .then((payload) => {
-        const safeBundle = withSafePublicImages(payload, fallbackBundle);
+        const safeBundle = withSafePublicImages(payload);
         setBundle(safeBundle);
         logPublicSiteDebug(slug, safeBundle);
       })
@@ -917,20 +977,21 @@ function PublicRestaurantSite({ apiOnline }) {
   if (loading && !bundle) return <PublicSiteSkeleton />;
   if (!bundle) return <div className="site-shell"><InlineError message={error || "This restaurant website could not be loaded."} /></div>;
 
-  const restaurant = bundle.restaurant || demoRestaurant;
-  const website = bundle.website || demoWebsiteSettings;
-  const gallery = bundle.gallery || demoGallery;
-  const socialLinks = bundle.socialLinks || demoSocialLinks;
+  const restaurant = bundle.restaurant || {};
+  const website = bundle.website || defaultPublicWebsiteFields(restaurant);
+  const gallery = Array.isArray(bundle.gallery) ? bundle.gallery : [];
+  const socialLinks = Array.isArray(bundle.socialLinks) ? bundle.socialLinks : [];
   const categories = (restaurant.categories || []).filter((category) => (category.items || []).length > 0);
   const featuredItems = categories.flatMap((category) => category.items || []).filter((item) => item.featured || item.recommended).slice(0, 4);
-  const routeBase = routeBaseForPublicSite(route, restaurant.slug);
+  const currentSlug = restaurant.slug || slug;
+  const routeBase = routeBaseForPublicSite(route, currentSlug);
   const heroImage = resolveImage(website.heroImageUrl, gallery[0]?.imageUrl);
   const logoImage = resolveImage(website.logoUrl, heroImage, heroImage);
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
   const siteStyle = { "--brand": website.brandColor, "--accent": website.accentColor, "--heading-font": website.headingFont || "inherit", "--body-font": website.bodyFont || "inherit" };
 
   function navLink(target, label) {
-    return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, restaurant.slug, target)}>{label}</a>;
+    return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, currentSlug, target)}>{label}</a>;
   }
 
   return (
@@ -971,7 +1032,7 @@ function PublicRestaurantSite({ apiOnline }) {
             <div className="site-image"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} hero`} onError={handleSafeImageError} /></div>
           </section> : null}
           <section className="site-grid">
-            {sectionSettings.featuredMenu ? <div className="site-card"><h3>Featured menu</h3>{featuredItems.length === 0 ? <p>No featured items yet.</p> : featuredItems.map((item) => <div className="summary-line" key={item.id}><span>{item.name}</span><strong>{money(item.priceCents)}</strong></div>)}</div> : null}
+            {sectionSettings.featuredMenu ? <div className="site-card"><h3>Featured menu</h3>{featuredItems.length === 0 ? <p>Menu items are being added. Please check back soon.</p> : featuredItems.map((item) => <div className="summary-line" key={item.id}><span>{item.name}</span><strong>{money(item.priceCents)}</strong></div>)}</div> : null}
             <div className="site-card"><h3>Special offer</h3><p>{website.specialOfferText || "Order direct for loyalty rewards."}</p></div>
             {sectionSettings.contact ? <div className="site-card"><h3>Visit us</h3><p>{restaurant.address}</p><p>{restaurant.phone}</p><p>{Object.entries(restaurant.storeHoursJson || {}).slice(0, 3).map(([day, hours]) => `${readable(day)} ${hours}`).join(" / ") || "Call for current hours"}</p></div> : null}
           </section>
@@ -981,7 +1042,7 @@ function PublicRestaurantSite({ apiOnline }) {
       {page === "menu" ? (
         <section className="site-card">
           <h2>Menu</h2>
-          {categories.map((category) => (
+          {categories.length === 0 ? <EmptyState title="Menu coming soon" detail="Menu items are being added. Please check back soon." /> : categories.map((category) => (
             <div className="mt-5" key={category.id}>
               <h3>{category.name}</h3>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -991,11 +1052,11 @@ function PublicRestaurantSite({ apiOnline }) {
           ))}
         </section>
       ) : null}
-      {page === "order" ? <section className="lux-section"><div className="lux-section-head"><p>Order Online</p><h2>Pickup and delivery from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><CustomerApp apiOnline={apiOnline} initialSlug={restaurant.slug || slug} embedded /></section> : null}
+      {page === "order" ? <section className="lux-section"><div className="lux-section-head"><p>Order Online</p><h2>Pickup and delivery from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
 
       {page === "about" ? <section className="site-card"><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Owner / chef story</h3><p>{website.ownerStory}</p><div className="site-image mt-4"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt={gallery[1]?.altText || "Restaurant story"} onError={handleSafeImageError} /></div></section> : null}
       {page === "contact" ? <section className="site-grid"><div className="site-card"><h2>Contact</h2><p>{fullRestaurantAddress(restaurant) || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>{Object.entries(restaurant.storeHoursJson || {}).map(([day, hours]) => `${readable(day)}: ${hours}`).join(" / ") || "Call for current hours"}</p>{socialLinks.map((link) => <a className="site-nav mr-2" href={link.url} key={link.id}>{link.platform}</a>)}</div><div className="site-card"><h3>Location</h3>{googleMapEmbedUrl(fullRestaurantAddress(restaurant)) ? <iframe className="map-frame" title={`${restaurant.name} map`} src={googleMapEmbedUrl(fullRestaurantAddress(restaurant))} loading="lazy" /> : <div className="map-card">{restaurant.address || "Address coming soon"}</div>}<div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={googleDirectionsUrl(fullRestaurantAddress(restaurant))} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><h3 className="mt-4">Questions</h3><p>Call or email the restaurant for event requests, order help, or catering details.</p></div></section> : null}
-      {page === "gallery" ? <section className="site-card"><h2>Gallery</h2><div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <div className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText || "Restaurant photo"} onError={handleSafeImageError} /></div>)}</div></section> : null}
+      {page === "gallery" ? <section className="site-card"><h2>Gallery</h2>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <div className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText || "Restaurant photo"} onError={handleSafeImageError} /></div>)}</div>}</section> : null}
       {page === "loyalty" ? <section className="site-card"><h2>Loyalty</h2><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar when ordering direct.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{(restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || []).map((reward) => <div className="summary-line rounded-md bg-slate-50 px-3" key={reward.id}><span>{reward.name}</span><strong>{reward.pointsRequired} pts</strong></div>)}</div><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></section> : null}
       {page === "catering" ? <section className="site-card"><h2>Catering</h2><p>Bring restaurant favorites to your next event.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request catering</a><p className="mt-3 text-sm text-slate-500">Include event date, guest count, and menu preferences.</p></section> : null}
       {page === "careers" ? <section className="site-card"><h2>Careers</h2><p>We are always interested in great restaurant people.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></section> : null}
@@ -1011,26 +1072,33 @@ function PublicRestaurantSite({ apiOnline }) {
 
 function PremiumRestaurantSite({ apiOnline }) {
   const route = websitePathParts();
-  const slug = route?.slug || "demo-bistro";
+  const slug = route?.slug || "";
   const page = route?.page || "home";
-  const [bundle, setBundle] = useState(() => apiOnline ? null : withSafePublicImages(demoWebsiteBundle(slug), demoWebsiteBundle(slug)));
+  const [bundle, setBundle] = useState(() => !apiOnline && slug ? withSafePublicImages(demoWebsiteBundle(slug), demoWebsiteBundle(slug)) : null);
   const [loading, setLoading] = useState(apiOnline);
   const [error, setError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    const fallbackBundle = demoWebsiteBundle(slug);
+    if (!route || (!route.byHost && !slug)) {
+      setBundle(null);
+      setLoading(false);
+      setError("Restaurant website not found.");
+      return;
+    }
     if (!apiOnline) {
+      const fallbackBundle = demoWebsiteBundle(slug || "demo-bistro");
       setLoading(false);
       setBundle(withSafePublicImages(fallbackBundle, fallbackBundle));
       return;
     }
     setLoading(true);
     setError("");
+    setBundle(null);
     const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/sites/${slug}`;
     api(endpoint)
       .then((payload) => {
-        const safeBundle = withSafePublicImages(payload, fallbackBundle);
+        const safeBundle = withSafePublicImages(payload);
         setBundle(safeBundle);
         logPublicSiteDebug(slug, safeBundle);
       })
@@ -1049,15 +1117,16 @@ function PremiumRestaurantSite({ apiOnline }) {
   if (loading && !bundle) return <PublicSiteSkeleton premium />;
   if (!bundle) return <div className="site-shell premium"><InlineError message={error || "This restaurant website could not be loaded."} /></div>;
 
-  const restaurant = bundle.restaurant || demoRestaurant;
-  const website = bundle.website || demoWebsiteSettings;
-  const gallery = bundle.gallery || demoGallery;
-  const socialLinks = bundle.socialLinks || demoSocialLinks;
+  const restaurant = bundle.restaurant || {};
+  const website = bundle.website || defaultPublicWebsiteFields(restaurant);
+  const gallery = Array.isArray(bundle.gallery) ? bundle.gallery : [];
+  const socialLinks = Array.isArray(bundle.socialLinks) ? bundle.socialLinks : [];
   const categories = (restaurant.categories || []).filter((category) => (category.items || []).length > 0);
   const allItems = categories.flatMap((category) => category.items || []);
   const featuredItems = allItems.filter((itemRow) => itemRow.featured || itemRow.recommended).slice(0, 4);
-  const rewards = restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || demoGrowth.loyalty.rewards;
-  const routeBase = routeBaseForPublicSite(route, restaurant.slug);
+  const rewards = restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || [];
+  const currentSlug = restaurant.slug || slug;
+  const routeBase = routeBaseForPublicSite(route, currentSlug);
   const hours = Object.entries(restaurant.storeHoursJson || {});
   const hoursPreview = hours.slice(0, 3).map(([day, value]) => `${readable(day)} ${value}`).join(" / ");
   const isLiquor = restaurant.businessType === "LIQUOR_STORE";
@@ -1070,7 +1139,7 @@ function PremiumRestaurantSite({ apiOnline }) {
   const siteStyle = { "--brand": website.brandColor, "--accent": website.accentColor, "--heading-font": website.headingFont || "inherit", "--body-font": website.bodyFont || "inherit" };
 
   function navLink(target, label) {
-    return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, restaurant.slug, target)}>{label}</a>;
+    return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, currentSlug, target)}>{label}</a>;
   }
 
   function MenuCard({ item: menuItem }) {
@@ -1101,7 +1170,7 @@ function PremiumRestaurantSite({ apiOnline }) {
     <div className="site-shell premium" style={siteStyle}>
       <InlineError message={error} />
       <header className="site-header premium">
-        <a className="site-brand" href={publicSiteHref(route, restaurant.slug, "home")}>
+        <a className="site-brand" href={publicSiteHref(route, currentSlug, "home")}>
           <img src={logoImage} alt={`${restaurant.name} logo`} onError={handleSafeImageError} />
           <div>
             <strong>{restaurant.businessName || restaurant.name}</strong>
@@ -1125,7 +1194,7 @@ function PremiumRestaurantSite({ apiOnline }) {
         <>
           {sectionSettings.hero ? <section className="lux-hero" style={heroImage ? { backgroundImage: `linear-gradient(90deg, rgba(8,18,16,.9), rgba(8,18,16,.48)), url(${heroImage})` } : undefined}>
             <div className="lux-hero-content">
-              <p className="lux-kicker">{website.cuisineType || "Modern American"} / {website.tagline || "Seasonal Bistro"}</p>
+              <p className="lux-kicker">{website.cuisineType || "Restaurant"} / {website.tagline || "Direct ordering"}</p>
               <h2>{website.heroTitle || restaurant.name}</h2>
               <p>{website.heroSubtitle || restaurant.description}</p>
               <div className="mt-6 flex flex-wrap gap-2">
@@ -1143,7 +1212,7 @@ function PremiumRestaurantSite({ apiOnline }) {
           </section> : null}
           {sectionSettings.featuredMenu ? <section className="lux-section">
             <div className="lux-section-head"><p>Featured dishes</p><h2>Kitchen favorites</h2><a href={`${routeBase}/menu`}>Explore full menu</a></div>
-            <div className="lux-card-grid">{featuredItems.map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div>
+            {featuredItems.length === 0 ? <EmptyState title="Menu coming soon" detail="Menu items are being added. Please check back soon." /> : <div className="lux-card-grid">{featuredItems.map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div>}
           </section> : null}
           {sectionSettings.story ? <section className="lux-split">
             <img src={resolveImage(gallery[0]?.imageUrl, heroImage)} alt={gallery[0]?.altText || restaurant.name} onError={handleSafeImageError} />
@@ -1156,20 +1225,20 @@ function PremiumRestaurantSite({ apiOnline }) {
           </section> : null}
           <section className="site-grid">
             <div className="site-card"><h3>Special offer</h3><p>{website.specialOfferText}</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Redeem online</a></div>
-            <div className="site-card"><h3>Guest notes</h3><p>"Beautiful dinner, easy direct ordering, and the delivery arrived hot."</p><p>"The salmon and short rib are repeat-order favorites."</p></div>
+            <div className="site-card"><h3>Direct ordering</h3><p>Order from this restaurant-owned site for pickup, delivery, loyalty, and direct customer support.</p></div>
             {sectionSettings.contact ? <div className="site-card"><h3>Location & hours</h3><p>{restaurant.address}</p><p>{restaurant.phone}</p><p>{hoursPreview || "Hours available soon"}</p></div> : null}
           </section>
           {isLiquor ? <section className="site-card"><h3>Age verification and compliance</h3><p>{bundle.complianceNote || "Age verification and local delivery compliance are required for regulated items."}</p></section> : null}
-          {sectionSettings.gallery ? <section className="lux-gallery-strip">{gallery.slice(0, 4).map((image) => <img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} key={image.id} loading="lazy" onError={handleSafeImageError} />)}</section> : null}
+          {sectionSettings.gallery && gallery.length ? <section className="lux-gallery-strip">{gallery.slice(0, 4).map((image) => <img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} key={image.id} loading="lazy" onError={handleSafeImageError} />)}</section> : null}
           <section className="lux-cta"><h2>Order direct from {restaurant.businessName || restaurant.name}</h2><p>Keep more value with the restaurant while earning loyalty rewards.</p><a className="button-primary" href={`${routeBase}/order`}>Start an order</a></section>
         </>
       ) : null}
 
       {page === "menu" ? <section className="lux-section"><div className="lux-section-head"><p>Full menu</p><h2>{isLiquor ? "Bottle shop catalog" : "Prepared for pickup and delivery"}</h2><a href={`${routeBase}/order`}>Order now</a></div>{isLiquor ? <div className="site-card mb-4"><h3>Regulated items</h3><p>{bundle.complianceNote || "Age verification and local delivery rules apply."}</p></div> : null}{categories.length === 0 ? <EmptyState title="Menu coming soon" detail="This restaurant has not published public menu items yet." /> : categories.map((category) => <div className="lux-category" key={category.id}><h3>{category.name}</h3><div className="lux-card-grid">{(category.items || []).map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div></div>)}</section> : null}
-      {page === "order" ? <section className="lux-section public-order-page"><div className="lux-section-head"><p>Order Online</p><h2>{restaurant.pickupEnabled && restaurant.deliveryEnabled ? "Pickup and delivery" : restaurant.deliveryEnabled ? "Delivery" : "Pickup"} from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><div className="public-order-hero"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} food`} loading="lazy" onError={handleSafeImageError} /><div><p className="lux-kicker">{website.cuisineType || readable(restaurant.businessType)}</p><h3>{website.heroTitle || restaurant.businessName || restaurant.name}</h3><p>{website.heroSubtitle || restaurant.description}</p><div className="mt-4 flex flex-wrap gap-2"><StatusPill tone={restaurant.pickupEnabled ? "good" : "neutral"}>{restaurant.pickupEnabled ? "Pickup available" : "Pickup unavailable"}</StatusPill><StatusPill tone={restaurant.deliveryEnabled ? "good" : "neutral"}>{restaurant.deliveryEnabled ? "Delivery available" : "Delivery unavailable"}</StatusPill><StatusPill>{hoursPreview || "Hours vary"}</StatusPill></div></div></div><CustomerApp apiOnline={apiOnline} initialSlug={restaurant.slug || slug} embedded /></section> : null}
+      {page === "order" ? <section className="lux-section public-order-page"><div className="lux-section-head"><p>Order Online</p><h2>{restaurant.pickupEnabled && restaurant.deliveryEnabled ? "Pickup and delivery" : restaurant.deliveryEnabled ? "Delivery" : "Pickup"} from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><div className="public-order-hero"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} food`} loading="lazy" onError={handleSafeImageError} /><div><p className="lux-kicker">{website.cuisineType || readable(restaurant.businessType)}</p><h3>{website.heroTitle || restaurant.businessName || restaurant.name}</h3><p>{website.heroSubtitle || restaurant.description}</p><div className="mt-4 flex flex-wrap gap-2"><StatusPill tone={restaurant.pickupEnabled ? "good" : "neutral"}>{restaurant.pickupEnabled ? "Pickup available" : "Pickup unavailable"}</StatusPill><StatusPill tone={restaurant.deliveryEnabled ? "good" : "neutral"}>{restaurant.deliveryEnabled ? "Delivery available" : "Delivery unavailable"}</StatusPill><StatusPill>{hoursPreview || "Hours vary"}</StatusPill></div></div></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
       {page === "about" ? <section className="lux-split page"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt="Chef and restaurant team" onError={handleSafeImageError} /><div><p className="lux-kicker">Our story</p><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Fresh ingredients</h3><p>Seasonal produce, thoughtful sourcing, and a menu designed for dining room quality at home.</p><h3>Community</h3><p>Ordering direct helps keep customer relationships and revenue with the local restaurant team.</p></div></section> : null}
       {page === "contact" ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div>{socialLinks.map((link) => <a className="site-nav mr-2 mt-3" href={link.url} key={link.id}>{link.platform}</a>)}</div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">Call or email the restaurant for private events, questions, and order help.</p></div></section> : null}
-      {page === "gallery" ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div><div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div></section> : null}
+      {page === "gallery" ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div>}</section> : null}
       {page === "loyalty" ? <section className="lux-section"><div className="lux-section-head"><p>Loyalty</p><h2>Rewards for ordering direct</h2><a href={`${routeBase}/order`}>Join at checkout</a></div><div className="site-grid"><div className="site-card"><h3>How it works</h3><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar on eligible direct orders. Redeem points for restaurant-owned rewards.</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></div>{rewards.map((reward) => <div className="site-card" key={reward.id}><h3>{reward.name}</h3><p>{reward.pointsRequired} points required.</p></div>)}</div></section> : null}
       {page === "catering" ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>Send event date, guest count, and menu preferences to the restaurant team.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request quote</a></div></section> : null}
       {page === "careers" ? <section className="lux-section"><div className="lux-section-head"><p>Careers</p><h2>Join the restaurant team</h2><a href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></div><div className="site-grid"><div className="site-card"><h3>Why work here</h3><p>Focused service, direct customer relationships, and a team built around hospitality.</p></div><div className="site-card"><h3>Open roles</h3><p>Contact the restaurant for current kitchen, service, and driver opportunities.</p></div><div className="site-card"><h3>Apply</h3><p>Email the hiring manager with your experience and availability.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Apply by email</a></div></div></section> : null}
@@ -3531,7 +3600,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
 
 function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embedded = false }) {
   const [slug, setSlug] = useState(initialSlug);
-  const [restaurant, setRestaurant] = useState(demoRestaurant);
+  const [restaurant, setRestaurant] = useState(() => apiOnline ? emptyPublicRestaurant(initialSlug) : demoRestaurant);
   const [orderingEnabled, setOrderingEnabled] = useState(true);
   const [storefrontPlaceholder, setStorefrontPlaceholder] = useState(null);
   const [cart, setCart] = useState([]);
@@ -3567,6 +3636,11 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const orderTotal = subtotal + delivery + tax + tip;
 
   async function loadMenu(targetSlug = slug) {
+    if (!targetSlug) {
+      setRestaurant(emptyPublicRestaurant(""));
+      setError("Restaurant ordering page not found.");
+      return;
+    }
     if (!apiOnline) {
       setRestaurant(demoWebsiteBundle(targetSlug).restaurant);
       setOrderingEnabled(true);
@@ -3575,9 +3649,10 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       return;
     }
     setError("");
+    setRestaurant(emptyPublicRestaurant(targetSlug));
     try {
       const payload = await api(`/api/customer/restaurants/${targetSlug}`);
-      setRestaurant(normalizePublicRestaurant(payload));
+      setRestaurant(normalizePublicRestaurant(payload, emptyPublicRestaurant(targetSlug)));
       setOrderingEnabled(payload.orderingEnabled ?? isOrderingBusiness(payload.restaurant?.businessType));
       setStorefrontPlaceholder(payload.moduleNotice || payload.placeholder || null);
       setCart([]);
@@ -4353,6 +4428,18 @@ export default function App() {
         setApiOnline(false);
         setApiMode("DEMO");
       });
+  }, []);
+
+  useEffect(() => {
+    function handleAuthExpired() {
+      clearSession();
+      setToken("");
+      setRefreshToken("");
+      setUser(null);
+      setAuthChecking(false);
+    }
+    window.addEventListener("loohar:auth-expired", handleAuthExpired);
+    return () => window.removeEventListener("loohar:auth-expired", handleAuthExpired);
   }, []);
 
   useEffect(() => {

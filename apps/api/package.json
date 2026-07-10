@@ -11,7 +11,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "node prisma/seed.js",
-    "prisma:seed": "node prisma/seed.js"
+    "prisma:seed": "node prisma/seed.js",
+    "repair:kathmandu": "node prisma/repair-kathmandu-restaurant-ii.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

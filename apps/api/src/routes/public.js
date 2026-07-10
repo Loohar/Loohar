@@ -1,15 +1,95 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { attachRestaurantIdBySlug, createOrder, createOrderSchema, getOrderStatus } from "./customer.js";
 import { validate } from "../middleware/validate.js";
 import { getWebsiteBundleBySlug } from "../services/websiteService.js";
 import { prisma } from "../config/prisma.js";
-import { domainInfoForRestaurant, publicUrlForRestaurant, resolveTenantByHost } from "../services/domainService.js";
+import { domainInfoForRestaurant, publicUrlForRestaurant, resolvePublicTenant } from "../services/domainService.js";
 
 const router = Router();
 const DISCOVERY_BUSINESS_TYPES = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"];
 
 function restaurantName(restaurant = {}) {
   return restaurant.businessName || restaurant.name || "Restaurant";
+}
+
+function requestIdFor(req) {
+  return req.get("x-request-id") || crypto.randomUUID();
+}
+
+function logTenantResolve({ req, requestId, requestedSlug = "", requestedHost = "", resolved, bundle, cacheKey = "", status = "resolved" }) {
+  console.info(JSON.stringify({
+    event: "tenant.public.resolve",
+    requestId,
+    requestedSlug,
+    requestedHost,
+    resolvedTenantId: resolved?.restaurant?.id || bundle?.restaurant?.id || null,
+    resolvedSlug: resolved?.restaurant?.slug || bundle?.restaurant?.slug || null,
+    cacheKey,
+    status,
+    path: req.originalUrl
+  }));
+}
+
+function logIntegrityViolation({ requestId, resolvedTenantId, relatedRecordTenantId, recordType, recordId }) {
+  console.warn(JSON.stringify({
+    event: "tenant.data_integrity_violation",
+    requestId,
+    resolvedTenantId,
+    relatedRecordTenantId,
+    recordType,
+    recordId
+  }));
+}
+
+function belongsToTenant(record = {}, restaurantId) {
+  return !record?.restaurantId || record.restaurantId === restaurantId;
+}
+
+function sanitizePublicBundle(bundle, requestId) {
+  if (!bundle?.restaurant?.id) return bundle;
+  const restaurantId = bundle.restaurant.id;
+  const categories = (bundle.restaurant.categories || [])
+    .filter((category) => {
+      const ok = belongsToTenant(category, restaurantId);
+      if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: category.restaurantId, recordType: "MenuCategory", recordId: category.id });
+      return ok;
+    })
+    .map((category) => ({
+      ...category,
+      items: (category.items || []).filter((item) => {
+        const ok = belongsToTenant(item, restaurantId);
+        if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: item.restaurantId, recordType: "MenuItem", recordId: item.id });
+        return ok;
+      })
+    }));
+  const gallery = (bundle.gallery || []).filter((image) => {
+    const ok = belongsToTenant(image, restaurantId);
+    if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: image.restaurantId, recordType: "RestaurantGalleryImage", recordId: image.id });
+    return ok;
+  });
+  const socialLinks = (bundle.socialLinks || []).filter((link) => {
+    const ok = belongsToTenant(link, restaurantId);
+    if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: link.restaurantId, recordType: "RestaurantSocialLink", recordId: link.id });
+    return ok;
+  });
+  const domain = belongsToTenant(bundle.domain, restaurantId) ? bundle.domain : null;
+  if (bundle.domain && !domain) {
+    logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: bundle.domain.restaurantId, recordType: "RestaurantDomain", recordId: bundle.domain.id });
+  }
+  const website = belongsToTenant(bundle.website, restaurantId) ? bundle.website : null;
+  if (bundle.website && !website) {
+    logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: bundle.website.restaurantId, recordType: "RestaurantWebsiteSettings", recordId: bundle.website.id });
+  }
+  return {
+    ...bundle,
+    restaurant: { ...bundle.restaurant, categories },
+    website: website || {},
+    domain: domain || {},
+    gallery,
+    socialLinks,
+    featuredItems: (bundle.featuredItems || []).filter((item) => belongsToTenant(item, restaurantId))
+  };
 }
 
 function fullAddress(restaurant = {}) {
@@ -204,18 +284,30 @@ function buildPublicSiteResponse(bundle, req) {
   };
 }
 
-async function bundleForResolvedHost(rawHost) {
-  const resolved = await resolveTenantByHost(rawHost);
-  if (!resolved.restaurant) return { resolved, bundle: null };
-  const bundle = await getWebsiteBundleBySlug(resolved.restaurant.slug);
-  return { resolved, bundle };
+async function bundleForResolvedTenant({ req, slug = "", host = "" }) {
+  const requestId = requestIdFor(req);
+  const requestedHost = host || req.get("host") || "";
+  const resolved = await resolvePublicTenant({ slug, host: requestedHost });
+  if (!resolved.restaurant) {
+    const cacheKey = slug ? `public-site:slug:${slug}` : `public-site:host:${requestedHost}`;
+    logTenantResolve({ req, requestId, requestedSlug: slug, requestedHost, resolved, bundle: null, cacheKey, status: resolved.type || "not_found" });
+    return { resolved, bundle: null, requestId, cacheKey };
+  }
+  const cacheKey = resolved.type === "path_slug" ? `public-site:slug:${resolved.restaurant.slug}` : `public-site:host:${resolved.host}`;
+  const bundle = sanitizePublicBundle(await getWebsiteBundleBySlug(resolved.restaurant.slug), requestId);
+  logTenantResolve({ req, requestId, requestedSlug: slug, requestedHost, resolved, bundle, cacheKey, status: bundle ? "ok" : "not_found" });
+  return { resolved, bundle, requestId, cacheKey };
+}
+
+async function bundleForResolvedHost(req, rawHost) {
+  return bundleForResolvedTenant({ req, host: rawHost });
 }
 
 async function sendWebsiteBundle(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { resolved, bundle, requestId, cacheKey } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
-    res.json(buildPublicSiteResponse(bundle, req));
+    res.json({ ...buildPublicSiteResponse(bundle, req), tenantResolution: { type: resolved.type, slug: resolved.restaurant.slug, host: resolved.host, cacheKey, requestId } });
   } catch (error) {
     next(error);
   }
@@ -223,7 +315,7 @@ async function sendWebsiteBundle(req, res, next) {
 
 async function sendSiteBundle(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
     res.json(bundle);
   } catch (error) {
@@ -234,7 +326,7 @@ async function sendSiteBundle(req, res, next) {
 async function sendWebsiteBundleByHost(req, res, next) {
   try {
     const host = req.query.host || req.get("host");
-    const { resolved, bundle } = await bundleForResolvedHost(host);
+    const { resolved, bundle, requestId, cacheKey } = await bundleForResolvedHost(req, host);
     if (!bundle || bundle.website.websiteEnabled === false) {
       return res.status(404).json({
         error: "Domain is not configured for a Loohar restaurant website",
@@ -242,7 +334,7 @@ async function sendWebsiteBundleByHost(req, res, next) {
         resolution: resolved.type
       });
     }
-    res.json({ ...buildPublicSiteResponse(bundle, req), hostResolution: { type: resolved.type, host: resolved.host } });
+    res.json({ ...buildPublicSiteResponse(bundle, req), hostResolution: { type: resolved.type, host: resolved.host, cacheKey, requestId } });
   } catch (error) {
     next(error);
   }
@@ -257,7 +349,7 @@ function sitemapXml(baseUrl) {
 async function sendSitemapByHost(req, res, next) {
   try {
     const host = req.query.host || req.get("host");
-    const { bundle } = await bundleForResolvedHost(host);
+    const { bundle } = await bundleForResolvedHost(req, host);
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("Domain not configured");
     const baseUrl = domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl;
     res.type("application/xml").send(sitemapXml(baseUrl));
@@ -269,7 +361,7 @@ async function sendSitemapByHost(req, res, next) {
 async function sendRobotsByHost(req, res, next) {
   try {
     const host = req.query.host || req.get("host");
-    const { bundle } = await bundleForResolvedHost(host);
+    const { bundle } = await bundleForResolvedHost(req, host);
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("User-agent: *\nDisallow: /\n");
     const baseUrl = domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl;
     res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`);
@@ -280,7 +372,7 @@ async function sendRobotsByHost(req, res, next) {
 
 async function sendMenu(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Menu not found" });
     const site = buildPublicSiteResponse(bundle, req);
     res.json({
@@ -298,7 +390,7 @@ async function sendMenu(req, res, next) {
 
 async function sendMenuItem(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Menu item not found" });
     const item = bundle.restaurant.categories.flatMap((category) => category.items).find((menuItem) => menuItem.id === req.params.itemId);
     if (!item) return res.status(404).json({ error: "Menu item not found" });
@@ -310,7 +402,7 @@ async function sendMenuItem(req, res, next) {
 
 async function sendGallery(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Gallery not found" });
     res.json({ gallery: bundle.gallery });
   } catch (error) {
@@ -320,7 +412,7 @@ async function sendGallery(req, res, next) {
 
 async function sendLoyalty(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Loyalty not found" });
     res.json({ settings: bundle.restaurant.loyaltySettingsJson, rewards: bundle.restaurant.loyaltyRewards });
   } catch (error) {
@@ -330,7 +422,7 @@ async function sendLoyalty(req, res, next) {
 
 async function sendOrderConfig(req, res, next) {
   try {
-    const bundle = await getWebsiteBundleBySlug(req.params.slug);
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Order page not found" });
     res.json({
       restaurant: bundle.restaurant,

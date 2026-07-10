@@ -2,10 +2,11 @@ import { prisma } from "../config/prisma.js";
 import { tenantRootDomain } from "../config/urls.js";
 
 const reservedLooharSubdomains = ["www", "admin", "app", "driver", "api", "sites"];
-const reservedLooharHosts = new Set(["loohar.com", ...reservedLooharSubdomains.map((subdomain) => `${subdomain}.${tenantRootDomain()}`)]);
+const reservedLooharHosts = new Set(["loohar.com", tenantRootDomain(), ...reservedLooharSubdomains.map((subdomain) => `${subdomain}.${tenantRootDomain()}`)]);
 const verifiedDomainStatuses = new Set(["VERIFIED", "SSL_PENDING", "ACTIVE"]);
 const activeSslStatuses = new Set(["SSL_PENDING", "ACTIVE"]);
 const hostPattern = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.localhost$/;
+const slugPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function normalizeHost(value = "") {
   const raw = String(value || "").trim().toLowerCase();
@@ -21,6 +22,11 @@ export function normalizeDomainInput(value = "") {
   if (!host) return "";
   if (host.includes("_") || host.includes("*") || host.includes("@")) return "";
   return hostPattern.test(host) ? host : "";
+}
+
+export function normalizeTenantSlug(value = "") {
+  const slug = String(value || "").trim().toLowerCase();
+  return slugPattern.test(slug) ? slug : "";
 }
 
 export function isReservedPlatformHost(value = "") {
@@ -117,18 +123,21 @@ export async function resolveTenantByHost(rawHost = "") {
 
   const slug = slugFromTenantHost(host);
   if (slug) {
-    const restaurant = await prisma.restaurant.findFirst({
-      where: {
-        status: "ACTIVE",
-        OR: [
-          { slug },
-          { domains: { some: { defaultSubdomain: slug } } }
-        ]
-      },
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { slug },
       include: { domains: true }
     });
-    if (!restaurant) return { type: "not_found", host, restaurant: null, domain: null };
-    return { type: "tenant_subdomain", host, restaurant, domain: restaurant.domains?.[0] || null };
+    if (restaurant?.status === "ACTIVE") return { type: "tenant_subdomain", host, restaurant, domain: restaurant.domains?.[0] || null };
+
+    const domain = await prisma.restaurantDomain.findFirst({
+      where: {
+        defaultSubdomain: slug,
+        restaurant: { status: "ACTIVE" }
+      },
+      include: { restaurant: { include: { domains: true } } }
+    });
+    if (!domain) return { type: "not_found", host, restaurant: null, domain: null };
+    return { type: "tenant_subdomain", host, restaurant: domain.restaurant, domain };
   }
 
   const domain = await prisma.restaurantDomain.findFirst({
@@ -141,4 +150,17 @@ export async function resolveTenantByHost(rawHost = "") {
   });
   if (!domain) return { type: "not_found", host, restaurant: null, domain: null };
   return { type: "custom_domain", host, restaurant: domain.restaurant, domain };
+}
+
+export async function resolvePublicTenant({ slug = "", host = "" } = {}) {
+  const normalizedSlug = normalizeTenantSlug(slug);
+  if (normalizedSlug) {
+    const restaurant = await prisma.restaurant.findFirst({
+      where: { slug: normalizedSlug, status: "ACTIVE" },
+      include: { domains: true }
+    });
+    if (!restaurant) return { type: "not_found", slug: normalizedSlug, host: normalizeHost(host), restaurant: null, domain: null };
+    return { type: "path_slug", slug: normalizedSlug, host: normalizeHost(host), restaurant, domain: restaurant.domains?.[0] || null };
+  }
+  return resolveTenantByHost(host);
 }
