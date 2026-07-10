@@ -43,7 +43,7 @@ services:
       - key: PUBLIC_SITE_FALLBACK_URL
         value: https://sites.loohar.com
       - key: CORS_ORIGINS
-        value: https://loohar.com,https://www.loohar.com,https://admin.loohar.com,https://app.loohar.com,https://driver.loohar.com,https://sites.loohar.com
+        value: https://loohar.com,https://www.loohar.com,https://admin.loohar.com,https://app.loohar.com,https://driver.loohar.com,https://sites.loohar.com,https://loohar.vercel.app
       - key: ALLOW_LOCAL_CORS
         value: "false"
       - key: ALLOW_TENANT_SUBDOMAIN_CORS

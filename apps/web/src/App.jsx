@@ -40,7 +40,9 @@ const platformNavItems = [
 
 const appName = import.meta.env.VITE_APP_NAME || "Loohar";
 const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.env.VITE_PLATFORM_DOMAIN || "loohar.com";
-const reservedTenantHosts = new Set([tenantRootDomain, `www.${tenantRootDomain}`, `admin.${tenantRootDomain}`, `app.${tenantRootDomain}`, `driver.${tenantRootDomain}`, `api.${tenantRootDomain}`, `sites.${tenantRootDomain}`, "localhost"]);
+const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
+const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
+const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, `www.${tenantRootDomain}`, `admin.${tenantRootDomain}`, `app.${tenantRootDomain}`, `driver.${tenantRootDomain}`, `api.${tenantRootDomain}`, `sites.${tenantRootDomain}`, "localhost"]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 const kitchenRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "SUPER_ADMIN"];
@@ -630,6 +632,7 @@ function normalizeBrowserHost(value = window.location.hostname) {
 
 function tenantHostRouteInfo() {
   const host = normalizeBrowserHost();
+  if (host.endsWith(".vercel.app")) return { isTenantHost: false, host, slug: "" };
   if (!host || reservedTenantHosts.has(host) || host.endsWith(".local") || host === "0.0.0.0") return { isTenantHost: false, host, slug: "" };
   if (host.endsWith(`.${tenantRootDomain}`)) {
     const slug = host.slice(0, -(tenantRootDomain.length + 1)).split(".").pop();

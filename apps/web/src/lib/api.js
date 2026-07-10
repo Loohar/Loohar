@@ -1,6 +1,8 @@
 const configuredApiUrl = import.meta.env.VITE_API_URL || "https://api.loohar.com";
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
+const configuredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
+const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
 const isDev = import.meta.env.DEV;
 
 function apiPath(path) {
@@ -40,9 +42,10 @@ export async function api(path, options = {}) {
 }
 
 export async function checkApiHealth() {
-  const candidates = API_URL.endsWith("/api")
+  const inferredCandidates = API_URL.endsWith("/api")
     ? [`${API_URL}/health`, `${API_ORIGIN}/health`]
     : [`${API_URL}/api/health`, `${API_URL}/health`];
+  const candidates = API_HEALTH_URL ? [API_HEALTH_URL, ...inferredCandidates] : inferredCandidates;
   let lastError;
   for (const url of candidates) {
     try {
