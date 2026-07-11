@@ -10,6 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "prisma:deploy:safe": "node ../../scripts/prisma-deploy-with-retry.mjs",
     "seed": "node prisma/seed.js",
     "prisma:seed": "node prisma/seed.js",
     "repair:kathmandu": "node prisma/repair-kathmandu-restaurant-ii.js",
@@ -17,7 +18,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

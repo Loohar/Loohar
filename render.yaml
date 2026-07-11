@@ -5,7 +5,8 @@ services:
     rootDir: apps/api
     plan: starter
     branch: main
-    buildCommand: npm install && npm run prisma:generate && npm run prisma:deploy
+    buildCommand: npm install && npm run prisma:generate
+    preDeployCommand: npm run prisma:deploy:safe
     startCommand: npm run start
     healthCheckPath: /health
     autoDeploy: true

@@ -20,6 +20,7 @@ import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
+import { disconnectPrisma } from "./config/prisma.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -110,3 +111,14 @@ const port = Number(process.env.PORT || 5001);
 server.listen(port, () => {
   console.log(`API listening on port ${port}`);
 });
+
+async function shutdown(signal) {
+  console.log(`Received ${signal}. Shutting down API.`);
+  server.close(async () => {
+    await disconnectPrisma();
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

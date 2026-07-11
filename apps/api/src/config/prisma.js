@@ -1,6 +1,15 @@
 import { PrismaClient } from "@prisma/client";
 
-export const prisma = new PrismaClient({
+const globalForPrisma = globalThis;
+
+export const prisma = globalForPrisma.looharPrisma || new PrismaClient({
   log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"]
 });
 
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.looharPrisma = prisma;
+}
+
+export async function disconnectPrisma() {
+  await prisma.$disconnect();
+}

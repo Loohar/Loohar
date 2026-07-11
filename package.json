@@ -22,6 +22,7 @@
     "prisma:generate": "npm --workspace apps/api run prisma:generate",
     "prisma:migrate": "npm --workspace apps/api run prisma:migrate",
     "prisma:deploy": "npm --workspace apps/api run prisma:deploy",
+    "prisma:deploy:safe": "npm --workspace apps/api run prisma:deploy:safe",
     "seed": "npm --workspace apps/api run seed",
     "prisma:seed": "npm --workspace apps/api run prisma:seed"
   },
