@@ -14,6 +14,39 @@ const transientPatterns = [
   /Can't reach database server/i
 ];
 
+function describeDatabaseUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.hostname}:${parsed.port || "default"}`;
+  } catch {
+    return "unparseable database URL";
+  }
+}
+
+function getMigrationEnv() {
+  const migrationUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+  if (!migrationUrl) {
+    console.error("DIRECT_URL or DATABASE_URL is required to run Prisma migrations.");
+    process.exit(1);
+  }
+
+  const target = describeDatabaseUrl(migrationUrl);
+  if (/pooler\.supabase\.com:5432/i.test(target)) {
+    console.error(
+      `Refusing to run Prisma migrations through Supabase session pooler (${target}). ` +
+        "Set DIRECT_URL to the direct Supabase database URL: db.<project-ref>.supabase.co:5432."
+    );
+    process.exit(1);
+  }
+
+  console.log(`Prisma migrations will use ${process.env.DIRECT_URL ? "DIRECT_URL" : "DATABASE_URL"} (${target}).`);
+  return {
+    ...process.env,
+    DATABASE_URL: migrationUrl,
+    DIRECT_URL: migrationUrl
+  };
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -24,10 +57,11 @@ function isTransientFailure(output) {
 
 function runPrismaDeploy() {
   const command = process.platform === "win32" ? "npx.cmd" : "npx";
+  const migrationEnv = getMigrationEnv();
   return new Promise((resolve) => {
     let output = "";
     const child = spawn(command, ["prisma", "migrate", "deploy"], {
-      env: process.env,
+      env: migrationEnv,
       stdio: ["ignore", "pipe", "pipe"]
     });
 
