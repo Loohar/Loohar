@@ -47,6 +47,62 @@ function publicUser(user) {
   return sanitizeUser(user);
 }
 
+function membershipFromRestaurant({ restaurant, role, status = "ACTIVE" }) {
+  if (!restaurant?.id) return null;
+  return {
+    tenantId: restaurant.id,
+    tenantSlug: restaurant.slug,
+    tenantName: restaurant.businessName || restaurant.name,
+    role,
+    status
+  };
+}
+
+async function membershipsForUser(user) {
+  if (!user?.id || user.role === "SUPER_ADMIN") return [];
+  const memberships = new Map();
+
+  if (user.restaurantId && user.restaurant) {
+    const membership = membershipFromRestaurant({ restaurant: user.restaurant, role: user.role, status: user.status });
+    if (membership) memberships.set(membership.tenantId, membership);
+  } else if (user.restaurantId && user.restaurantSlug) {
+    memberships.set(user.restaurantId, {
+      tenantId: user.restaurantId,
+      tenantSlug: user.restaurantSlug,
+      tenantName: user.restaurantName || user.restaurantSlug,
+      role: user.role,
+      status: user.status || "ACTIVE"
+    });
+  }
+
+  const staffMemberships = await prisma.restaurantStaff.findMany({
+    where: { userId: user.id },
+    include: { restaurant: { select: { id: true, name: true, businessName: true, slug: true, status: true } } }
+  });
+
+  for (const staff of staffMemberships) {
+    const membership = membershipFromRestaurant({
+      restaurant: staff.restaurant,
+      role: staff.role,
+      status: staff.active && staff.restaurant?.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"
+    });
+    if (membership) memberships.set(membership.tenantId, membership);
+  }
+
+  return [...memberships.values()];
+}
+
+async function authResponse(user) {
+  const safeUser = publicUser(user);
+  const memberships = await membershipsForUser(user);
+  return {
+    user: safeUser,
+    memberships,
+    accessToken: signAccessToken(user),
+    refreshToken: signRefreshToken(user)
+  };
+}
+
 const credentialsSchema = z.object({
   body: z.object({
     email: z.string().email(),
@@ -145,11 +201,7 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
       select: authUserSelect()
     });
     await recordAudit({ action: "login.success", entityType: "User", entityId: updatedUser.id, actorUserId: updatedUser.id, restaurantId: updatedUser.restaurantId, metadata: { role: updatedUser.role } }).catch(() => {});
-    res.json({
-      user: publicUser(updatedUser),
-      accessToken: signAccessToken(updatedUser),
-      refreshToken: signRefreshToken(updatedUser)
-    });
+    res.json(await authResponse(updatedUser));
   } catch (error) {
     next(error);
   }
@@ -167,11 +219,7 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
       select: authUserSelect()
     });
     await recordAudit({ action: "login.demo", entityType: "User", entityId: updatedUser.id, actorUserId: updatedUser.id, restaurantId: updatedUser.restaurantId, metadata: { role: updatedUser.role } }).catch(() => {});
-    res.json({
-      user: publicUser(updatedUser),
-      accessToken: signAccessToken(updatedUser),
-      refreshToken: signRefreshToken(updatedUser)
-    });
+    res.json(await authResponse(updatedUser));
   } catch (error) {
     next(error);
   }
@@ -195,12 +243,7 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
       select: authUserSelect()
     });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.changed", entityType: "User", entityId: user.id });
-    res.json({
-      user: publicUser(user),
-      accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user),
-      passwordSync
-    });
+    res.json({ ...(await authResponse(user)), passwordSync });
   } catch (error) {
     next(error);
   }
@@ -214,7 +257,7 @@ async function refreshToken(req, res, next) {
       await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user_or_status" } }).catch(() => {});
       return res.status(401).json({ error: "Invalid refresh token" });
     }
-    res.json({ user: publicUser(user), accessToken: signAccessToken(user), refreshToken: signRefreshToken(user) });
+    res.json(await authResponse(user));
   } catch (error) {
     await recordAudit({ action: "token.refresh.failed", entityType: "RefreshToken", metadata: { reason: error.name || "invalid_token" } }).catch(() => {});
     res.status(401).json({ error: "Invalid refresh token" });
@@ -265,7 +308,7 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
       });
     });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.reset.completed", entityType: "User", entityId: user.id });
-    res.json({ user: publicUser(user), accessToken: signAccessToken(user), refreshToken: signRefreshToken(user), passwordSync });
+    res.json({ ...(await authResponse(user)), passwordSync });
   } catch (error) {
     next(error);
   }
@@ -280,8 +323,12 @@ router.post("/logout", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/me", requireAuth, (req, res) => {
-  res.json({ user: req.user });
+router.get("/me", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ user: req.user, memberships: await membershipsForUser(req.user) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 export default router;

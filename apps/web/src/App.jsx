@@ -512,6 +512,49 @@ function canAccessTenantRoute(user, path, prefix) {
   return !slug || !user.restaurantSlug || slug === user.restaurantSlug;
 }
 
+function normalizeRole(role) {
+  return String(role || "").trim().toUpperCase();
+}
+
+function activeMembership(memberships = []) {
+  return memberships.find((membership) => membership?.status === "ACTIVE") || memberships[0] || null;
+}
+
+function normalizeSessionUser(user, memberships = []) {
+  if (!user) return null;
+  const membership = activeMembership(memberships);
+  return {
+    ...user,
+    role: normalizeRole(user.role),
+    restaurantId: user.restaurantId || user.tenantId || membership?.tenantId || null,
+    restaurantSlug: user.restaurantSlug || user.tenantSlug || user.restaurant?.slug || membership?.tenantSlug || null,
+    restaurantName: user.restaurantName || user.tenantName || user.restaurant?.businessName || user.restaurant?.name || membership?.tenantName || null,
+    memberships
+  };
+}
+
+function safeReturnTo(defaultPath = "/") {
+  const requested = new globalThis.URLSearchParams(window.location.search).get("returnTo") || "";
+  if (!requested.startsWith("/") || requested.startsWith("//")) return defaultPath;
+  if (/^(javascript:|data:)/i.test(requested)) return defaultPath;
+  return requested;
+}
+
+function returnToForUser(user) {
+  const fallback = dashboardPathFor(user);
+  const requested = safeReturnTo(fallback);
+  if (user?.role === "SUPER_ADMIN" && requested.startsWith("/admin")) return requested;
+  if (restaurantRoles.concat(["CASHIER", "KITCHEN_STAFF"]).includes(user?.role) && (requested.startsWith("/restaurant") || requested.startsWith("/kitchen"))) return requested;
+  if (user?.role === "DRIVER" && requested.startsWith("/driver")) return requested;
+  if (user?.role === "CUSTOMER" && (requested.startsWith("/customer") || requested.startsWith("/app/order"))) return requested;
+  return fallback;
+}
+
+function loginHrefWithReturnTo(loginPath, returnTo = window.location.pathname) {
+  const safePath = returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/";
+  return `${loginPath}?returnTo=${encodeURIComponent(safePath)}`;
+}
+
 function requiresPasswordChange(user) {
   return Boolean(user?.forcePasswordChange || user?.temporaryPassword);
 }
@@ -1455,26 +1498,28 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   }, [mode]);
 
   function continueAfterAuth(user) {
-    window.location.assign(dashboardPathFor(user));
+    window.location.assign(returnToForUser(user));
   }
 
   function handleAuthenticated(payload) {
-    if (copy.allowed && !copy.allowed.includes(payload.user.role)) {
+    const normalizedUser = normalizeSessionUser(payload.user, payload.memberships);
+    const sessionPayload = { ...payload, user: normalizedUser };
+    if (copy.allowed && !copy.allowed.includes(normalizedUser?.role)) {
       clearSession();
       setError("Access denied for this login area. Use the correct Loohar login for your role.");
       return;
     }
-    onLogin(payload);
-    setSession(payload);
-    if (requiresPasswordChange(payload.user)) {
+    onLogin(sessionPayload);
+    setSession(sessionPayload);
+    if (requiresPasswordChange(normalizedUser)) {
       setStep("password");
       return;
     }
-    if (payload.user.mfaEnabled) {
+    if (normalizedUser?.mfaEnabled) {
       setStep("mfa");
       return;
     }
-    continueAfterAuth(payload.user);
+    continueAfterAuth(normalizedUser);
   }
 
   async function submitLogin(event) {
@@ -1516,8 +1561,8 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     try {
       const payload = await api("/api/auth/change-password", { method: "POST", token: session?.accessToken, body: { newPassword } });
       const reloadedSession = await api("/api/auth/me", { token: payload.accessToken })
-        .then((current) => ({ ...payload, user: current.user || payload.user }))
-        .catch(() => payload);
+        .then((current) => ({ ...payload, memberships: current.memberships || payload.memberships || [], user: normalizeSessionUser(current.user || payload.user, current.memberships || payload.memberships || []) }))
+        .catch(() => ({ ...payload, user: normalizeSessionUser(payload.user, payload.memberships || []) }));
       onLogin(reloadedSession);
       setSession(reloadedSession);
       setNewPassword("");
@@ -4461,10 +4506,11 @@ export default function App() {
       }
       setAuthChecking(true);
       try {
-        const current = await api("/api/auth/me", { token });
+        const current = await api("/api/auth/me", { token, clearOnUnauthorized: false, authRetry: false });
+        const currentUser = normalizeSessionUser(current.user, current.memberships);
         if (!cancelled) {
-          setUser(current.user);
-          storeSession({ accessToken: token, refreshToken, user: current.user });
+          setUser(currentUser);
+          storeSession({ accessToken: token, refreshToken, user: currentUser });
           setAuthChecking(false);
         }
       } catch {
@@ -4478,9 +4524,10 @@ export default function App() {
           return;
         }
         try {
-          const refreshed = await api("/api/auth/refresh", { method: "POST", body: { refreshToken } });
-          const current = await api("/api/auth/me", { token: refreshed.accessToken });
-          const nextSession = { ...refreshed, user: current.user || refreshed.user };
+          const refreshed = await api("/api/auth/refresh", { method: "POST", body: { refreshToken }, clearOnUnauthorized: false, authRetry: false });
+          const current = await api("/api/auth/me", { token: refreshed.accessToken, clearOnUnauthorized: false, authRetry: false });
+          const nextMemberships = current.memberships || refreshed.memberships || [];
+          const nextSession = { ...refreshed, memberships: nextMemberships, user: normalizeSessionUser(current.user || refreshed.user, nextMemberships) };
           if (!cancelled) {
             setToken(nextSession.accessToken);
             setRefreshToken(nextSession.refreshToken);
@@ -4506,14 +4553,16 @@ export default function App() {
   }, [apiMode, token, refreshToken]);
 
   function handleLogin(payload) {
+    const normalizedUser = normalizeSessionUser(payload.user, payload.memberships);
+    const nextSession = { ...payload, user: normalizedUser };
     setToken(payload.accessToken);
     setRefreshToken(payload.refreshToken || "");
-    setUser(payload.user);
-    storeSession(payload);
+    setUser(normalizedUser);
+    storeSession(nextSession);
   }
 
   function handleImpersonate(payload) {
-    handleLogin({ accessToken: payload.accessToken, user: payload.user });
+    handleLogin({ accessToken: payload.accessToken, refreshToken: payload.refreshToken, memberships: payload.memberships || [], user: payload.user });
     window.location.assign(dashboardPathFor(payload.user));
   }
 
@@ -4551,6 +4600,7 @@ export default function App() {
 
   if (isDriverRoute) {
     if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <div className="min-h-screen bg-[#f7f8fb] px-4 py-6 text-slate-700"><AppLoadingState /></div>;
+    if (apiOnline && !user) return <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/login")} detail="Driver login is required for this route." />;
     if (apiOnline && user?.role !== "DRIVER") return <AccessDenied loginHref="/login" detail="The Driver app is available only to driver accounts." />;
     return <DriverPwaApp apiOnline={apiOnline} token={token} />;
   }
@@ -4567,7 +4617,7 @@ export default function App() {
             <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
             <StatusPill tone={canOpenKitchen ? "good" : "warn"}>{user?.role || "Kitchen login required"}</StatusPill>
           </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenKitchen ? <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={kitchenSlug} /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for assigned kitchen staff, cashiers, managers, and restaurant owners." />}
+          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenKitchen ? <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={kitchenSlug} /> : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant operations login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for assigned kitchen staff, cashiers, managers, and restaurant owners." />}
         </main>
       </div>
     );
@@ -4590,7 +4640,7 @@ export default function App() {
             <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
             <StatusPill tone={canOpenAdmin ? "good" : "warn"}>{canOpenAdmin ? "Super admin" : "Super admin login required"}</StatusPill>
           </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenAdmin ? adminContent : <AccessDenied loginHref="/admin/login" detail="This route is only for the platform owner." />}
+          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenAdmin ? adminContent : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/admin/login")} detail="Super admin login is required for this route." /> : <AccessDenied loginHref="/admin/login" detail="This route is only for the platform owner." />}
         </main>
       </div>
     );
@@ -4609,7 +4659,7 @@ export default function App() {
             <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
             <StatusPill tone={canOpenRestaurant ? "good" : "warn"}>{user?.role || "Restaurant login required"}</StatusPill>
           </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenRestaurant ? <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />}
+          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenRestaurant ? <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} /> : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />}
         </main>
       </div>
     );
@@ -4637,7 +4687,7 @@ export default function App() {
         <AppHeader navItems={[{ label: "Customer", icon: Store, href: "/customer", active: true }]} />
         <main className="mx-auto max-w-7xl px-4 py-6">
           <LoginStrip user={user} onLogout={logout} />
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenCustomer ? <CustomerApp apiOnline={apiOnline} token={token} user={user} /> : <AccessDenied loginHref="/login" detail="This route is only for customer accounts." />}
+          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenCustomer ? <CustomerApp apiOnline={apiOnline} token={token} user={user} /> : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/login")} detail="Customer login is required for this route." /> : <AccessDenied loginHref="/login" detail="This route is only for customer accounts." />}
         </main>
       </div>
     );
