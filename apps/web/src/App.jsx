@@ -501,6 +501,10 @@ function dashboardPathFor(user) {
   return destinations[user?.role] || "/login";
 }
 
+function isAuthPagePath(path = "") {
+  return ["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(path) || path.startsWith("/reset-password/");
+}
+
 function routeSlug(path, prefix) {
   const parts = path.split("/").filter(Boolean);
   return parts[0] === prefix && parts[1] ? parts[1] : "";
@@ -537,6 +541,7 @@ function safeReturnTo(defaultPath = "/") {
   const requested = new globalThis.URLSearchParams(window.location.search).get("returnTo") || "";
   if (!requested.startsWith("/") || requested.startsWith("//")) return defaultPath;
   if (/^(javascript:|data:)/i.test(requested)) return defaultPath;
+  if (isAuthPagePath(requested)) return defaultPath;
   return requested;
 }
 
@@ -1379,6 +1384,17 @@ function AppLoadingState({ title = "Loading Loohar", detail = "Checking live API
       </div>
       <h2 className="mt-5 text-xl font-black text-ink">{title}</h2>
       <p className="mt-2 text-sm text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function Redirecting({ to }) {
+  useEffect(() => {
+    window.location.replace(to);
+  }, [to]);
+  return (
+    <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
+      <AppLoadingState title="Opening Loohar" detail="Taking you to the right dashboard." />
     </div>
   );
 }
@@ -4589,6 +4605,16 @@ export default function App() {
   }
 
   if (isLoginRoute) {
+    if (apiMode === "CHECKING" || (apiOnline && authChecking && token)) {
+      return (
+        <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
+          <AppLoadingState />
+        </div>
+      );
+    }
+    if (user && !requiresPasswordChange(user)) {
+      return <Redirecting to={dashboardPathFor(user)} />;
+    }
     const mode = initialPath === "/admin/login" ? "admin" : initialPath === "/restaurant/login" ? "restaurant" : "platform";
     return <AuthPage mode={mode} apiOnline={apiOnline} onLogin={handleLogin} />;
   }
