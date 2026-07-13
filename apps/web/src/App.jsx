@@ -1502,14 +1502,10 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       }
     };
     window.addEventListener("pageshow", clearIfUntouched);
-    document.addEventListener("visibilitychange", clearIfUntouched);
     const timers = [80, 400, 1200].map((delay) => window.setTimeout(clearIfUntouched, delay));
-    const staleAutofillGuard = window.setInterval(clearIfUntouched, 250);
     return () => {
       window.removeEventListener("pageshow", clearIfUntouched);
-      document.removeEventListener("visibilitychange", clearIfUntouched);
       timers.forEach((timer) => window.clearTimeout(timer));
-      window.clearInterval(staleAutofillGuard);
     };
   }, [mode]);
 
@@ -1636,6 +1632,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 onPaste={markCredentialEntry}
                 onDrop={markCredentialEntry}
                 onChange={(event) => {
+                  markCredentialEntry();
                   setEmail(event.target.value);
                 }}
               />
@@ -1653,6 +1650,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 onPaste={markCredentialEntry}
                 onDrop={markCredentialEntry}
                 onChange={(event) => {
+                  markCredentialEntry();
                   setPassword(event.target.value);
                 }}
               />
