@@ -12,6 +12,7 @@ import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } fro
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
+import { normalizeEmail } from "../utils/authSecurity.js";
 
 const router = Router();
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -550,8 +551,9 @@ router.get("/:restaurantId/drivers", async (req, res, next) => {
 router.post("/:restaurantId/drivers", async (req, res, next) => {
   try {
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
+    const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email: req.body.email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId: restaurantIdFor(req), forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId: restaurantIdFor(req), forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
     const driver = await prisma.driver.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
@@ -573,8 +575,9 @@ router.get("/:restaurantId/staff", async (req, res, next) => {
 router.post("/:restaurantId/staff", async (req, res, next) => {
   try {
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
+    const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email: req.body.email, name: req.body.name, passwordHash, role: req.body.role, restaurantId: restaurantIdFor(req), phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name, passwordHash, role: req.body.role, restaurantId: restaurantIdFor(req), phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
     const staff = await prisma.restaurantStaff.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id, role: req.body.role, permissionsJson: req.body.permissionsJson || permissionsForRole(req.body.role) } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
@@ -628,8 +631,9 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
     const restaurantId = restaurantIdFor(req);
     const role = sanitizeEmployeeRole(req.body.role);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
+    const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email: req.body.email, name: req.body.name || req.body.email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status || "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name || email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status || "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
     if (role === "DRIVER") {
       await prisma.driver.create({ data: { restaurantId, userId: user.id, available: Boolean(req.body.available) } });
@@ -654,7 +658,7 @@ router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
       where: { id: existing.id },
       data: {
         ...(req.body.name ? { name: req.body.name } : {}),
-        ...(req.body.email ? { email: req.body.email } : {}),
+        ...(req.body.email ? { email: normalizeEmail(req.body.email) } : {}),
         ...(req.body.phone !== undefined ? { phone: req.body.phone } : {}),
         ...(req.body.status ? { status: req.body.status } : {}),
         role

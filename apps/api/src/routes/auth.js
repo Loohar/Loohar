@@ -9,6 +9,7 @@ import { recordAudit } from "../services/auditService.js";
 import { notifyPasswordReset } from "../services/notificationService.js";
 import { createPasswordResetLink, hashPasswordResetToken } from "../services/passwordResetService.js";
 import { updateSupabaseAuthPassword } from "../services/supabaseAuthService.js";
+import { authDiagnostic, maskEmail, normalizeEmail, strongPasswordSchema } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/tokens.js";
 
@@ -16,13 +17,6 @@ const router = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
 const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false });
 const refreshLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
-
-const strongPasswordSchema = z.string()
-  .min(12, "Password must be at least 12 characters")
-  .regex(/[A-Z]/, "Password must include an uppercase letter")
-  .regex(/[a-z]/, "Password must include a lowercase letter")
-  .regex(/[0-9]/, "Password must include a number")
-  .regex(/[^A-Za-z0-9]/, "Password must include a special character");
 
 function authUserSelect() {
   return {
@@ -36,6 +30,7 @@ function authUserSelect() {
     temporaryPassword: true,
     passwordChangedAt: true,
     lastLoginAt: true,
+    sessionVersion: true,
     mfaEnabled: true,
     mfaSetupStatus: true,
     mfaVerifiedAt: true,
@@ -58,15 +53,23 @@ function membershipFromRestaurant({ restaurant, role, status = "ACTIVE" }) {
   };
 }
 
+function setBestMembership(memberships, membership) {
+  if (!membership?.tenantId) return;
+  const existing = memberships.get(membership.tenantId);
+  if (!existing || existing.status !== "ACTIVE" || membership.status === "ACTIVE") {
+    memberships.set(membership.tenantId, membership);
+  }
+}
+
 async function membershipsForUser(user) {
   if (!user?.id || user.role === "SUPER_ADMIN") return [];
   const memberships = new Map();
 
   if (user.restaurantId && user.restaurant) {
     const membership = membershipFromRestaurant({ restaurant: user.restaurant, role: user.role, status: user.status });
-    if (membership) memberships.set(membership.tenantId, membership);
+    setBestMembership(memberships, membership);
   } else if (user.restaurantId && user.restaurantSlug) {
-    memberships.set(user.restaurantId, {
+    setBestMembership(memberships, {
       tenantId: user.restaurantId,
       tenantSlug: user.restaurantSlug,
       tenantName: user.restaurantName || user.restaurantSlug,
@@ -86,7 +89,7 @@ async function membershipsForUser(user) {
       role: staff.role,
       status: staff.active && staff.restaurant?.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"
     });
-    if (membership) memberships.set(membership.tenantId, membership);
+    setBestMembership(memberships, membership);
   }
 
   return [...memberships.values()];
@@ -167,18 +170,26 @@ function demoEmailForRole(role) {
   }[role];
 }
 
+function userEmailWhere(email) {
+  return { email: { equals: normalizeEmail(email), mode: "insensitive" } };
+}
+
+function findUserByEmail(email, select) {
+  return prisma.user.findFirst({ where: userEmailWhere(email), select });
+}
+
 router.post("/register", validate(credentialsSchema), async (req, res, next) => {
   try {
     const { email, password, name, role = "CUSTOMER", restaurantId } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+    const existingUser = await findUserByEmail(normalizedEmail, { id: true });
+    if (existingUser) return res.status(409).json({ error: "Email already exists" });
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.user.create({
-      data: { email, passwordHash, name: name || email, role, restaurantId, temporaryPassword: false, forcePasswordChange: false, passwordChangedAt: new Date() }
+      data: { email: normalizedEmail, passwordHash, name: name || normalizedEmail, role, restaurantId, temporaryPassword: false, forcePasswordChange: false, passwordChangedAt: new Date() },
+      select: authUserSelect()
     });
-    res.status(201).json({
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, restaurantId: user.restaurantId, forcePasswordChange: false, temporaryPassword: false, passwordChangedAt: user.passwordChangedAt },
-      accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user)
-    });
+    res.status(201).json(await authResponse(user));
   } catch (error) {
     next(error);
   }
@@ -186,13 +197,22 @@ router.post("/register", validate(credentialsSchema), async (req, res, next) => 
 
 router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true })), async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({ where: { email: req.body.email }, select: { ...authUserSelect(), passwordHash: true } });
-    if (!user || !(await bcrypt.compare(req.body.password, user.passwordHash))) {
-      await recordAudit({ action: "login.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { email: req.body.email, reason: "invalid_credentials" } }).catch(() => {});
+    const email = normalizeEmail(req.body.email);
+    authDiagnostic("auth.login.attempt", { email });
+    const user = await findUserByEmail(email, { ...authUserSelect(), passwordHash: true });
+    if (!user) {
+      authDiagnostic("auth.login.user_not_found", { email });
+      await recordAudit({ action: "login.failed", entityType: "User", entityId: null, actorUserId: null, restaurantId: null, metadata: { email: maskEmail(email), reason: "user_not_found" } }).catch(() => {});
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+    if (!user.passwordHash || !(await bcrypt.compare(req.body.password, user.passwordHash))) {
+      authDiagnostic(user.passwordHash ? "auth.login.password_mismatch" : "auth.login.missing_password_hash", { email: user.email, userId: user.id });
+      await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { email: maskEmail(user.email), reason: user.passwordHash ? "password_mismatch" : "missing_password_hash" } }).catch(() => {});
       return res.status(401).json({ error: "Invalid email or password" });
     }
     if (isProductionDefaultAdmin(user.email) || !canLoginWithStatus(user.status)) {
-      await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId, metadata: { email: user.email, reason: "inactive_status", status: user.status } }).catch(() => {});
+      authDiagnostic("auth.login.account_inactive", { email: user.email, userId: user.id, status: user.status });
+      await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId, metadata: { email: maskEmail(user.email), reason: "inactive_status", status: user.status } }).catch(() => {});
       return res.status(403).json({ error: "Account is not active" });
     }
     const updatedUser = await prisma.user.update({
@@ -201,6 +221,8 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
       select: authUserSelect()
     });
     await recordAudit({ action: "login.success", entityType: "User", entityId: updatedUser.id, actorUserId: updatedUser.id, restaurantId: updatedUser.restaurantId, metadata: { role: updatedUser.role } }).catch(() => {});
+    authDiagnostic("auth.login.success", { email: updatedUser.email, userId: updatedUser.id, role: updatedUser.role });
+    authDiagnostic("auth.session.created", { userId: updatedUser.id, role: updatedUser.role });
     res.json(await authResponse(updatedUser));
   } catch (error) {
     next(error);
@@ -211,7 +233,7 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
   try {
     if (!demoLoginEnabled()) return res.status(404).json({ error: "Demo login is disabled." });
     const email = demoEmailForRole(req.body.role) || demoEmailForMode(req.body.mode);
-    const user = await prisma.user.findUnique({ where: { email }, select: authUserSelect() });
+    const user = await findUserByEmail(email, authUserSelect());
     if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) return res.status(404).json({ error: "Seeded development account is unavailable." });
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
@@ -238,7 +260,8 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
         forcePasswordChange: false,
         temporaryPassword: false,
         passwordChangedAt: new Date(),
-        status: "ACTIVE"
+        status: "ACTIVE",
+        sessionVersion: { increment: 1 }
       },
       select: authUserSelect()
     });
@@ -253,7 +276,8 @@ async function refreshToken(req, res, next) {
   try {
     const payload = verifyRefreshToken(req.body.refreshToken);
     const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: authUserSelect() });
-    if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) {
+    const tokenSessionVersion = payload.sessionVersion ?? 0;
+    if (!user || tokenSessionVersion !== (user.sessionVersion || 0) || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) {
       await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user_or_status" } }).catch(() => {});
       return res.status(401).json({ error: "Invalid refresh token" });
     }
@@ -269,7 +293,7 @@ router.post("/refresh", refreshLimiter, refreshToken);
 
 router.post("/forgot-password", passwordLimiter, validate(forgotPasswordSchema), async (req, res, next) => {
   try {
-    const user = await prisma.user.findUnique({ where: { email: req.body.email }, select: authUserSelect() });
+    const user = await findUserByEmail(req.body.email, authUserSelect());
     if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) {
       return res.json({ ok: true, message: "If that email exists, a password reset link has been sent." });
     }
@@ -302,7 +326,8 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
           forcePasswordChange: false,
           temporaryPassword: false,
           passwordChangedAt: new Date(),
-          status: "ACTIVE"
+          status: "ACTIVE",
+          sessionVersion: { increment: 1 }
         },
         select: authUserSelect()
       });
@@ -325,8 +350,10 @@ router.post("/logout", requireAuth, async (req, res, next) => {
 
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
+    authDiagnostic("auth.me.success", { userId: req.user.id, role: req.user.role });
     res.json({ user: req.user, memberships: await membershipsForUser(req.user) });
   } catch (error) {
+    authDiagnostic("auth.me.failed", { userId: req.user?.id, reason: error.name || "unknown" });
     next(error);
   }
 });

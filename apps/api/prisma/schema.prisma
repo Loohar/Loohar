@@ -154,6 +154,7 @@ model User {
   temporaryPassword Boolean        @default(false)
   passwordChangedAt DateTime?
   lastLoginAt    DateTime?
+  sessionVersion Int              @default(0)
   mfaEnabled      Boolean          @default(false)
   mfaSetupStatus  String           @default("NOT_CONFIGURED")
   mfaSecret       String?

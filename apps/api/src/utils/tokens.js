@@ -21,14 +21,14 @@ const refreshSecret = () => {
 
 export function signAccessToken(user) {
   return jwt.sign(
-    { sub: user.id, role: user.role, restaurantId: user.restaurantId || null },
+    { sub: user.id, role: user.role, restaurantId: user.restaurantId || null, sessionVersion: user.sessionVersion || 0 },
     accessSecret(),
     { expiresIn: "15m" }
   );
 }
 
 export function signRefreshToken(user) {
-  return jwt.sign({ sub: user.id }, refreshSecret(), { expiresIn: "14d" });
+  return jwt.sign({ sub: user.id, sessionVersion: user.sessionVersion || 0 }, refreshSecret(), { expiresIn: "14d" });
 }
 
 export function verifyAccessToken(token) {

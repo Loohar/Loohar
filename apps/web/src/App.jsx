@@ -1527,7 +1527,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     setError("");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/login", { method: "POST", body: { email, password } });
+      const payload = await api("/api/auth/login", { method: "POST", body: { email: email.trim().toLowerCase(), password } });
       handleAuthenticated(payload);
     } catch (loginError) {
       setError(loginError.message);
@@ -1696,7 +1696,7 @@ function ForgotPasswordPage({ apiOnline }) {
     if (!apiOnline) return setError("Password reset requires the live API.");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/forgot-password", { method: "POST", body: { email } });
+      const payload = await api("/api/auth/forgot-password", { method: "POST", body: { email: email.trim().toLowerCase() } });
       setMessage(payload.message || "If that email exists, a password reset link has been sent.");
     } catch (forgotError) {
       setError(forgotError.message);

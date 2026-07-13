@@ -9,6 +9,7 @@ import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { defaultTenantHost, domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
+import { normalizeEmail } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
 
@@ -35,7 +36,7 @@ function defaultCategoriesFor(businessType) {
 }
 
 function generatedAdminEmail(ownerEmail, slug) {
-  const [local, domain] = ownerEmail.split("@");
+  const [local, domain] = normalizeEmail(ownerEmail).split("@");
   if (!domain) return `admin+${slug}@loohar.local`;
   return `${local}+admin@${domain}`;
 }
@@ -80,7 +81,9 @@ function normalizeTenantPayload(req, res, next) {
     name: body.name || businessName,
     businessName: body.publicBusinessName || businessName,
     slug,
-    email: body.businessEmail || body.email,
+    email: body.businessEmail ? normalizeEmail(body.businessEmail) : body.email ? normalizeEmail(body.email) : body.email,
+    ownerEmail: body.ownerEmail ? normalizeEmail(body.ownerEmail) : body.ownerEmail,
+    restaurantAdminEmail: body.restaurantAdminEmail ? normalizeEmail(body.restaurantAdminEmail) : body.restaurantAdminEmail,
     cuisineType: body.categoryLabel || body.cuisineType,
     planCode: (body.planCode || body.plan || "STARTER").toString().toUpperCase()
   };
@@ -150,14 +153,15 @@ router.get("/dashboard-summary", async (req, res, next) => {
 async function createBusiness(req, res, next) {
   try {
     const { ownerEmail, ownerPassword: _ownerPassword, ownerTemporaryPassword: _providedOwnerTemporaryPassword, restaurantAdminEmail: requestedRestaurantAdminEmail, planCode, websiteEnabled, cuisineType, ...restaurantData } = req.body;
-    const restaurantAdminEmail = requestedRestaurantAdminEmail || generatedAdminEmail(ownerEmail, restaurantData.slug);
+    const normalizedOwnerEmail = normalizeEmail(ownerEmail);
+    const restaurantAdminEmail = normalizeEmail(requestedRestaurantAdminEmail || generatedAdminEmail(normalizedOwnerEmail, restaurantData.slug));
     const [existingSlug, existingOwner, existingAdmin] = await Promise.all([
       prisma.restaurant.findUnique({ where: { slug: restaurantData.slug }, select: { id: true } }),
-      prisma.user.findUnique({ where: { email: ownerEmail }, select: { id: true } }),
-      prisma.user.findUnique({ where: { email: restaurantAdminEmail }, select: { id: true } })
+      prisma.user.findFirst({ where: { email: { equals: normalizedOwnerEmail, mode: "insensitive" } }, select: { id: true } }),
+      prisma.user.findFirst({ where: { email: { equals: restaurantAdminEmail, mode: "insensitive" } }, select: { id: true } })
     ]);
     if (existingSlug) return res.status(409).json({ error: `Slug "${restaurantData.slug}" is already used by another tenant.` });
-    if (existingOwner) return res.status(409).json({ error: `Owner email "${ownerEmail}" is already used by another account.` });
+    if (existingOwner) return res.status(409).json({ error: `Owner email "${normalizedOwnerEmail}" is already used by another account.` });
     if (existingAdmin) return res.status(409).json({ error: `Restaurant admin email "${restaurantAdminEmail}" is already used by another account.` });
     const plan = await prisma.subscriptionPlan.findUnique({ where: { code: planCode } });
     if (!plan) return res.status(404).json({ error: `Plan "${planCode}" not found.` });
@@ -189,7 +193,7 @@ async function createBusiness(req, res, next) {
       });
       const owner = await tx.user.create({
         data: {
-          email: ownerEmail,
+          email: normalizedOwnerEmail,
           name: `${restaurantData.name} Owner`,
           passwordHash: ownerPasswordHash,
           role: "TENANT_OWNER",
@@ -231,7 +235,7 @@ async function createBusiness(req, res, next) {
       restaurantAdmin ? sendAccountSetupEmail({ user: restaurantAdmin }) : null
     ]);
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "business.created", entityType: "Business", entityId: restaurant.id });
-    res.status(201).json({ restaurant, business: restaurant, generatedAccounts: { ownerEmail, restaurantAdminEmail, delivery: "set_password_email" } });
+    res.status(201).json({ restaurant, business: restaurant, generatedAccounts: { ownerEmail: normalizedOwnerEmail, restaurantAdminEmail, delivery: "set_password_email" } });
   } catch (error) {
     next(error);
   }
@@ -304,11 +308,11 @@ router.get("/tenants/:businessId/audit", getBusinessAudit);
 async function updateBusiness(req, res, next) {
   try {
     const restaurantId = req.params.restaurantId || req.params.businessId;
-    const ownerEmail = req.body.ownerEmail;
+    const ownerEmail = req.body.ownerEmail ? normalizeEmail(req.body.ownerEmail) : req.body.ownerEmail;
     const data = {
       ...req.body,
       ...(req.body.publicBusinessName ? { businessName: req.body.publicBusinessName } : {}),
-      ...(req.body.businessEmail ? { email: req.body.businessEmail } : {}),
+      ...(req.body.businessEmail ? { email: normalizeEmail(req.body.businessEmail) } : {}),
       ...(req.body.categoryLabel ? {} : {})
     };
     delete data.publicBusinessName;
@@ -328,7 +332,7 @@ async function updateBusiness(req, res, next) {
     const updatedRestaurant = await prisma.restaurant.update({ where: { id: restaurantId }, data });
     if (ownerEmail) {
       const currentOwner = await prisma.user.findFirst({ where: { restaurantId, role: { in: ["TENANT_OWNER", "RESTAURANT_OWNER"] } } });
-      const emailOwner = await prisma.user.findUnique({ where: { email: ownerEmail } });
+      const emailOwner = await prisma.user.findFirst({ where: { email: { equals: ownerEmail, mode: "insensitive" } } });
       if (emailOwner && emailOwner.id !== currentOwner?.id) {
         return res.status(409).json({ error: `Owner email "${ownerEmail}" is already used by another account.` });
       }
@@ -438,9 +442,10 @@ router.post("/users/:userId/reset-password", async (req, res, next) => {
         status: "PASSWORD_RESET_REQUIRED",
         forcePasswordChange: true,
         temporaryPassword: true,
-        passwordChangedAt: null
+        passwordChangedAt: null,
+        sessionVersion: { increment: 1 }
       },
-      select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true }
+      select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true, sessionVersion: true }
     });
     await sendAccountSetupEmail({ user: updatedUser }).catch(() => {});
     await recordAudit({ actorUserId: req.user.id, restaurantId: user.restaurantId, action: "user.password_reset_by_admin", entityType: "User", entityId: user.id });

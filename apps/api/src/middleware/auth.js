@@ -21,6 +21,7 @@ export async function requireAuth(req, res, next) {
         temporaryPassword: true,
         passwordChangedAt: true,
         lastLoginAt: true,
+        sessionVersion: true,
         mfaEnabled: true,
         mfaSetupStatus: true,
         mfaVerifiedAt: true,
@@ -29,6 +30,7 @@ export async function requireAuth(req, res, next) {
     });
 
     if (!user) return res.status(401).json({ error: "Invalid token user" });
+    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) return res.status(401).json({ error: "Invalid or expired bearer token" });
     if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return res.status(403).json({ error: "Account is not active" });
     req.user = {
       id: user.id,
@@ -43,6 +45,7 @@ export async function requireAuth(req, res, next) {
       temporaryPassword: user.temporaryPassword,
       passwordChangedAt: user.passwordChangedAt,
       lastLoginAt: user.lastLoginAt,
+      sessionVersion: user.sessionVersion,
       mfaEnabled: user.mfaEnabled,
       mfaSetupStatus: user.mfaSetupStatus,
       mfaVerifiedAt: user.mfaVerifiedAt
