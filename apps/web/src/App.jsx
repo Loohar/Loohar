@@ -1399,7 +1399,7 @@ function PublicHome({ user, onLogout }) {
           <BrandMark />
           <nav className="flex flex-wrap gap-2">
             {user ? <a className="nav-tab active" href={dashboardPathFor(user)}>Dashboard</a> : null}
-            <a className="nav-tab" href="/login">Platform Login</a>
+            <a className="nav-tab" href="/admin/login">Admin Login</a>
             <a className="nav-tab" href="/restaurant/login">Restaurant Owner Login</a>
             {user ? <button className="nav-tab" onClick={onLogout}>Logout</button> : null}
           </nav>
@@ -1415,7 +1415,7 @@ function PublicHome({ user, onLogout }) {
             <h1 className="mt-4 max-w-4xl text-5xl font-black leading-tight md:text-7xl">{appName}</h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-white/85">Restaurant websites, direct ordering, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a className="button-primary bg-mint hover:bg-emerald-700" href="/login"><LogIn size={18} />Platform Login</a>
+              <a className="button-primary bg-mint hover:bg-emerald-700" href="/admin/login"><LogIn size={18} />Admin Login</a>
               <a className="button-muted border-white/30 bg-white/10 text-white hover:bg-white hover:text-ink" href="/restaurant/login"><ChefHat size={18} />Restaurant Owner Login</a>
             </div>
           </div>
