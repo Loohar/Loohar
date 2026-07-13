@@ -4625,6 +4625,9 @@ export default function App() {
 
   if (isAdminRoute) {
     if (initialPath === "/admin/login") return <AuthPage mode="admin" apiOnline={apiOnline} onLogin={handleLogin} />;
+    if (apiMode !== "CHECKING" && !(apiOnline && authChecking) && !user) {
+      return <AuthPage mode="admin" apiOnline={apiOnline} onLogin={handleLogin} />;
+    }
     const canOpenAdmin = adminRoles.includes(user?.role) && !requiresPasswordChange(user);
     const adminContent = isAdminCreateRoute
       ? <AdminCreateBusinessPage apiOnline={apiOnline} token={token} />
@@ -4648,6 +4651,9 @@ export default function App() {
 
   if (isRestaurantRoute || isSiteAdminRoute) {
     if (initialPath === "/restaurant/login") return <AuthPage mode="restaurant" apiOnline={apiOnline} onLogin={handleLogin} />;
+    if (apiMode !== "CHECKING" && !(apiOnline && authChecking) && !user) {
+      return <AuthPage mode="restaurant" apiOnline={apiOnline} onLogin={handleLogin} />;
+    }
     const restaurantSlug = isRestaurantRoute ? routeSlug(initialPath, "restaurant") : "";
     const canOpenRestaurant = restaurantRoles.concat(["SUPER_ADMIN"]).includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
     return (
