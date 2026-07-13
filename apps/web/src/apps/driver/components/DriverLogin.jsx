@@ -28,14 +28,10 @@ export function DriverLogin({ authError, authLoading, login, loginDemo, apiOnlin
       }
     };
     window.addEventListener("pageshow", clearIfUntouched);
-    document.addEventListener("visibilitychange", clearIfUntouched);
     const timers = [80, 400, 1200].map((delay) => window.setTimeout(clearIfUntouched, delay));
-    const staleAutofillGuard = window.setInterval(clearIfUntouched, 250);
     return () => {
       window.removeEventListener("pageshow", clearIfUntouched);
-      document.removeEventListener("visibilitychange", clearIfUntouched);
       timers.forEach((timer) => window.clearTimeout(timer));
-      window.clearInterval(staleAutofillGuard);
     };
   }, []);
 
@@ -68,6 +64,7 @@ export function DriverLogin({ authError, authLoading, login, loginDemo, apiOnlin
               onPaste={markCredentialEntry}
               onDrop={markCredentialEntry}
               onChange={(event) => {
+                markCredentialEntry();
                 setEmail(event.target.value);
               }}
               type="email"
@@ -84,6 +81,7 @@ export function DriverLogin({ authError, authLoading, login, loginDemo, apiOnlin
               onPaste={markCredentialEntry}
               onDrop={markCredentialEntry}
               onChange={(event) => {
+                markCredentialEntry();
                 setPassword(event.target.value);
               }}
               type="password"
