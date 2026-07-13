@@ -23,6 +23,12 @@ function clearStoredSession() {
   }
 }
 
+function clearStoredSessionForToken(requestToken) {
+  const currentToken = localStorage.getItem("accessToken") || "";
+  if (!requestToken || requestToken !== currentToken) return;
+  clearStoredSession();
+}
+
 async function parseApiError(response) {
   return response.json().catch(() => ({}));
 }
@@ -78,7 +84,7 @@ export async function api(path, options = {}) {
       }
     }
     const payload = await parseApiError(response);
-    if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSession();
+    if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSessionForToken(token);
     throw new Error(payload.error || `Request failed with ${response.status}`);
   }
 
