@@ -8,7 +8,7 @@ config({ path: resolve(__dirname, "../.env") });
 
 const apiBase = String(process.env.AUTH_VERIFY_API_URL || process.env.API_URL || "https://api.loohar.com").replace(/\/+$/, "").replace(/\/api$/, "");
 const email = String(process.env.AUTH_VERIFY_EMAIL || "").trim();
-const password = String(process.env.AUTH_VERIFY_PASSWORD || "");
+let password = String(process.env.AUTH_VERIFY_PASSWORD || "");
 
 function assertNoSensitiveUserFields(user) {
   const forbidden = ["password", "passwordHash", "hashedPassword", "temporaryPassword", "resetToken", "resetPasswordToken", "mfaSecret"];
@@ -20,9 +20,18 @@ async function readPayload(response) {
   return response.json().catch(() => ({}));
 }
 
+async function readPasswordFromStdin() {
+  if (process.stdin.isTTY) return "";
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  return input.trimEnd();
+}
+
 async function main() {
+  if (!password) password = await readPasswordFromStdin();
+
   if (!email || !password) {
-    throw new Error("Set AUTH_VERIFY_EMAIL and AUTH_VERIFY_PASSWORD to run the production login verifier.");
+    throw new Error("Set AUTH_VERIFY_EMAIL and pass AUTH_VERIFY_PASSWORD or pipe the password through stdin to run the production login verifier.");
   }
 
   const loginResponse = await fetch(`${apiBase}/api/auth/login`, {
