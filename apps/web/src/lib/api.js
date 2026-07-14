@@ -1,13 +1,20 @@
 import { authStorage } from "../shared/browserStorage.js";
 
-const defaultApiUrl = import.meta.env.PROD ? "https://api.loohar.com" : "/api";
+const defaultApiUrl = "/api";
 const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
 const legacyRenderHost = ["loohar-api", "onrender", "com"].join(".");
-const configuredApiUrl = import.meta.env.PROD && rawConfiguredApiUrl.includes(legacyRenderHost) ? defaultApiUrl : rawConfiguredApiUrl;
+const apiCustomDomain = ["api", "loohar", "com"].join(".");
+const configuredApiUrl =
+  import.meta.env.PROD && (rawConfiguredApiUrl.includes(legacyRenderHost) || rawConfiguredApiUrl.includes(apiCustomDomain))
+    ? defaultApiUrl
+    : rawConfiguredApiUrl;
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
 const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
-const configuredApiHealthUrl = import.meta.env.PROD && rawConfiguredApiHealthUrl.includes(legacyRenderHost) ? "https://api.loohar.com/health" : rawConfiguredApiHealthUrl;
+const configuredApiHealthUrl =
+  import.meta.env.PROD && (rawConfiguredApiHealthUrl.includes(legacyRenderHost) || rawConfiguredApiHealthUrl.includes(apiCustomDomain))
+    ? "/health"
+    : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
 const isDev = import.meta.env.DEV;
 

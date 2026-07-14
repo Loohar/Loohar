@@ -26,7 +26,7 @@ function excludes(path, needle, name) {
   else fail(name, `${path} still contains ${needle}`);
 }
 
-includes("apps/web/src/lib/api.js", "https://api.loohar.com", "Web API default uses api.loohar.com");
+includes("apps/web/src/lib/api.js", "const defaultApiUrl = \"/api\"", "Web API default uses same-origin /api proxy");
 includes("apps/web/src/lib/api.js", "credentials: options.credentials || \"include\"", "Fetch includes credentials for compatible CORS");
 includes("apps/web/src/lib/api.js", "skipAuth", "API client supports auth-free login requests");
 includes("apps/web/src/lib/api.js", "cache: options.cache || (isAuthPath(path) ? \"no-store\" : \"default\")", "Auth requests are no-store");
@@ -40,8 +40,7 @@ includes("apps/web/public/sw.js", "driver-pwa-shell-v4", "Service worker cache v
 includes("apps/web/public/sw.js", "NETWORK_ONLY_PATHS", "Service worker excludes auth/API paths");
 includes("apps/api/src/config/urls.js", "https://api.loohar.com", "Backend API URL default uses api.loohar.com");
 includes("render.yaml", "https://api.loohar.com", "Render blueprint uses api.loohar.com");
-includes("apps/web/vercel.json", "https://api.loohar.com", "Vercel rewrites target api.loohar.com");
-excludes("apps/web/vercel.json", ["loohar-api", "onrender", "com"].join("."), "Vercel rewrites do not expose Render hostname");
+includes("apps/web/vercel.json", "https://loohar-api.onrender.com", "Vercel rewrites proxy to Render API");
 excludes("apps/web/src/lib/api.js", ["loohar-api", "onrender", "com"].join("."), "Web bundle source does not expose Render hostname");
 
 const failed = checks.filter((check) => !check.ok);

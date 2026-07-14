@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://api.loohar.com/api/:path*"
+      "destination": "https://loohar-api.onrender.com/api/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://api.loohar.com/health"
+      "destination": "https://loohar-api.onrender.com/health"
     },
     {
       "source": "/(.*)",
