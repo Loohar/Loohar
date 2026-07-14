@@ -34,6 +34,9 @@ includes("apps/web/src/shared/browserStorage.js", "sessionStorage", "Browser sto
 includes("apps/web/src/App.jsx", "verifyAuthenticatedSession", "Login verifies /auth/me before redirect");
 includes("apps/web/src/App.jsx", "skipAuth: true", "Login requests do not attach stale bearer tokens");
 includes("apps/web/src/App.jsx", "refreshSession(refreshToken)", "App boot attempts refresh before clearing session");
+includes("apps/web/src/App.jsx", "function navigateInApp", "Authenticated redirects use in-app navigation for Safari private mode");
+includes("apps/web/src/App.jsx", "window.addEventListener(\"loohar:navigate\"", "App route state follows in-app navigation");
+excludes("apps/web/src/App.jsx", "window.location.assign(returnToForUser", "Login success does not force a full page reload");
 includes("apps/web/src/App.jsx", "name=\"password\"", "Primary login password field uses standard name");
 includes("apps/web/src/apps/driver/components/DriverLogin.jsx", "name=\"password\"", "Driver login password field uses standard name");
 includes("apps/web/public/sw.js", "driver-pwa-shell-v4", "Service worker cache version bumped");

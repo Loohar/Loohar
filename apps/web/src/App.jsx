@@ -560,6 +560,20 @@ function loginHrefWithReturnTo(loginPath, returnTo = window.location.pathname) {
   return `${loginPath}?returnTo=${encodeURIComponent(safePath)}`;
 }
 
+function navigateInApp(to, { replace = false } = {}) {
+  const nextUrl = new globalThis.URL(to, window.location.origin);
+  if (nextUrl.origin !== window.location.origin) {
+    window.location.assign(nextUrl.href);
+    return;
+  }
+  const nextPath = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextPath !== currentPath) {
+    window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
+  }
+  window.dispatchEvent(new globalThis.CustomEvent("loohar:navigate", { detail: { path: nextUrl.pathname } }));
+}
+
 function requiresPasswordChange(user) {
   return Boolean(user?.forcePasswordChange || user?.temporaryPassword);
 }
@@ -1390,7 +1404,7 @@ function AppLoadingState({ title = "Loading Loohar", detail = "Checking live API
 
 function Redirecting({ to }) {
   useEffect(() => {
-    window.location.replace(to);
+    navigateInApp(to, { replace: true });
   }, [to]);
   return (
     <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
@@ -1510,7 +1524,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   }, [mode]);
 
   function continueAfterAuth(user) {
-    window.location.assign(returnToForUser(user));
+    navigateInApp(returnToForUser(user), { replace: true });
   }
 
   async function verifyAuthenticatedSession(payload) {
@@ -1798,7 +1812,7 @@ function ResetPasswordPage({ apiOnline, token: resetToken, onLogin }) {
       const memberships = current.memberships || payload.memberships || [];
       const nextSession = { ...payload, memberships, user: normalizeSessionUser(current.user || payload.user, memberships) };
       onLogin(nextSession);
-      window.location.assign(dashboardPathFor(nextSession.user));
+      navigateInApp(dashboardPathFor(nextSession.user), { replace: true });
     } catch (resetError) {
       setError(resetError.message);
     } finally {
@@ -1879,7 +1893,7 @@ function AdminCreateBusinessPage({ apiOnline, token }) {
     try {
       await api("/api/admin/tenants", { method: "POST", token, body: tenantCreatePayload(nextForm) });
       window.sessionStorage.setItem("looharTenantCreated", nextForm.slug);
-      window.location.assign("/admin");
+      navigateInApp("/admin", { replace: true });
     } catch (createError) {
       globalThis.console?.error?.("Business create failed", createError);
       setError(createError.message);
@@ -4488,7 +4502,8 @@ function DiscoveryPage({ apiOnline }) {
 }
 
 export default function App() {
-  const initialPath = window.location.pathname;
+  const [currentPath, setCurrentPath] = useState(() => window.location.pathname);
+  const initialPath = currentPath;
   const [token, setToken] = useState(() => getStoredSession().token);
   const [refreshToken, setRefreshToken] = useState(() => getStoredSession().refreshToken);
   const [user, setUser] = useState(() => getStoredSession().user);
@@ -4513,6 +4528,18 @@ export default function App() {
   const orderRouteSlug = initialPath.startsWith("/order/") ? initialPath.split("/")[2] : null;
   const isAdminCreateRoute = initialPath === "/admin/business/new";
   const adminAuditMatch = initialPath.match(/^\/admin\/business\/([^/]+)\/audit\/?$/);
+
+  useEffect(() => {
+    function syncCurrentPath() {
+      setCurrentPath(window.location.pathname);
+    }
+    window.addEventListener("popstate", syncCurrentPath);
+    window.addEventListener("loohar:navigate", syncCurrentPath);
+    return () => {
+      window.removeEventListener("popstate", syncCurrentPath);
+      window.removeEventListener("loohar:navigate", syncCurrentPath);
+    };
+  }, []);
 
   useEffect(() => {
     const privateRoute = isAdminRoute || isRestaurantRoute || isDriverRoute || isKitchenRoute || isCustomerRoute || isSiteAdminRoute || isLoginRoute || isForgotPasswordRoute || Boolean(resetPasswordMatch) || Boolean(appOrderMatch);
@@ -4640,7 +4667,7 @@ export default function App() {
 
   function handleImpersonate(payload) {
     handleLogin({ accessToken: payload.accessToken, refreshToken: payload.refreshToken, memberships: payload.memberships || [], user: payload.user });
-    window.location.assign(dashboardPathFor(payload.user));
+    navigateInApp(dashboardPathFor(payload.user), { replace: true });
   }
 
   function logout() {
@@ -4649,7 +4676,7 @@ export default function App() {
     setRefreshToken("");
     setUser(null);
     clearSession();
-    window.location.assign("/");
+    navigateInApp("/", { replace: true });
   }
 
   if (isForgotPasswordRoute) {
