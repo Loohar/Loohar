@@ -1,7 +1,7 @@
 const productionUrls = {
-  app: "https://app.loohar.com",
-  api: "https://loohar.com/api",
-  admin: "https://admin.loohar.com",
+  app: "https://loohar.com",
+  api: "https://api.loohar.com",
+  admin: "https://loohar.com/admin",
   platform: "https://loohar.com",
   publicSiteFallback: "https://loohar.com",
   driver: "https://driver.loohar.com"
@@ -44,12 +44,14 @@ export function tenantRootDomain() {
 }
 
 export function productionOriginAllowlist() {
-  return [
+  return [...new Set([
     "https://loohar.com",
     "https://www.loohar.com",
-    productionUrls.admin,
+    "https://admin.loohar.com",
+    "https://app.loohar.com",
+    "https://driver.loohar.com",
     productionUrls.app,
     productionUrls.driver,
     productionUrls.publicSiteFallback
-  ];
+  ])];
 }

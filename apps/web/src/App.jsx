@@ -1513,6 +1513,21 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     window.location.assign(returnToForUser(user));
   }
 
+  async function verifyAuthenticatedSession(payload) {
+    if (!payload?.accessToken) throw new Error("Login did not return a usable session.");
+    const current = await api("/api/auth/me", {
+      token: payload.accessToken,
+      authRetry: false,
+      clearOnUnauthorized: false
+    });
+    const memberships = current.memberships || payload.memberships || [];
+    return {
+      ...payload,
+      memberships,
+      user: normalizeSessionUser(current.user || payload.user, memberships)
+    };
+  }
+
   function handleAuthenticated(payload) {
     const normalizedUser = normalizeSessionUser(payload.user, payload.memberships);
     const sessionPayload = { ...payload, user: normalizedUser };
@@ -1539,8 +1554,14 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     setError("");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/login", { method: "POST", body: { email: email.trim().toLowerCase(), password } });
-      handleAuthenticated(payload);
+      const payload = await api("/api/auth/login", {
+        method: "POST",
+        body: { email: email.trim().toLowerCase(), password },
+        skipAuth: true,
+        authRetry: false,
+        clearOnUnauthorized: false
+      });
+      handleAuthenticated(await verifyAuthenticatedSession(payload));
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -1555,8 +1576,14 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     clearLoginFields();
     setLoading(true);
     try {
-      const payload = await api("/api/auth/demo-login", { method: "POST", body: { role: demoRoleByMode[mode] || "SUPER_ADMIN" } });
-      handleAuthenticated(payload);
+      const payload = await api("/api/auth/demo-login", {
+        method: "POST",
+        body: { role: demoRoleByMode[mode] || "SUPER_ADMIN" },
+        skipAuth: true,
+        authRetry: false,
+        clearOnUnauthorized: false
+      });
+      handleAuthenticated(await verifyAuthenticatedSession(payload));
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -1572,7 +1599,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     setLoading(true);
     try {
       const payload = await api("/api/auth/change-password", { method: "POST", token: session?.accessToken, body: { newPassword } });
-      const reloadedSession = await api("/api/auth/me", { token: payload.accessToken })
+      const reloadedSession = await api("/api/auth/me", { token: payload.accessToken, authRetry: false, clearOnUnauthorized: false })
         .then((current) => ({ ...payload, memberships: current.memberships || payload.memberships || [], user: normalizeSessionUser(current.user || payload.user, current.memberships || payload.memberships || []) }))
         .catch(() => ({ ...payload, user: normalizeSessionUser(payload.user, payload.memberships || []) }));
       onLogin(reloadedSession);
@@ -1643,7 +1670,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 ref={passwordInputRef}
                 className="input mt-1"
                 type="password"
-                name="current-password"
+                name="password"
                 autoComplete="current-password"
                 value={password}
                 onKeyDown={markCredentialEntry}
@@ -1710,7 +1737,13 @@ function ForgotPasswordPage({ apiOnline }) {
     if (!apiOnline) return setError("Password reset requires the live API.");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/forgot-password", { method: "POST", body: { email: email.trim().toLowerCase() } });
+      const payload = await api("/api/auth/forgot-password", {
+        method: "POST",
+        body: { email: email.trim().toLowerCase() },
+        skipAuth: true,
+        authRetry: false,
+        clearOnUnauthorized: false
+      });
       setMessage(payload.message || "If that email exists, a password reset link has been sent.");
     } catch (forgotError) {
       setError(forgotError.message);
@@ -1754,9 +1787,18 @@ function ResetPasswordPage({ apiOnline, token: resetToken, onLogin }) {
     if (newPassword !== confirmPassword) return setError("Password confirmation does not match.");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/reset-password", { method: "POST", body: { token: resetToken, newPassword } });
-      onLogin(payload);
-      window.location.assign(dashboardPathFor(payload.user));
+      const payload = await api("/api/auth/reset-password", {
+        method: "POST",
+        body: { token: resetToken, newPassword },
+        skipAuth: true,
+        authRetry: false,
+        clearOnUnauthorized: false
+      });
+      const current = await api("/api/auth/me", { token: payload.accessToken, authRetry: false, clearOnUnauthorized: false });
+      const memberships = current.memberships || payload.memberships || [];
+      const nextSession = { ...payload, memberships, user: normalizeSessionUser(current.user || payload.user, memberships) };
+      onLogin(nextSession);
+      window.location.assign(dashboardPathFor(nextSession.user));
     } catch (resetError) {
       setError(resetError.message);
     } finally {
@@ -4503,60 +4545,81 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    async function loadSessionFromAccessToken(accessToken, retainedRefreshToken) {
+      const current = await api("/api/auth/me", { token: accessToken, clearOnUnauthorized: false, authRetry: false });
+      const memberships = current.memberships || [];
+      return {
+        accessToken,
+        refreshToken: retainedRefreshToken || "",
+        memberships,
+        user: normalizeSessionUser(current.user, memberships)
+      };
+    }
+
+    async function refreshSession(retainedRefreshToken) {
+      const refreshed = await api("/api/auth/refresh", {
+        method: "POST",
+        body: { refreshToken: retainedRefreshToken },
+        skipAuth: true,
+        clearOnUnauthorized: false,
+        authRetry: false
+      });
+      if (!refreshed?.accessToken) throw new Error("Refresh did not return a usable session.");
+      const nextSession = await loadSessionFromAccessToken(refreshed.accessToken, refreshed.refreshToken || retainedRefreshToken);
+      return { ...refreshed, ...nextSession };
+    }
+
+    function applyVerifiedSession(nextSession) {
+      setToken(nextSession.accessToken);
+      setRefreshToken(nextSession.refreshToken || "");
+      setUser(nextSession.user);
+      storeSession(nextSession);
+      setAuthChecking(false);
+    }
+
+    function clearInvalidSession() {
+      clearSession();
+      setToken("");
+      setRefreshToken("");
+      setUser(null);
+      setAuthChecking(false);
+    }
+
     async function verifySession() {
       if (apiMode === "CHECKING") return;
       if (apiMode === "DEMO") {
         if (!cancelled) setAuthChecking(false);
         return;
       }
-      if (!token) {
-        clearSession();
-        if (!cancelled) {
-          setUser(null);
-          setRefreshToken("");
-          setAuthChecking(false);
-        }
-        return;
-      }
       setAuthChecking(true);
-      try {
-        const current = await api("/api/auth/me", { token, clearOnUnauthorized: false, authRetry: false });
-        const currentUser = normalizeSessionUser(current.user, current.memberships);
-        if (!cancelled) {
-          setUser(currentUser);
-          storeSession({ accessToken: token, refreshToken, user: currentUser });
-          setAuthChecking(false);
-        }
-      } catch {
+      if (!token) {
         if (!refreshToken) {
-          clearSession();
-          if (!cancelled) {
-            setToken("");
-            setUser(null);
-            setAuthChecking(false);
-          }
+          if (!cancelled) clearInvalidSession();
           return;
         }
         try {
-          const refreshed = await api("/api/auth/refresh", { method: "POST", body: { refreshToken }, clearOnUnauthorized: false, authRetry: false });
-          const current = await api("/api/auth/me", { token: refreshed.accessToken, clearOnUnauthorized: false, authRetry: false });
-          const nextMemberships = current.memberships || refreshed.memberships || [];
-          const nextSession = { ...refreshed, memberships: nextMemberships, user: normalizeSessionUser(current.user || refreshed.user, nextMemberships) };
-          if (!cancelled) {
-            setToken(nextSession.accessToken);
-            setRefreshToken(nextSession.refreshToken);
-            setUser(nextSession.user);
-            storeSession(nextSession);
-            setAuthChecking(false);
-          }
+          const nextSession = await refreshSession(refreshToken);
+          if (!cancelled) applyVerifiedSession(nextSession);
         } catch {
-          clearSession();
-          if (!cancelled) {
-            setToken("");
-            setRefreshToken("");
-            setUser(null);
-            setAuthChecking(false);
-          }
+          if (!cancelled) clearInvalidSession();
+        }
+        return;
+      }
+      try {
+        const nextSession = await loadSessionFromAccessToken(token, refreshToken);
+        if (!cancelled) {
+          applyVerifiedSession(nextSession);
+        }
+      } catch {
+        if (!refreshToken) {
+          if (!cancelled) clearInvalidSession();
+          return;
+        }
+        try {
+          const nextSession = await refreshSession(refreshToken);
+          if (!cancelled) applyVerifiedSession(nextSession);
+        } catch {
+          if (!cancelled) clearInvalidSession();
         }
       }
     }
@@ -4603,7 +4666,7 @@ export default function App() {
   }
 
   if (isLoginRoute) {
-    if (apiMode === "CHECKING" || (apiOnline && authChecking && token)) {
+    if (apiMode === "CHECKING" || (apiOnline && authChecking)) {
       return (
         <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
           <AppLoadingState />

@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const apiOrigin = (process.env.PRODUCTION_SMOKE_API_URL || "https://loohar.com").replace(/\/+$/, "");
-const appOrigin = (process.env.PRODUCTION_SMOKE_APP_URL || "https://app.loohar.com").replace(/\/+$/, "");
+const apiOrigin = (process.env.PRODUCTION_SMOKE_API_URL || "https://api.loohar.com").replace(/\/+$/, "");
+const appOrigin = (process.env.PRODUCTION_SMOKE_APP_URL || "https://loohar.com").replace(/\/+$/, "");
 const tenantRootDomain = process.env.PRODUCTION_SMOKE_TENANT_ROOT_DOMAIN || "loohar.com";
 const tenantSiteOrigin = (process.env.PRODUCTION_SMOKE_TENANT_SITE_URL || `https://loohar-restaurant.${tenantRootDomain}`).replace(/\/+$/, "");
 const driverOrigin = (process.env.PRODUCTION_SMOKE_DRIVER_URL || "https://driver.loohar.com").replace(/\/+$/, "");
@@ -103,7 +103,7 @@ function staticQrUrlCheck() {
   const customerQr = `${appOrigin}/app/order/order-smoke?token=tracking-smoke`;
   const driverQr = `${driverOrigin}/order/order-smoke`;
   const publicSite = `${tenantSiteOrigin}/order`;
-  if (!customerQr.startsWith("https://app.loohar.com")) return fail("Customer QR production URL", customerQr);
+  if (!customerQr.startsWith(appOrigin)) return fail("Customer QR production URL", customerQr);
   if (!driverQr.startsWith("https://driver.loohar.com")) return fail("Driver QR production URL", driverQr);
   if (!publicSite.startsWith(`https://loohar-restaurant.${tenantRootDomain}`)) return fail("Public restaurant canonical URL", publicSite);
   pass("Production QR URL config", "app, driver, and tenant public domains");

@@ -1,7 +1,13 @@
-const configuredApiUrl = import.meta.env.VITE_API_URL || "/api";
+import { authStorage } from "../shared/browserStorage.js";
+
+const defaultApiUrl = import.meta.env.PROD ? "https://api.loohar.com" : "/api";
+const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
+const legacyRenderHost = ["loohar-api", "onrender", "com"].join(".");
+const configuredApiUrl = import.meta.env.PROD && rawConfiguredApiUrl.includes(legacyRenderHost) ? defaultApiUrl : rawConfiguredApiUrl;
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
-const configuredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
+const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
+const configuredApiHealthUrl = import.meta.env.PROD && rawConfiguredApiHealthUrl.includes(legacyRenderHost) ? "https://api.loohar.com/health" : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
 const isDev = import.meta.env.DEV;
 
@@ -14,17 +20,21 @@ export function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+function isAuthPath(path) {
+  return path.startsWith("/api/auth/") || path === "/api/auth";
+}
+
 function clearStoredSession() {
-  localStorage.removeItem("accessToken");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("user");
+  authStorage.removeItem("accessToken");
+  authStorage.removeItem("refreshToken");
+  authStorage.removeItem("user");
   if (globalThis.window?.dispatchEvent && typeof globalThis.window.CustomEvent === "function") {
     globalThis.window.dispatchEvent(new globalThis.window.CustomEvent("loohar:auth-expired"));
   }
 }
 
 function clearStoredSessionForToken(requestToken) {
-  const currentToken = localStorage.getItem("accessToken") || "";
+  const currentToken = authStorage.getItem("accessToken");
   if (!requestToken || requestToken !== currentToken) return;
   clearStoredSession();
 }
@@ -34,28 +44,32 @@ async function parseApiError(response) {
 }
 
 async function refreshStoredSession() {
-  const refreshToken = localStorage.getItem("refreshToken") || "";
+  const refreshToken = authStorage.getItem("refreshToken");
   if (!refreshToken) return null;
   const response = await fetch(`${API_URL}${apiPath("/api/auth/refresh")}`, {
     method: "POST",
+    credentials: "include",
+    cache: "no-store",
     body: JSON.stringify({ refreshToken }),
     headers: { "Content-Type": "application/json" }
   });
   if (!response.ok) return null;
   const payload = await response.json();
-  if (payload.accessToken) localStorage.setItem("accessToken", payload.accessToken);
-  if (payload.refreshToken) localStorage.setItem("refreshToken", payload.refreshToken);
-  if (payload.user) localStorage.setItem("user", JSON.stringify(payload.user));
+  if (payload.accessToken) authStorage.setItem("accessToken", payload.accessToken);
+  if (payload.refreshToken) authStorage.setItem("refreshToken", payload.refreshToken);
+  if (payload.user) authStorage.setItem("user", JSON.stringify(payload.user));
   return payload;
 }
 
 export async function api(path, options = {}) {
   const body = options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body;
-  const token = options.token || localStorage.getItem("accessToken") || "";
+  const token = options.skipAuth ? "" : options.token || authStorage.getItem("accessToken");
   const url = `${API_URL}${apiPath(path)}`;
   const requestOptions = {
     ...options,
     body,
+    credentials: options.credentials || "include",
+    cache: options.cache || (isAuthPath(path) ? "no-store" : "default"),
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(token),
@@ -64,6 +78,7 @@ export async function api(path, options = {}) {
   };
   delete requestOptions.clearOnUnauthorized;
   delete requestOptions.authRetry;
+  delete requestOptions.skipAuth;
   const response = await fetch(url, requestOptions);
 
   if (!response.ok) {
@@ -101,7 +116,7 @@ export async function checkApiHealth() {
   for (const url of candidates) {
     try {
       if (isDev) globalThis.console?.info?.("[api] health check");
-      const response = await fetch(url, { headers: { "Content-Type": "application/json" } });
+      const response = await fetch(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } });
       if (!response.ok) throw new Error(`Health check failed with ${response.status}`);
       const payload = await response.json();
       if (isDev) {

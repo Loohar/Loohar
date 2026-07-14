@@ -1,6 +1,7 @@
-const CACHE_NAME = "driver-pwa-shell-v2";
+const CACHE_NAME = "driver-pwa-shell-v4";
 const OFFLINE_URL = "/offline.html";
 const DRIVER_SHELL_URLS = ["/driver", OFFLINE_URL, "/manifest.json", "/icons/driver-icon-192.svg", "/icons/driver-icon-512.svg"];
+const NETWORK_ONLY_PATHS = ["/api/", "/admin/login", "/restaurant/login", "/login", "/forgot-password", "/reset-password"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -19,8 +20,11 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || NETWORK_ONLY_PATHS.some((path) => url.pathname.startsWith(path))) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
   const isDriverRoute = url.origin === self.location.origin && url.pathname.startsWith("/driver");
   const isDriverAsset = url.origin === self.location.origin && (url.pathname === OFFLINE_URL || url.pathname === "/manifest.json" || url.pathname.startsWith("/icons/"));
   if (!isDriverRoute && !isDriverAsset) return;

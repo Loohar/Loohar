@@ -85,7 +85,7 @@ export function DriverLogin({ authError, authLoading, login, loginDemo, apiOnlin
                 setPassword(event.target.value);
               }}
               type="password"
-              name="current-password"
+              name="password"
               autoComplete="current-password"
             />
           </label>

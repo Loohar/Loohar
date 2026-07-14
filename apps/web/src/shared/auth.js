@@ -1,3 +1,5 @@
+import { authStorage } from "./browserStorage.js";
+
 const ACCESS_TOKEN_KEY = "accessToken";
 const REFRESH_TOKEN_KEY = "refreshToken";
 const USER_KEY = "user";
@@ -11,29 +13,35 @@ function sanitizeStoredUser(user) {
 }
 
 export function getStoredSession() {
-  const token = localStorage.getItem(ACCESS_TOKEN_KEY) || "";
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY) || "";
-  const storedUser = localStorage.getItem(USER_KEY);
+  const token = authStorage.getItem(ACCESS_TOKEN_KEY);
+  const refreshToken = authStorage.getItem(REFRESH_TOKEN_KEY);
+  const storedUser = authStorage.getItem(USER_KEY);
+  let user = null;
+  try {
+    user = storedUser ? JSON.parse(storedUser) : null;
+  } catch {
+    authStorage.removeItem(USER_KEY);
+  }
   return {
     token,
     refreshToken,
-    user: storedUser ? JSON.parse(storedUser) : null
+    user
   };
 }
 
 export function storeSession({ accessToken, refreshToken, user }) {
-  if (accessToken) localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  else localStorage.removeItem(ACCESS_TOKEN_KEY);
-  if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-  else localStorage.removeItem(REFRESH_TOKEN_KEY);
-  if (user) localStorage.setItem(USER_KEY, JSON.stringify(sanitizeStoredUser(user)));
-  else localStorage.removeItem(USER_KEY);
+  if (accessToken) authStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  else authStorage.removeItem(ACCESS_TOKEN_KEY);
+  if (refreshToken) authStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  else authStorage.removeItem(REFRESH_TOKEN_KEY);
+  if (user) authStorage.setItem(USER_KEY, JSON.stringify(sanitizeStoredUser(user)));
+  else authStorage.removeItem(USER_KEY);
 }
 
 export function clearSession() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  authStorage.removeItem(ACCESS_TOKEN_KEY);
+  authStorage.removeItem(REFRESH_TOKEN_KEY);
+  authStorage.removeItem(USER_KEY);
 }
 
 export function isDriver(user) {
