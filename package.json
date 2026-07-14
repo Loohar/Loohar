@@ -19,6 +19,8 @@
     "upload:probe": "node scripts/upload-endpoint-probe.mjs",
     "smoke:test": "node scripts/smoke-test.mjs",
     "smoke:production": "node scripts/production-smoke-test.mjs",
+    "smoke:auth:production": "node scripts/production-auth-smoke-test.mjs",
+    "test:auth": "node scripts/auth-contract-test.mjs",
     "auth:audit": "npm --workspace apps/api run auth:audit",
     "bootstrap:admin": "npm --workspace apps/api run bootstrap:admin",
     "auth:repair-owner": "npm --workspace apps/api run auth:repair-owner",

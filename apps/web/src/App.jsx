@@ -42,6 +42,7 @@ const appName = import.meta.env.VITE_APP_NAME || "Loohar";
 const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.env.VITE_PLATFORM_DOMAIN || "loohar.com";
 const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
 const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
+const authDiagnosticsEnabled = import.meta.env.VITE_AUTH_DIAGNOSTICS === "true";
 const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, `www.${tenantRootDomain}`, `admin.${tenantRootDomain}`, `app.${tenantRootDomain}`, `driver.${tenantRootDomain}`, `api.${tenantRootDomain}`, `sites.${tenantRootDomain}`, "localhost"]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -499,6 +500,30 @@ function dashboardPathFor(user) {
     CUSTOMER: "/customer"
   };
   return destinations[user?.role] || "/login";
+}
+
+function getPostLoginDestination(user) {
+  return returnToForUser(user);
+}
+
+function validateAuthPayload(payload) {
+  if (!payload || typeof payload !== "object") throw new Error("Login response was empty.");
+  if (!payload.accessToken) throw new Error("Login response did not include an access token.");
+  if (!payload.user?.id) throw new Error("Login response did not include a user profile.");
+  if (!payload.user?.role) throw new Error("Login response did not include a user role.");
+  return payload;
+}
+
+function safeAuthErrorMessage(error, mode) {
+  const message = error?.message || "Login failed.";
+  if (/invalid email or password/i.test(message)) {
+    if (mode === "admin") return "Invalid platform owner email or password. Use your Loohar super admin account.";
+    if (mode === "restaurant") return "Invalid restaurant owner or staff email/password. Use the account assigned to this restaurant.";
+  }
+  if (/login response|auth\/me|session/i.test(message)) {
+    return `${message} Please refresh and try again.`;
+  }
+  return message;
 }
 
 function isAuthPagePath(path = "") {
@@ -1476,6 +1501,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const [session, setSession] = useState(null);
   const [step, setStep] = useState("login");
   const [error, setError] = useState("");
+  const [authDiagnostic, setAuthDiagnostic] = useState(null);
   const [loading, setLoading] = useState(false);
   const userEditedCredentials = useRef(false);
   const emailInputRef = useRef(null);
@@ -1491,6 +1517,16 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
 
   function markCredentialEntry() {
     userEditedCredentials.current = true;
+  }
+
+  function updateAuthDiagnostic(stage, requestId, detail = "") {
+    if (!authDiagnosticsEnabled) return;
+    setAuthDiagnostic({
+      requestId,
+      stage,
+      detail,
+      updatedAt: new Date().toLocaleTimeString()
+    });
   }
 
   useEffect(() => {
@@ -1510,19 +1546,33 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   }, [mode]);
 
   function continueAfterAuth(user) {
-    window.location.assign(returnToForUser(user));
+    window.location.replace(getPostLoginDestination(user));
   }
 
-  function handleAuthenticated(payload) {
+  async function verifyLoginSession(payload, requestId) {
+    updateAuthDiagnostic("/auth/me called", requestId, "Validating the new bearer token.");
+    const current = await api("/api/auth/me", { token: payload.accessToken, clearOnUnauthorized: false, authRetry: false });
+    updateAuthDiagnostic("/auth/me succeeded", requestId, "Session is valid.");
+    const memberships = current.memberships || payload.memberships || [];
+    return {
+      ...payload,
+      memberships,
+      user: normalizeSessionUser(current.user || payload.user, memberships)
+    };
+  }
+
+  function handleAuthenticated(payload, requestId) {
     const normalizedUser = normalizeSessionUser(payload.user, payload.memberships);
     const sessionPayload = { ...payload, user: normalizedUser };
     if (copy.allowed && !copy.allowed.includes(normalizedUser?.role)) {
       clearSession();
       setError("Access denied for this login area. Use the correct Loohar login for your role.");
+      updateAuthDiagnostic("role rejected", requestId, `Received role ${normalizedUser?.role || "unknown"}.`);
       return;
     }
     onLogin(sessionPayload);
     setSession(sessionPayload);
+    updateAuthDiagnostic("session saved", requestId, `Role ${normalizedUser?.role || "unknown"} accepted.`);
     if (requiresPasswordChange(normalizedUser)) {
       setStep("password");
       return;
@@ -1531,6 +1581,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       setStep("mfa");
       return;
     }
+    updateAuthDiagnostic("redirect selected", requestId, getPostLoginDestination(normalizedUser));
     continueAfterAuth(normalizedUser);
   }
 
@@ -1538,11 +1589,17 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     event.preventDefault();
     setError("");
     setLoading(true);
+    const requestId = globalThis.crypto?.randomUUID?.() || `auth-${Date.now()}`;
+    updateAuthDiagnostic("form submitted", requestId, "Login form submit handler fired.");
     try {
-      const payload = await api("/api/auth/login", { method: "POST", body: { email: email.trim().toLowerCase(), password } });
-      handleAuthenticated(payload);
+      updateAuthDiagnostic("request sent", requestId, "POST /api/auth/login");
+      const payload = validateAuthPayload(await api("/api/auth/login", { method: "POST", body: { email: email.trim().toLowerCase(), password }, clearOnUnauthorized: false, authRetry: false, skipAuth: true }));
+      updateAuthDiagnostic("response received", requestId, "Login returned a token-bearing response.");
+      const verifiedPayload = await verifyLoginSession(payload, requestId);
+      handleAuthenticated(verifiedPayload, requestId);
     } catch (loginError) {
-      setError(loginError.message);
+      updateAuthDiagnostic("failed", requestId, safeAuthErrorMessage(loginError, mode));
+      setError(safeAuthErrorMessage(loginError, mode));
     } finally {
       setPassword("");
       setLoading(false);
@@ -1554,11 +1611,15 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     userEditedCredentials.current = false;
     clearLoginFields();
     setLoading(true);
+    const requestId = globalThis.crypto?.randomUUID?.() || `auth-${Date.now()}`;
+    updateAuthDiagnostic("demo request sent", requestId, "POST /api/auth/demo-login");
     try {
-      const payload = await api("/api/auth/demo-login", { method: "POST", body: { role: demoRoleByMode[mode] || "SUPER_ADMIN" } });
-      handleAuthenticated(payload);
+      const payload = validateAuthPayload(await api("/api/auth/demo-login", { method: "POST", body: { role: demoRoleByMode[mode] || "SUPER_ADMIN" }, clearOnUnauthorized: false, authRetry: false, skipAuth: true }));
+      const verifiedPayload = await verifyLoginSession(payload, requestId);
+      handleAuthenticated(verifiedPayload, requestId);
     } catch (loginError) {
-      setError(loginError.message);
+      updateAuthDiagnostic("failed", requestId, safeAuthErrorMessage(loginError, mode));
+      setError(safeAuthErrorMessage(loginError, mode));
     } finally {
       setLoading(false);
     }
@@ -1619,6 +1680,15 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
           <form className="panel grid gap-4" onSubmit={submitLogin}>
             <h2 className="panel-title">Sign in</h2>
             <InlineError message={error} />
+            {authDiagnosticsEnabled && authDiagnostic ? (
+              <div className="rounded-md border border-line bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="font-black text-ink">Auth diagnostic</div>
+                <div className="mt-1">Stage: {authDiagnostic.stage}</div>
+                <div>Request ID: {authDiagnostic.requestId}</div>
+                {authDiagnostic.detail ? <div>Detail: {authDiagnostic.detail}</div> : null}
+                <div>Updated: {authDiagnostic.updatedAt}</div>
+              </div>
+            ) : null}
             <label className="text-sm font-semibold text-slate-600">
               Email
               <input
