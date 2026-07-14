@@ -1,4 +1,4 @@
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 const MIME_EXTENSIONS = new Map([
   ["image/png", "png"],
@@ -69,7 +69,7 @@ export function parseImageUpload({ dataUrl, base64, mimeType, fileName }) {
 
   const buffer = Buffer.from(rawBase64, "base64");
   if (!buffer.length) throw apiError("Uploaded image is empty.");
-  if (buffer.length > MAX_UPLOAD_BYTES) throw apiError("Image exceeds the 5MB upload limit.", 413);
+  if (buffer.length > MAX_UPLOAD_BYTES) throw apiError("Image exceeds the 10MB upload limit.", 413);
   if (!validateMagicBytes(buffer, detectedMime)) {
     throw apiError("Uploaded file content does not match the declared image type.");
   }
@@ -153,6 +153,9 @@ async function ensureSupabaseBucket({ supabaseUrl, serviceRoleKey, bucket }) {
 
 export async function uploadImageToSupabaseStorage({ restaurantId, kind, fileName, dataUrl, base64, mimeType, menuItemId }) {
   const parsed = parseImageUpload({ dataUrl, base64, mimeType, fileName });
+  if (parsed.mimeType === "image/svg+xml" && kind !== "restaurant-logo") {
+    throw apiError("SVG uploads are only allowed for restaurant logos.");
+  }
   const { supabaseUrl, serviceRoleKey, bucket } = supabaseStorageConfig();
   const safeRestaurantId = String(restaurantId).replace(/[^a-z0-9_-]/gi, "-");
   const safeName = sanitizeFileName(fileName);

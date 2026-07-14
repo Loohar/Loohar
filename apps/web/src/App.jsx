@@ -58,8 +58,10 @@ const strongPasswordChecks = [
 const businessTypes = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"];
 const businessModules = ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"];
 const planCodes = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
-const imageAccept = "image/png,image/jpeg,image/jpg,image/webp,image/svg+xml";
-const maxImageBytes = 5 * 1024 * 1024;
+const photoImageAccept = "image/png,image/jpeg,image/jpg,image/webp";
+const logoImageAccept = `${photoImageAccept},image/svg+xml`;
+const imageAccept = logoImageAccept;
+const maxImageBytes = 10 * 1024 * 1024;
 const imageMimeByExtension = {
   png: "image/png",
   jpg: "image/jpeg",
@@ -67,7 +69,23 @@ const imageMimeByExtension = {
   webp: "image/webp",
   svg: "image/svg+xml"
 };
-const websiteSectionDefaults = { hero: true, featuredMenu: true, story: true, gallery: true, catering: true, contact: true };
+const websiteSectionDefaults = { hero: true, featuredMenu: true, story: true, gallery: true, loyalty: true, catering: true, contact: true };
+const socialPlatformLabels = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  x: "X",
+  youtube: "YouTube",
+  linkedin: "LinkedIn"
+};
+const socialPlatformMarks = {
+  facebook: "Fb",
+  instagram: "Ig",
+  tiktok: "Tk",
+  x: "X",
+  youtube: "Yt",
+  linkedin: "In"
+};
 const defaultLooharImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80";
 const demoEmployees = [
   { id: "emp-manager", name: "Rina Manager", email: "manager@demobistro.local", phone: "555-0188", role: "RESTAURANT_MANAGER", status: "ACTIVE", active: true, permissions: ["orders", "kitchen", "employees"] },
@@ -582,10 +600,12 @@ function passwordIssues(value) {
   return strongPasswordChecks.filter((check) => !check.test(value)).map((check) => check.label);
 }
 
-function validateImageFile(file) {
+function validateImageFile(file, { accept = imageAccept, label = "image" } = {}) {
   if (!file) return "Select an image file.";
-  if (!imageAccept.split(",").includes(mimeTypeForFile(file))) return "Use PNG, JPG, JPEG, WEBP, or SVG.";
-  if (file.size > maxImageBytes) return "Image must be 5MB or smaller.";
+  if (!accept.split(",").includes(mimeTypeForFile(file))) {
+    return label === "logo" ? "Use PNG, JPG, JPEG, WEBP, or SVG." : "Use PNG, JPG, JPEG, or WEBP.";
+  }
+  if (file.size > maxImageBytes) return "Image must be 10MB or smaller.";
   return "";
 }
 
@@ -750,6 +770,24 @@ function resolveImage(liveImage, fallbackImage, defaultImage = defaultLooharImag
   if (isValidImageUrl(liveImage)) return liveImage.trim();
   if (isValidImageUrl(fallbackImage)) return fallbackImage.trim();
   return defaultImage;
+}
+
+function publicSocialLinks(links = []) {
+  return links.filter((link) => link?.url && socialPlatformLabels[link.platform]);
+}
+
+function PublicSocialLinks({ links = [] }) {
+  const visibleLinks = publicSocialLinks(links);
+  if (visibleLinks.length === 0) return null;
+  return (
+    <div className="site-social-links" aria-label="Restaurant social links">
+      {visibleLinks.map((link) => (
+        <a className="site-social-link" href={link.url} target="_blank" rel="noreferrer" aria-label={socialPlatformLabels[link.platform]} key={link.id || link.platform}>
+          <span aria-hidden="true">{socialPlatformMarks[link.platform]}</span>
+        </a>
+      ))}
+    </div>
+  );
 }
 
 function findFallbackByIdentity(items = [], source = {}, index = 0) {
@@ -1056,6 +1094,10 @@ function PublicRestaurantSite({ apiOnline }) {
     return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, currentSlug, target)}>{label}</a>;
   }
 
+  function sectionIsVisible(section) {
+    return sectionSettings[section] !== false;
+  }
+
   return (
     <div className="site-shell" style={siteStyle}>
       <InlineError message={error} />
@@ -1070,11 +1112,10 @@ function PublicRestaurantSite({ apiOnline }) {
           {navLink("menu", "Menu")}
           {navLink("order", "Order Online")}
           {navLink("about", "About")}
-          {navLink("contact", "Contact")}
-          {navLink("gallery", "Gallery")}
-          {navLink("loyalty", "Loyalty")}
-          {navLink("catering", "Catering")}
-          {navLink("careers", "Careers")}
+          {sectionIsVisible("gallery") ? navLink("gallery", "Gallery") : null}
+          {sectionIsVisible("loyalty") ? navLink("loyalty", "Loyalty") : null}
+          {sectionIsVisible("catering") ? navLink("catering", "Catering") : null}
+          {sectionIsVisible("contact") ? navLink("contact", "Contact") : null}
         </nav>
       </header>
 
@@ -1117,15 +1158,16 @@ function PublicRestaurantSite({ apiOnline }) {
       {page === "order" ? <section className="lux-section"><div className="lux-section-head"><p>Order Online</p><h2>Pickup and delivery from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
 
       {page === "about" ? <section className="site-card"><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Owner / chef story</h3><p>{website.ownerStory}</p><div className="site-image mt-4"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt={gallery[1]?.altText || "Restaurant story"} onError={handleSafeImageError} /></div></section> : null}
-      {page === "contact" ? <section className="site-grid"><div className="site-card"><h2>Contact</h2><p>{fullRestaurantAddress(restaurant) || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>{Object.entries(restaurant.storeHoursJson || {}).map(([day, hours]) => `${readable(day)}: ${hours}`).join(" / ") || "Call for current hours"}</p>{socialLinks.map((link) => <a className="site-nav mr-2" href={link.url} key={link.id}>{link.platform}</a>)}</div><div className="site-card"><h3>Location</h3>{googleMapEmbedUrl(fullRestaurantAddress(restaurant)) ? <iframe className="map-frame" title={`${restaurant.name} map`} src={googleMapEmbedUrl(fullRestaurantAddress(restaurant))} loading="lazy" /> : <div className="map-card">{restaurant.address || "Address coming soon"}</div>}<div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={googleDirectionsUrl(fullRestaurantAddress(restaurant))} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><h3 className="mt-4">Questions</h3><p>Call or email the restaurant for event requests, order help, or catering details.</p></div></section> : null}
-      {page === "gallery" ? <section className="site-card"><h2>Gallery</h2>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <div className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText || "Restaurant photo"} onError={handleSafeImageError} /></div>)}</div>}</section> : null}
-      {page === "loyalty" ? <section className="site-card"><h2>Loyalty</h2><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar when ordering direct.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{(restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || []).map((reward) => <div className="summary-line rounded-md bg-slate-50 px-3" key={reward.id}><span>{reward.name}</span><strong>{reward.pointsRequired} pts</strong></div>)}</div><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></section> : null}
-      {page === "catering" ? <section className="site-card"><h2>Catering</h2><p>Bring restaurant favorites to your next event.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request catering</a><p className="mt-3 text-sm text-slate-500">Include event date, guest count, and menu preferences.</p></section> : null}
+      {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid"><div className="site-card"><h2>Contact</h2><p>{fullRestaurantAddress(restaurant) || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>{Object.entries(restaurant.storeHoursJson || {}).map(([day, hours]) => `${readable(day)}: ${hours}`).join(" / ") || "Call for current hours"}</p><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Location</h3>{googleMapEmbedUrl(fullRestaurantAddress(restaurant)) ? <iframe className="map-frame" title={`${restaurant.name} map`} src={googleMapEmbedUrl(fullRestaurantAddress(restaurant))} loading="lazy" /> : <div className="map-card">{restaurant.address || "Address coming soon"}</div>}<div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={googleDirectionsUrl(fullRestaurantAddress(restaurant))} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><h3 className="mt-4">Questions</h3><p>Call or email the restaurant for event requests, order help, or catering details.</p></div></section> : null}
+      {page === "gallery" && sectionIsVisible("gallery") ? <section className="site-card"><h2>Gallery</h2>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <div className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText || "Restaurant photo"} onError={handleSafeImageError} /></div>)}</div>}</section> : null}
+      {page === "loyalty" && sectionIsVisible("loyalty") ? <section className="site-card"><h2>Loyalty</h2><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar when ordering direct.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{(restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || []).map((reward) => <div className="summary-line rounded-md bg-slate-50 px-3" key={reward.id}><span>{reward.name}</span><strong>{reward.pointsRequired} pts</strong></div>)}</div><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></section> : null}
+      {page === "catering" && sectionIsVisible("catering") ? <section className="site-card"><h2>Catering</h2><p>Bring restaurant favorites to your next event.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request catering</a><p className="mt-3 text-sm text-slate-500">Include event date, guest count, and menu preferences.</p></section> : null}
       {page === "careers" ? <section className="site-card"><h2>Careers</h2><p>We are always interested in great restaurant people.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></section> : null}
 
       <footer className="site-footer">
         <span>{restaurant.businessName || restaurant.name}</span>
         <span>{restaurant.address}</span>
+        <PublicSocialLinks links={socialLinks} />
         <span>Direct ordering powered by Loohar</span>
       </footer>
     </div>
@@ -1204,6 +1246,10 @@ function PremiumRestaurantSite({ apiOnline }) {
     return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, currentSlug, target)}>{label}</a>;
   }
 
+  function sectionIsVisible(section) {
+    return sectionSettings[section] !== false;
+  }
+
   function MenuCard({ item: menuItem }) {
     const itemImage = resolveImage(menuItem.imageUrl, website.heroImageUrl || gallery[0]?.imageUrl, heroImage);
     return (
@@ -1245,10 +1291,10 @@ function PremiumRestaurantSite({ apiOnline }) {
           {navLink("menu", "Menu")}
           {navLink("order", "Order Online")}
           {navLink("about", "About")}
-          {navLink("gallery", "Gallery")}
-          {navLink("loyalty", "Loyalty")}
-          {navLink("catering", "Catering")}
-          {navLink("contact", "Contact")}
+          {sectionIsVisible("gallery") ? navLink("gallery", "Gallery") : null}
+          {sectionIsVisible("loyalty") ? navLink("loyalty", "Loyalty") : null}
+          {sectionIsVisible("catering") ? navLink("catering", "Catering") : null}
+          {sectionIsVisible("contact") ? navLink("contact", "Contact") : null}
         </nav>
       </header>
 
@@ -1299,15 +1345,16 @@ function PremiumRestaurantSite({ apiOnline }) {
       {page === "menu" ? <section className="lux-section"><div className="lux-section-head"><p>Full menu</p><h2>{isLiquor ? "Bottle shop catalog" : "Prepared for pickup and delivery"}</h2><a href={`${routeBase}/order`}>Order now</a></div>{isLiquor ? <div className="site-card mb-4"><h3>Regulated items</h3><p>{bundle.complianceNote || "Age verification and local delivery rules apply."}</p></div> : null}{categories.length === 0 ? <EmptyState title="Menu coming soon" detail="This restaurant has not published public menu items yet." /> : categories.map((category) => <div className="lux-category" key={category.id}><h3>{category.name}</h3><div className="lux-card-grid">{(category.items || []).map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div></div>)}</section> : null}
       {page === "order" ? <section className="lux-section public-order-page"><div className="lux-section-head"><p>Order Online</p><h2>{restaurant.pickupEnabled && restaurant.deliveryEnabled ? "Pickup and delivery" : restaurant.deliveryEnabled ? "Delivery" : "Pickup"} from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><div className="public-order-hero"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} food`} loading="lazy" onError={handleSafeImageError} /><div><p className="lux-kicker">{website.cuisineType || readable(restaurant.businessType)}</p><h3>{website.heroTitle || restaurant.businessName || restaurant.name}</h3><p>{website.heroSubtitle || restaurant.description}</p><div className="mt-4 flex flex-wrap gap-2"><StatusPill tone={restaurant.pickupEnabled ? "good" : "neutral"}>{restaurant.pickupEnabled ? "Pickup available" : "Pickup unavailable"}</StatusPill><StatusPill tone={restaurant.deliveryEnabled ? "good" : "neutral"}>{restaurant.deliveryEnabled ? "Delivery available" : "Delivery unavailable"}</StatusPill><StatusPill>{hoursPreview || "Hours vary"}</StatusPill></div></div></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
       {page === "about" ? <section className="lux-split page"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt="Chef and restaurant team" onError={handleSafeImageError} /><div><p className="lux-kicker">Our story</p><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Fresh ingredients</h3><p>Seasonal produce, thoughtful sourcing, and a menu designed for dining room quality at home.</p><h3>Community</h3><p>Ordering direct helps keep customer relationships and revenue with the local restaurant team.</p></div></section> : null}
-      {page === "contact" ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div>{socialLinks.map((link) => <a className="site-nav mr-2 mt-3" href={link.url} key={link.id}>{link.platform}</a>)}</div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">Call or email the restaurant for private events, questions, and order help.</p></div></section> : null}
-      {page === "gallery" ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div>}</section> : null}
-      {page === "loyalty" ? <section className="lux-section"><div className="lux-section-head"><p>Loyalty</p><h2>Rewards for ordering direct</h2><a href={`${routeBase}/order`}>Join at checkout</a></div><div className="site-grid"><div className="site-card"><h3>How it works</h3><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar on eligible direct orders. Redeem points for restaurant-owned rewards.</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></div>{rewards.map((reward) => <div className="site-card" key={reward.id}><h3>{reward.name}</h3><p>{reward.pointsRequired} points required.</p></div>)}</div></section> : null}
-      {page === "catering" ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>Send event date, guest count, and menu preferences to the restaurant team.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request quote</a></div></section> : null}
+      {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">Call or email the restaurant for private events, questions, and order help.</p></div></section> : null}
+      {page === "gallery" && sectionIsVisible("gallery") ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div>}</section> : null}
+      {page === "loyalty" && sectionIsVisible("loyalty") ? <section className="lux-section"><div className="lux-section-head"><p>Loyalty</p><h2>Rewards for ordering direct</h2><a href={`${routeBase}/order`}>Join at checkout</a></div><div className="site-grid"><div className="site-card"><h3>How it works</h3><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar on eligible direct orders. Redeem points for restaurant-owned rewards.</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></div>{rewards.map((reward) => <div className="site-card" key={reward.id}><h3>{reward.name}</h3><p>{reward.pointsRequired} points required.</p></div>)}</div></section> : null}
+      {page === "catering" && sectionIsVisible("catering") ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>Send event date, guest count, and menu preferences to the restaurant team.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request quote</a></div></section> : null}
       {page === "careers" ? <section className="lux-section"><div className="lux-section-head"><p>Careers</p><h2>Join the restaurant team</h2><a href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></div><div className="site-grid"><div className="site-card"><h3>Why work here</h3><p>Focused service, direct customer relationships, and a team built around hospitality.</p></div><div className="site-card"><h3>Open roles</h3><p>Contact the restaurant for current kitchen, service, and driver opportunities.</p></div><div className="site-card"><h3>Apply</h3><p>Email the hiring manager with your experience and availability.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Apply by email</a></div></div></section> : null}
 
       <footer className="site-footer premium">
         <span>{restaurant.businessName || restaurant.name}</span>
         <span>{restaurant.address}</span>
+        <PublicSocialLinks links={socialLinks} />
         <span>Direct ordering powered by Loohar</span>
       </footer>
     </div>
@@ -2539,10 +2586,16 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const [operationsReport, setOperationsReport] = useState(demoOperationsReport);
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
-  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "" });
+  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
   const [newItemImage, setNewItemImage] = useState(null);
   const [itemFileInputKey, setItemFileInputKey] = useState(0);
   const [uploadingAsset, setUploadingAsset] = useState("");
+  const [savingAction, setSavingAction] = useState("");
+  const [menuValidation, setMenuValidation] = useState({});
+  const [websiteSaveState, setWebsiteSaveState] = useState("idle");
+  const [websiteDirty, setWebsiteDirty] = useState(false);
+  const [websiteLastSavedAt, setWebsiteLastSavedAt] = useState(null);
+  const [toast, setToast] = useState(null);
   const [galleryForm, setGalleryForm] = useState({ title: "", category: "food" });
   const [socialForm, setSocialForm] = useState({ platform: "instagram", url: "" });
   const [employeeForm, setEmployeeForm] = useState({ name: "", email: "", phone: "", role: "KITCHEN_STAFF" });
@@ -2550,6 +2603,89 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const [inventoryForm, setInventoryForm] = useState({ name: "Chicken", quantity: 10, unit: "lb", costCents: 2500 });
   const publicPreviewPath = `/sites/${profile.slug || "demo-bistro"}`;
   const publicSiteUrl = canonicalTenantUrlFor(profile, domain);
+
+  function showToast(message, tone = "good") {
+    setToast({ message, tone, id: Date.now() });
+    window.clearTimeout(showToast.timeoutId);
+    showToast.timeoutId = window.setTimeout(() => setToast(null), 4200);
+  }
+
+  function setWebsiteField(field, value) {
+    setWebsite((current) => ({ ...current, [field]: value }));
+    setWebsiteDirty(true);
+    setWebsiteSaveState("dirty");
+  }
+
+  function setWebsiteSections(nextSections) {
+    setWebsite((current) => ({ ...current, sectionSettingsJson: nextSections }));
+    setWebsiteDirty(true);
+    setWebsiteSaveState("dirty");
+  }
+
+  function setProfileField(field, value) {
+    setProfile((current) => ({ ...current, [field]: value }));
+    setWebsiteDirty(true);
+    setWebsiteSaveState("dirty");
+  }
+
+  function savedAtLabel() {
+    if (websiteDirty) return "Unsaved changes";
+    if (!websiteLastSavedAt) return "Ready to save";
+    const seconds = Math.max(1, Math.round((Date.now() - websiteLastSavedAt.getTime()) / 1000));
+    if (seconds < 60) return `Saved ${seconds} second${seconds === 1 ? "" : "s"} ago`;
+    const minutes = Math.round(seconds / 60);
+    return `Saved ${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+
+  function websiteButtonLabel() {
+    if (websiteSaveState === "saving") return "Saving...";
+    if (websiteSaveState === "saved") return "Saved";
+    if (websiteSaveState === "failed") return "Save Failed";
+    return "Save Website Settings";
+  }
+
+  function itemPayloadFromForm(form = itemForm) {
+    return {
+      categoryId: form.categoryId,
+      name: form.name.trim(),
+      description: form.description.trim(),
+      priceCents: Number(form.priceCents),
+      preparationTimeMins: Number(form.preparationTimeMins || 15),
+      calories: form.calories === "" || form.calories === null || form.calories === undefined ? null : Number(form.calories),
+      spiceLevel: form.spiceLevel || null,
+      featured: Boolean(form.featured),
+      available: form.available !== false
+    };
+  }
+
+  function itemPayloadFromRow(item = {}) {
+    return {
+      categoryId: item.categoryId || item.category?.id,
+      name: String(item.name || "").trim(),
+      description: String(item.description || "").trim(),
+      priceCents: Number(item.priceCents || 0),
+      preparationTimeMins: Number(item.preparationTimeMins || 15),
+      calories: item.calories === "" || item.calories === null || item.calories === undefined ? null : Number(item.calories),
+      spiceLevel: item.spiceLevel || null,
+      available: item.available !== false,
+      featured: Boolean(item.featured),
+      recommended: Boolean(item.recommended)
+    };
+  }
+
+  function validateMenuItemPayload(payload) {
+    const nextErrors = {};
+    if (!payload.categoryId) nextErrors.categoryId = "Choose a category.";
+    if (!payload.name || payload.name.length < 2) nextErrors.name = "Enter an item name.";
+    if (!Number.isFinite(payload.priceCents) || payload.priceCents < 0) nextErrors.priceCents = "Enter a valid price.";
+    if (!Number.isFinite(payload.preparationTimeMins) || payload.preparationTimeMins <= 0) nextErrors.preparationTimeMins = "Prep time must be greater than zero.";
+    if (payload.calories !== null && (!Number.isFinite(payload.calories) || payload.calories < 0)) nextErrors.calories = "Calories must be zero or greater.";
+    return nextErrors;
+  }
+
+  function updateItemDraft(itemId, data) {
+    setItems((current) => current.map((item) => item.id === itemId ? { ...item, ...data } : item));
+  }
 
   useEffect(() => {
     async function resolveRouteRestaurant() {
@@ -2653,13 +2789,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   }, [apiOnline, restaurantId, token]);
 
   async function uploadRestaurantImage(kind, file, extra = {}) {
-    const validationError = validateImageFile(file);
+    const validationError = validateImageFile(file, { accept: kind === "restaurant-logo" ? logoImageAccept : photoImageAccept, label: kind === "restaurant-logo" ? "logo" : "photo" });
     if (validationError) {
       setError(validationError);
+      showToast(validationError, "bad");
       return null;
     }
     if (!apiOnline || !token || !restaurantId) {
       setError("Live API connection and restaurant login are required for image uploads.");
+      showToast("Live API connection and restaurant login are required for image uploads.", "bad");
       return null;
     }
     setError("");
@@ -2682,9 +2820,16 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
       if (payload.restaurant) setProfile(payload.restaurant);
       if (payload.item) setItems((current) => current.map((item) => item.id === payload.item.id ? payload.item : item));
       if (payload.image) setGallery((current) => [...current, payload.image].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
+      if (kind === "restaurant-logo" || kind === "restaurant-hero") {
+        setWebsiteDirty(false);
+        setWebsiteSaveState("saved");
+        setWebsiteLastSavedAt(new Date());
+      }
+      showToast(kind === "menu-item" ? "Menu item image uploaded successfully." : kind === "gallery" ? "Gallery photo uploaded successfully." : "Website image uploaded successfully.");
       return payload;
     } catch (uploadError) {
       setError(uploadError.message);
+      showToast(uploadError.message, "bad");
       return null;
     } finally {
       setUploadingAsset("");
@@ -2704,14 +2849,21 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   }
 
   async function uploadGalleryImage(event) {
-    const file = event.target.files?.[0];
-    const uploaded = await uploadRestaurantImage("gallery", file, {
-      title: galleryForm.title,
-      altText: galleryForm.title,
-      category: galleryForm.category,
-      sortOrder: gallery.length + 1
-    });
-    if (uploaded) setGalleryForm({ title: "", category: "food" });
+    const files = Array.from(event.target.files || []);
+    let uploadedCount = 0;
+    for (const [index, file] of files.entries()) {
+      const uploaded = await uploadRestaurantImage("gallery", file, {
+        title: galleryForm.title || file.name.replace(/\.[^.]+$/, ""),
+        altText: galleryForm.title || file.name.replace(/\.[^.]+$/, ""),
+        category: galleryForm.category,
+        sortOrder: gallery.length + index + 1
+      });
+      if (uploaded) uploadedCount += 1;
+    }
+    if (uploadedCount) {
+      setGalleryForm({ title: "", category: "food" });
+      showToast(`${uploadedCount} gallery photo${uploadedCount === 1 ? "" : "s"} uploaded successfully.`);
+    }
     event.target.value = "";
   }
 
@@ -2723,63 +2875,231 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
 
   async function createCategory(event) {
     event.preventDefault();
-    if (!apiOnline) return setCategories((current) => [...current, { id: categoryName, name: categoryName, items: [] }]);
+    const name = categoryName.trim();
+    if (name.length < 2) {
+      setError("Category name must be at least 2 characters.");
+      return showToast("Category name must be at least 2 characters.", "bad");
+    }
+    setSavingAction("category:create");
+    if (!apiOnline) {
+      setCategories((current) => [...current, { id: crypto.randomUUID(), name, active: true, sortOrder: current.length + 1, items: [] }]);
+      setCategoryName("");
+      setSavingAction("");
+      return showToast("Category created in demo mode.");
+    }
     try {
-      await api(`/api/restaurants/${restaurantId}/menu/categories`, { method: "POST", token, body: { name: categoryName, sortOrder: categories.length + 1 } });
+      await api(`/api/restaurants/${restaurantId}/menu/categories`, { method: "POST", token, body: { name, sortOrder: categories.length + 1, active: true } });
       setCategoryName("");
       await loadRestaurant();
+      showToast("Menu category created successfully.");
     } catch (createError) {
       setError(createError.message);
+      showToast(createError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function updateCategory(category, data, message = "Menu category updated successfully.") {
+    const next = { ...category, ...data };
+    if (next.name !== undefined && String(next.name).trim().length < 2) {
+      setError("Category name must be at least 2 characters.");
+      return showToast("Category name must be at least 2 characters.", "bad");
+    }
+    setCategories((current) => current.map((item) => item.id === category.id ? next : item).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
+    setSavingAction(`category:${category.id}`);
+    if (!apiOnline) {
+      setSavingAction("");
+      return showToast(message);
+    }
+    try {
+      await api(`/api/restaurants/${restaurantId}/menu/categories/${category.id}`, { method: "PATCH", token, body: { name: next.name, sortOrder: Number(next.sortOrder || 0), active: next.active !== false } });
+      await loadRestaurant();
+      showToast(message);
+    } catch (updateError) {
+      setError(updateError.message);
+      showToast(updateError.message, "bad");
+      await loadRestaurant();
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function moveCategory(category, direction) {
+    const sorted = [...categories].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const index = sorted.findIndex((item) => item.id === category.id);
+    const swapIndex = index + direction;
+    if (index < 0 || swapIndex < 0 || swapIndex >= sorted.length) return;
+    const currentSort = sorted[index].sortOrder || index + 1;
+    const swapSort = sorted[swapIndex].sortOrder || swapIndex + 1;
+    await Promise.all([
+      updateCategory(sorted[index], { sortOrder: swapSort }, "Category order updated."),
+      updateCategory(sorted[swapIndex], { sortOrder: currentSort }, "Category order updated.")
+    ]);
+  }
+
+  async function reorderGalleryImage(image, direction) {
+    const sorted = [...gallery].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    const index = sorted.findIndex((item) => item.id === image.id);
+    const swapIndex = index + direction;
+    if (index < 0 || swapIndex < 0 || swapIndex >= sorted.length) return;
+    const currentSort = sorted[index].sortOrder || index + 1;
+    const swapSort = sorted[swapIndex].sortOrder || swapIndex + 1;
+    setSavingAction(`gallery:${image.id}`);
+    setGallery((current) => current.map((item) => {
+      if (item.id === sorted[index].id) return { ...item, sortOrder: swapSort };
+      if (item.id === sorted[swapIndex].id) return { ...item, sortOrder: currentSort };
+      return item;
+    }).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
+    if (!apiOnline) {
+      setSavingAction("");
+      return showToast("Gallery order updated.");
+    }
+    try {
+      await Promise.all([
+        api(`/api/restaurants/${restaurantId}/gallery/${sorted[index].id}`, { method: "PATCH", token, body: { sortOrder: swapSort } }),
+        api(`/api/restaurants/${restaurantId}/gallery/${sorted[swapIndex].id}`, { method: "PATCH", token, body: { sortOrder: currentSort } })
+      ]);
+      await loadRestaurant();
+      showToast("Gallery order updated.");
+    } catch (galleryError) {
+      setError(galleryError.message);
+      showToast(galleryError.message, "bad");
+      await loadRestaurant();
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function deleteCategory(categoryId) {
-    if (!apiOnline) return setCategories((current) => current.filter((category) => category.id !== categoryId));
+    const category = categories.find((item) => item.id === categoryId);
+    setSavingAction(`category:${categoryId}`);
+    if (!apiOnline) {
+      setCategories((current) => current.filter((item) => item.id !== categoryId));
+      setSavingAction("");
+      return showToast("Category removed in demo mode.");
+    }
     try {
-      await api(`/api/restaurants/${restaurantId}/menu/categories/${categoryId}`, { method: "DELETE", token });
+      const payload = await api(`/api/restaurants/${restaurantId}/menu/categories/${categoryId}`, { method: "DELETE", token });
       await loadRestaurant();
+      showToast(payload?.message || `${category?.name || "Category"} deleted successfully.`);
     } catch (deleteError) {
       setError(deleteError.message);
+      showToast(deleteError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function createItem(event) {
     event.preventDefault();
-    const payload = { ...itemForm, priceCents: Number(itemForm.priceCents), preparationTimeMins: Number(itemForm.preparationTimeMins), options: [] };
-    const imageValidationError = newItemImage ? validateImageFile(newItemImage) : "";
-    if (imageValidationError) return setError(imageValidationError);
-    if (!apiOnline) return setItems((current) => [...current, { ...payload, id: crypto.randomUUID(), available: true }]);
+    const payload = { ...itemPayloadFromForm(), options: [] };
+    const validationErrors = validateMenuItemPayload(payload);
+    setMenuValidation(validationErrors);
+    if (Object.keys(validationErrors).length) {
+      setError("Fix the highlighted menu item fields.");
+      return showToast("Fix the highlighted menu item fields.", "bad");
+    }
+    const imageValidationError = newItemImage ? validateImageFile(newItemImage, { accept: photoImageAccept, label: "photo" }) : "";
+    if (imageValidationError) {
+      setError(imageValidationError);
+      return showToast(imageValidationError, "bad");
+    }
+    setSavingAction("item:create");
+    if (!apiOnline) {
+      setItems((current) => [...current, { ...payload, id: crypto.randomUUID(), imageUrl: newItemImage ? globalThis.URL.createObjectURL(newItemImage) : "", available: true }]);
+      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
+      setNewItemImage(null);
+      setItemFileInputKey((key) => key + 1);
+      setSavingAction("");
+      return showToast("Menu item created in demo mode.");
+    }
     try {
       const created = await api(`/api/restaurants/${restaurantId}/menu/items`, { method: "POST", token, body: payload });
       if (newItemImage && created.item?.id) {
         await uploadRestaurantImage("menu-item", newItemImage, { menuItemId: created.item.id, altText: payload.name });
       }
-      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "" });
+      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
       setNewItemImage(null);
       setItemFileInputKey((key) => key + 1);
       await loadRestaurant();
+      showToast("Menu item created successfully.");
     } catch (createError) {
       setError(createError.message);
+      showToast(createError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
-  async function updateItem(item, data) {
-    if (!apiOnline) return setItems((current) => current.map((currentItem) => currentItem.id === item.id ? { ...currentItem, ...data } : currentItem));
+  async function updateItem(item, data, message = "Menu item updated successfully.") {
+    const payload = { ...itemPayloadFromRow(item), ...data };
+    const validationErrors = validateMenuItemPayload(payload);
+    if (Object.keys(validationErrors).length) {
+      setMenuValidation(validationErrors);
+      setError("Fix the highlighted menu item fields.");
+      return showToast("Fix the highlighted menu item fields.", "bad");
+    }
+    setMenuValidation({});
+    setSavingAction(`item:${item.id}`);
+    if (!apiOnline) {
+      setItems((current) => current.map((currentItem) => currentItem.id === item.id ? { ...currentItem, ...payload } : currentItem));
+      setSavingAction("");
+      return showToast(message);
+    }
     try {
-      await api(`/api/restaurants/${restaurantId}/menu/items/${item.id}`, { method: "PATCH", token, body: data });
+      const updated = await api(`/api/restaurants/${restaurantId}/menu/items/${item.id}`, { method: "PATCH", token, body: payload });
+      if (updated.item) setItems((current) => current.map((currentItem) => currentItem.id === item.id ? updated.item : currentItem));
       await loadRestaurant();
+      showToast(message);
     } catch (updateError) {
       setError(updateError.message);
+      showToast(updateError.message, "bad");
+      await loadRestaurant();
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function duplicateItem(item) {
+    const source = itemPayloadFromRow(item);
+    const payload = { ...source, name: `${source.name} Copy`, available: false, featured: false, recommended: false, options: [] };
+    setSavingAction(`item:${item.id}:duplicate`);
+    if (!apiOnline) {
+      setItems((current) => [...current, { ...item, ...payload, id: crypto.randomUUID(), imageUrl: item.imageUrl }]);
+      setSavingAction("");
+      return showToast("Menu item duplicated in demo mode.");
+    }
+    try {
+      const created = await api(`/api/restaurants/${restaurantId}/menu/items`, { method: "POST", token, body: payload });
+      if (created.item) setItems((current) => [...current, created.item]);
+      await loadRestaurant();
+      showToast("Menu item duplicated successfully.");
+    } catch (duplicateError) {
+      setError(duplicateError.message);
+      showToast(duplicateError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function deleteItem(itemId) {
-    if (!apiOnline) return setItems((current) => current.filter((item) => item.id !== itemId));
+    setSavingAction(`item:${itemId}:delete`);
+    if (!apiOnline) {
+      setItems((current) => current.filter((item) => item.id !== itemId));
+      setSavingAction("");
+      return showToast("Menu item deleted in demo mode.");
+    }
     try {
-      await api(`/api/restaurants/${restaurantId}/menu/items/${itemId}`, { method: "DELETE", token });
+      const payload = await api(`/api/restaurants/${restaurantId}/menu/items/${itemId}`, { method: "DELETE", token });
+      if (payload?.item) setItems((current) => current.map((item) => item.id === itemId ? payload.item : item));
       await loadRestaurant();
+      showToast(payload?.message || "Menu item deleted successfully.");
     } catch (deleteError) {
       setError(deleteError.message);
+      showToast(deleteError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
@@ -2806,7 +3126,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   }
 
   async function saveWebsiteBuilder() {
-    if (!apiOnline) return;
+    setWebsiteSaveState("saving");
+    setSavingAction("website:save");
+    if (!apiOnline) {
+      setWebsiteDirty(false);
+      setWebsiteSaveState("saved");
+      setWebsiteLastSavedAt(new Date());
+      setSavingAction("");
+      return showToast("Website settings saved in demo mode.");
+    }
     try {
       const profilePayload = await api(`/api/restaurants/${restaurantId}/profile`, {
         method: "PATCH",
@@ -2820,6 +3148,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           city: profile.city,
           state: profile.state,
           zip: profile.zip,
+          logoUrl: profile.logoUrl,
           storeHoursJson: website.storeHoursJson || profile.storeHoursJson
         }
       });
@@ -2833,51 +3162,150 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
       });
       setProfile(profilePayload.restaurant);
       setWebsite(websitePayload.website);
+      setWebsiteDirty(false);
+      setWebsiteSaveState("saved");
+      setWebsiteLastSavedAt(new Date());
+      showToast("Website settings saved successfully.");
     } catch (brandingError) {
       setError(brandingError.message);
+      setWebsiteSaveState("failed");
+      showToast(brandingError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function removeWebsiteImage(field) {
+    const isLogo = field === "logoUrl";
+    setWebsiteField(field, null);
+    if (isLogo) setProfileField("logoUrl", null);
+    setSavingAction(`website:${field}:remove`);
+    if (!apiOnline) {
+      setSavingAction("");
+      return showToast(`${isLogo ? "Logo" : "Hero image"} removed in demo mode.`);
+    }
+    try {
+      const websitePayload = await api(`/api/restaurants/${restaurantId}/website`, { method: "PATCH", token, body: { [field]: null } });
+      setWebsite(websitePayload.website);
+      if (isLogo) {
+        const profilePayload = await api(`/api/restaurants/${restaurantId}/profile`, { method: "PATCH", token, body: { logoUrl: null } });
+        setProfile(profilePayload.restaurant);
+      }
+      setWebsiteDirty(false);
+      setWebsiteSaveState("saved");
+      setWebsiteLastSavedAt(new Date());
+      showToast(`${isLogo ? "Logo" : "Hero image"} removed successfully.`);
+    } catch (removeError) {
+      setError(removeError.message);
+      setWebsiteSaveState("failed");
+      showToast(removeError.message, "bad");
+      await loadRestaurant();
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function saveDomain(data = domain) {
-    if (!apiOnline) return setDomain(data);
+    setSavingAction("domain:save");
+    if (!apiOnline) {
+      setDomain(data);
+      setSavingAction("");
+      return showToast("Domain settings saved in demo mode.");
+    }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/domain`, { method: "PATCH", token, body: data });
       setDomain(payload.domain);
+      showToast("Domain settings saved successfully.");
     } catch (domainError) {
       setError(domainError.message);
+      showToast(domainError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function verifyDomain() {
-    if (!apiOnline) return setDomain({ ...domain, domainStatus: "VERIFIED", sslStatus: "SSL_PENDING" });
+    setSavingAction("domain:verify");
+    if (!apiOnline) {
+      setDomain({ ...domain, domainStatus: "VERIFIED", sslStatus: "SSL_PENDING" });
+      setSavingAction("");
+      return showToast("Domain marked verified in demo mode.");
+    }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/domain/verify`, { method: "POST", token, body: { canonicalDomain: domain.customDomain || domain.canonicalDomain } });
       setDomain(payload.domain);
+      showToast("Domain verification checked successfully.");
     } catch (domainError) {
       setError(domainError.message);
+      showToast(domainError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function addSocialLink(event) {
     event.preventDefault();
-    if (!socialForm.url.trim()) return setError("Enter a social profile URL.");
-    if (!apiOnline) return setError("Live API connection is required to save social links.");
+    if (!socialForm.url.trim()) {
+      setError("Enter a social profile URL.");
+      return showToast("Enter a social profile URL.", "bad");
+    }
+    try {
+      const parsed = new globalThis.URL(socialForm.url);
+      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Invalid protocol");
+    } catch {
+      setError("Enter a valid http or https social URL.");
+      return showToast("Enter a valid http or https social URL.", "bad");
+    }
+    setSavingAction("social:save");
+    if (!apiOnline) {
+      setSavingAction("");
+      setError("Live API connection is required to save social links.");
+      return showToast("Live API connection is required to save social links.", "bad");
+    }
     try {
       await api(`/api/restaurants/${restaurantId}/social-links`, { method: "POST", token, body: socialForm });
       setSocialForm({ platform: "instagram", url: "" });
       await loadRestaurant();
+      showToast("Social link saved successfully.");
     } catch (socialError) {
       setError(socialError.message);
+      showToast(socialError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
   async function deleteSocialLink(linkId) {
     if (!apiOnline) return;
+    setSavingAction(`social:${linkId}:delete`);
     try {
       await api(`/api/restaurants/${restaurantId}/social-links/${linkId}`, { method: "DELETE", token });
       setSocialLinks((current) => current.filter((link) => link.id !== linkId));
+      showToast("Social link removed successfully.");
     } catch (socialError) {
       setError(socialError.message);
+      showToast(socialError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function deleteGalleryImage(imageId) {
+    setSavingAction(`gallery:${imageId}:delete`);
+    if (!apiOnline) {
+      setGallery((current) => current.filter((image) => image.id !== imageId));
+      setSavingAction("");
+      return showToast("Gallery photo removed in demo mode.");
+    }
+    try {
+      await api(`/api/restaurants/${restaurantId}/gallery/${imageId}`, { method: "DELETE", token });
+      setGallery((current) => current.filter((image) => image.id !== imageId));
+      showToast("Gallery photo removed successfully.");
+    } catch (galleryError) {
+      setError(galleryError.message);
+      showToast(galleryError.message, "bad");
+    } finally {
+      setSavingAction("");
     }
   }
 
@@ -3063,6 +3491,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
     <div className="space-y-6">
       <SectionHeader eyebrow="Restaurant dashboard" title={apiOnline ? "Live restaurant operations" : "Demo Bistro operations"} icon={ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
       <InlineError message={error} />
+      {toast ? <div className={`rounded-md border px-4 py-3 text-sm font-bold ${toast.tone === "bad" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{toast.message}</div> : null}
       <div className="grid gap-4 md:grid-cols-4">
         <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
         <Stat icon={ReceiptText} label="Today's sales" value={money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || orders.reduce((sum, order) => sum + order.totalCents, 0))} detail="Tips separated" />
@@ -3077,45 +3506,102 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <button className="button-primary" type="submit"><Plus size={16} />Category</button>
           </form>
           <form className="mt-4 form-grid" onSubmit={createItem}>
-            <select className="select" value={itemForm.categoryId} onChange={(event) => setItemForm({ ...itemForm, categoryId: event.target.value })}>
-              <option value="">Select category</option>
-              {categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
-            </select>
-            <input className="input" placeholder="Item name" value={itemForm.name} onChange={(event) => setItemForm({ ...itemForm, name: event.target.value })} />
-            <input className="input" type="number" placeholder="Price cents" value={itemForm.priceCents} onChange={(event) => setItemForm({ ...itemForm, priceCents: event.target.value })} />
+            <label className="text-sm font-semibold text-slate-600">Category
+              <select className="select mt-1" value={itemForm.categoryId} onChange={(event) => setItemForm({ ...itemForm, categoryId: event.target.value })}>
+                <option value="">Select category</option>
+                {categories.map((category) => <option value={category.id} key={category.id}>{category.name}{category.active === false ? " (hidden)" : ""}</option>)}
+              </select>
+              {menuValidation.categoryId ? <span className="mt-1 block text-xs font-bold text-rose-600">{menuValidation.categoryId}</span> : null}
+            </label>
+            <label className="text-sm font-semibold text-slate-600">Item name
+              <input className="input mt-1" placeholder="Chicken tikka masala" value={itemForm.name} onChange={(event) => setItemForm({ ...itemForm, name: event.target.value })} />
+              {menuValidation.name ? <span className="mt-1 block text-xs font-bold text-rose-600">{menuValidation.name}</span> : null}
+            </label>
+            <label className="text-sm font-semibold text-slate-600">Price cents
+              <input className="input mt-1" type="number" min="0" placeholder="1295" value={itemForm.priceCents} onChange={(event) => setItemForm({ ...itemForm, priceCents: event.target.value })} />
+              {menuValidation.priceCents ? <span className="mt-1 block text-xs font-bold text-rose-600">{menuValidation.priceCents}</span> : null}
+            </label>
             <input className="input" placeholder="Description" value={itemForm.description} onChange={(event) => setItemForm({ ...itemForm, description: event.target.value })} />
-            <input className="input" type="number" placeholder="Prep minutes" value={itemForm.preparationTimeMins} onChange={(event) => setItemForm({ ...itemForm, preparationTimeMins: event.target.value })} />
+            <label className="text-sm font-semibold text-slate-600">Prep minutes
+              <input className="input mt-1" type="number" min="1" placeholder="15" value={itemForm.preparationTimeMins} onChange={(event) => setItemForm({ ...itemForm, preparationTimeMins: event.target.value })} />
+              {menuValidation.preparationTimeMins ? <span className="mt-1 block text-xs font-bold text-rose-600">{menuValidation.preparationTimeMins}</span> : null}
+            </label>
+            <input className="input" type="number" min="0" placeholder="Calories optional" value={itemForm.calories} onChange={(event) => setItemForm({ ...itemForm, calories: event.target.value })} />
+            <input className="input" placeholder="Spice level optional" value={itemForm.spiceLevel} onChange={(event) => setItemForm({ ...itemForm, spiceLevel: event.target.value })} />
+            <label className={`seg ${itemForm.featured ? "active" : ""}`}><input type="checkbox" checked={itemForm.featured} onChange={(event) => setItemForm({ ...itemForm, featured: event.target.checked })} />Featured</label>
+            <label className={`seg ${itemForm.available ? "active" : ""}`}><input type="checkbox" checked={itemForm.available} onChange={(event) => setItemForm({ ...itemForm, available: event.target.checked })} />Available</label>
             <label className="button-muted justify-center">
               <Plus size={16} />{newItemImage ? newItemImage.name : "Food image"}
-              <input key={itemFileInputKey} className="sr-only" type="file" accept={imageAccept} onChange={(event) => setNewItemImage(event.target.files?.[0] || null)} />
+              <input key={itemFileInputKey} className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => setNewItemImage(event.target.files?.[0] || null)} />
             </label>
-            <button className="button-primary" type="submit"><MenuIcon size={16} />Create item</button>
+            {newItemImage ? <button className="button-muted justify-center" type="button" onClick={() => { setNewItemImage(null); setItemFileInputKey((key) => key + 1); }}>Remove selected image</button> : null}
+            <button className="button-primary" type="submit" disabled={savingAction === "item:create"}><MenuIcon size={16} />{savingAction === "item:create" ? "Saving..." : "Create Item"}</button>
           </form>
           <div className="mt-5 space-y-4">
             {categories.length === 0 ? <EmptyState title="No menu categories" detail="Add a category before creating menu items." /> : categories.map((category) => (
               <div key={category.id}>
-                <div className="mb-2 flex items-center justify-between">
-                  <h4 className="font-bold text-ink">{category.name}</h4>
-                  <button className="button-muted" onClick={() => deleteCategory(category.id)}><Trash2 size={15} />Delete</button>
+                <div className="mb-2 grid gap-2 rounded-md border border-line bg-slate-50 p-3 lg:grid-cols-[1fr_auto] lg:items-center">
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <input className="input font-bold" value={category.name} onChange={(event) => setCategories((current) => current.map((item) => item.id === category.id ? { ...item, name: event.target.value } : item))} />
+                    <StatusPill tone={category.active === false ? "warn" : "good"}>{category.active === false ? "Hidden" : "Published"}</StatusPill>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="button-muted" type="button" onClick={() => moveCategory(category, -1)} disabled={savingAction.startsWith("category:")}>Move up</button>
+                    <button className="button-muted" type="button" onClick={() => moveCategory(category, 1)} disabled={savingAction.startsWith("category:")}>Move down</button>
+                    <button className="button-muted" type="button" onClick={() => updateCategory(category, { active: category.active === false }, category.active === false ? "Category published." : "Category hidden.")}>{category.active === false ? "Publish" : "Hide"}</button>
+                    <button className="button-primary" type="button" onClick={() => updateCategory(category, { name: category.name, sortOrder: category.sortOrder || 0, active: category.active !== false })} disabled={savingAction === `category:${category.id}`}>{savingAction === `category:${category.id}` ? "Saving..." : "Save Category"}</button>
+                    <button className="button-muted" type="button" onClick={() => deleteCategory(category.id)}><Trash2 size={15} />Delete</button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   {items.filter((item) => item.categoryId === category.id || item.category?.id === category.id).length === 0 ? <p className="text-sm text-slate-500">No items in this category.</p> : items.filter((item) => item.categoryId === category.id || item.category?.id === category.id).map((item) => (
-                    <div className="menu-row" key={item.id}>
-                      <div className="flex items-center gap-3">
-                        {item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, website.heroImageUrl)} alt={item.name} onError={handleSafeImageError} /> : <div className="grid h-20 w-20 shrink-0 place-items-center rounded-md bg-slate-100 text-xs font-bold text-slate-400">Photo</div>}
+                    <div className="rounded-md border border-line bg-white p-3" key={item.id}>
+                      <div className="grid gap-3 lg:grid-cols-[112px_1fr]">
                         <div>
-                        <p className="font-semibold text-ink">{item.name}</p>
-                        <p className="text-sm text-slate-500">{item.preparationTimeMins} min prep - {item.available === false ? "Unavailable" : "Available"}</p>
+                          {item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, website.heroImageUrl)} alt={item.name} onError={handleSafeImageError} /> : <div className="grid h-28 w-28 shrink-0 place-items-center rounded-md bg-slate-100 text-xs font-bold text-slate-400">Photo</div>}
+                          <label className="button-muted mt-2 w-full justify-center">
+                            <Plus size={15} />{uploadingAsset === "menu-item" ? "Uploading" : item.imageUrl ? "Replace" : "Add photo"}
+                            <input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadMenuItemImage(item, event)} />
+                          </label>
+                          {item.imageUrl ? <button className="button-muted mt-2 w-full justify-center" type="button" onClick={() => updateItem(item, { imageUrl: null }, "Menu item image removed.")}>Remove photo</button> : null}
                         </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <strong>{money(item.priceCents)}</strong>
-                        <label className="button-muted">
-                          <Plus size={15} />{uploadingAsset === "menu-item" ? "Uploading" : item.imageUrl ? "Change photo" : "Add photo"}
-                          <input className="sr-only" type="file" accept={imageAccept} onChange={(event) => uploadMenuItemImage(item, event)} />
-                        </label>
-                        <button className="button-muted" onClick={() => updateItem(item, { available: !item.available })}>{item.available === false ? "Enable" : "Disable"}</button>
-                        <button className="button-muted" onClick={() => deleteItem(item.id)}><Trash2 size={15} />Delete</button>
+                        <div className="grid gap-3">
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <input className="input font-semibold" value={item.name || ""} onChange={(event) => updateItemDraft(item.id, { name: event.target.value })} />
+                            <select className="select" value={item.categoryId || item.category?.id || ""} onChange={(event) => updateItemDraft(item.id, { categoryId: event.target.value })}>
+                              {categories.map((row) => <option value={row.id} key={row.id}>{row.name}</option>)}
+                            </select>
+                          </div>
+                          <textarea className="input min-h-20" value={item.description || ""} placeholder="Description" onChange={(event) => updateItemDraft(item.id, { description: event.target.value })} />
+                          <div className="grid gap-2 md:grid-cols-4">
+                            <label className="text-xs font-bold uppercase text-slate-500">Price cents
+                              <input className="input mt-1" type="number" min="0" value={item.priceCents ?? 0} onChange={(event) => updateItemDraft(item.id, { priceCents: event.target.value })} />
+                            </label>
+                            <label className="text-xs font-bold uppercase text-slate-500">Prep minutes
+                              <input className="input mt-1" type="number" min="1" value={item.preparationTimeMins ?? 15} onChange={(event) => updateItemDraft(item.id, { preparationTimeMins: event.target.value })} />
+                            </label>
+                            <label className="text-xs font-bold uppercase text-slate-500">Calories
+                              <input className="input mt-1" type="number" min="0" value={item.calories ?? ""} onChange={(event) => updateItemDraft(item.id, { calories: event.target.value })} />
+                            </label>
+                            <label className="text-xs font-bold uppercase text-slate-500">Spice level
+                              <input className="input mt-1" value={item.spiceLevel || ""} onChange={(event) => updateItemDraft(item.id, { spiceLevel: event.target.value })} />
+                            </label>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong>{money(Number(item.priceCents || 0))}</strong>
+                            <StatusPill tone={item.available === false ? "warn" : "good"}>{item.available === false ? "Unavailable" : "Available"}</StatusPill>
+                            {item.featured ? <StatusPill tone="good">Featured</StatusPill> : null}
+                            {item.recommended ? <StatusPill tone="neutral">Recommended</StatusPill> : null}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button className="button-primary" type="button" onClick={() => updateItem(item)} disabled={savingAction === `item:${item.id}`}>{savingAction === `item:${item.id}` ? "Saving..." : "Save Item"}</button>
+                            <button className="button-muted" type="button" onClick={() => updateItem(item, { available: item.available === false }, item.available === false ? "Item marked available." : "Item marked unavailable.")}>{item.available === false ? "Mark available" : "Mark unavailable"}</button>
+                            <button className="button-muted" type="button" onClick={() => updateItem(item, { featured: !item.featured }, item.featured ? "Item removed from featured menu." : "Item marked featured.")}>{item.featured ? "Unfeature" : "Feature"}</button>
+                            <button className="button-muted" type="button" onClick={() => updateItem(item, { recommended: !item.recommended }, item.recommended ? "Item removed from recommendations." : "Item marked recommended.")}>{item.recommended ? "Unrecommend" : "Recommend"}</button>
+                            <button className="button-muted" type="button" onClick={() => duplicateItem(item)} disabled={savingAction === `item:${item.id}:duplicate`}>Duplicate</button>
+                            <button className="button-muted" type="button" onClick={() => deleteItem(item.id)}><Trash2 size={15} />Delete</button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -3221,7 +3707,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <p className="mt-2 text-sm text-slate-500">Manage the public restaurant website generated from this tenant.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="button-muted" href={publicPreviewPath}>Preview Website</a>
+              <a className="button-muted" href={publicPreviewPath} target="_blank" rel="noreferrer">Preview Website</a>
               <a className="button-muted" href={`${publicPreviewPath}/menu`}>Preview Menu</a>
               <a className="button-muted" href={`${publicPreviewPath}/order`}>Preview Order</a>
               <a className="button-muted" href={`${publicPreviewPath}/contact`}>Preview Contact</a>
@@ -3229,51 +3715,60 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <button className="button-muted" onClick={() => navigator.clipboard?.writeText(publicSiteUrl)}>Copy Website Link</button>
             </div>
           </div>
+          <div className={`mt-4 rounded-md border px-3 py-2 text-sm font-bold ${websiteDirty ? "border-amber-200 bg-amber-50 text-amber-700" : websiteSaveState === "failed" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+            {savedAtLabel()}
+          </div>
           <div className="mt-4 form-grid">
-            <input className="input" placeholder="Restaurant name" value={profile.businessName || profile.name || ""} onChange={(event) => setProfile({ ...profile, name: event.target.value, businessName: event.target.value })} />
-            <input className="input" placeholder="Phone" value={profile.phone || ""} onChange={(event) => setProfile({ ...profile, phone: event.target.value })} />
-            <input className="input" placeholder="Email" value={profile.email || ""} onChange={(event) => setProfile({ ...profile, email: event.target.value })} />
-            <input className="input" placeholder="Address" value={profile.address || ""} onChange={(event) => setProfile({ ...profile, address: event.target.value })} />
-            <input className="input" placeholder="City" value={profile.city || ""} onChange={(event) => setProfile({ ...profile, city: event.target.value })} />
-            <input className="input" placeholder="State" value={profile.state || ""} onChange={(event) => setProfile({ ...profile, state: event.target.value })} />
+            <input className="input" placeholder="Restaurant name" value={profile.businessName || profile.name || ""} onChange={(event) => { setProfile((current) => ({ ...current, name: event.target.value, businessName: event.target.value })); setWebsiteDirty(true); setWebsiteSaveState("dirty"); }} />
+            <input className="input" placeholder="Phone" value={profile.phone || ""} onChange={(event) => setProfileField("phone", event.target.value)} />
+            <input className="input" placeholder="Email" value={profile.email || ""} onChange={(event) => setProfileField("email", event.target.value)} />
+            <input className="input" placeholder="Address" value={profile.address || ""} onChange={(event) => setProfileField("address", event.target.value)} />
+            <input className="input" placeholder="City" value={profile.city || ""} onChange={(event) => setProfileField("city", event.target.value)} />
+            <input className="input" placeholder="State" value={profile.state || ""} onChange={(event) => setProfileField("state", event.target.value)} />
             <label className="text-sm font-semibold text-slate-600">Website status
-              <select className="select mt-1" value={website.websiteEnabled ? "enabled" : "disabled"} onChange={(event) => setWebsite({ ...website, websiteEnabled: event.target.value === "enabled" })}>
+              <select className="select mt-1" value={website.websiteEnabled ? "enabled" : "disabled"} onChange={(event) => setWebsiteField("websiteEnabled", event.target.value === "enabled")}>
                 <option value="enabled">Enabled</option>
                 <option value="disabled">Disabled</option>
               </select>
             </label>
             <label className="text-sm font-semibold text-slate-600">Brand color
-              <input className="input mt-1" value={website.brandColor || ""} onChange={(event) => setWebsite({ ...website, brandColor: event.target.value })} />
+              <input className="input mt-1" value={website.brandColor || ""} onChange={(event) => setWebsiteField("brandColor", event.target.value)} />
             </label>
             <label className="text-sm font-semibold text-slate-600">Accent color
-              <input className="input mt-1" value={website.accentColor || ""} onChange={(event) => setWebsite({ ...website, accentColor: event.target.value })} />
+              <input className="input mt-1" value={website.accentColor || ""} onChange={(event) => setWebsiteField("accentColor", event.target.value)} />
             </label>
-            <input className="input" placeholder="Homepage headline" value={website.heroTitle || ""} onChange={(event) => setWebsite({ ...website, heroTitle: event.target.value })} />
-            <input className="input" placeholder="Homepage subtitle" value={website.heroSubtitle || ""} onChange={(event) => setWebsite({ ...website, heroSubtitle: event.target.value })} />
-            <input className="input" placeholder="Tagline" value={website.tagline || ""} onChange={(event) => setWebsite({ ...website, tagline: event.target.value })} />
-            <input className="input" placeholder="Cuisine type" value={website.cuisineType || ""} onChange={(event) => setWebsite({ ...website, cuisineType: event.target.value })} />
-            <input className="input" placeholder="Special offer text" value={website.specialOfferText || ""} onChange={(event) => setWebsite({ ...website, specialOfferText: event.target.value })} />
-            <input className="input" placeholder="Heading font" value={website.headingFont || ""} onChange={(event) => setWebsite({ ...website, headingFont: event.target.value })} />
-            <input className="input" placeholder="Body font" value={website.bodyFont || ""} onChange={(event) => setWebsite({ ...website, bodyFont: event.target.value })} />
-            <input className="input" placeholder="SEO title" value={website.seoTitle || ""} onChange={(event) => setWebsite({ ...website, seoTitle: event.target.value })} />
-            <textarea className="input min-h-24 md:col-span-3" placeholder="About story" value={website.aboutStory || ""} onChange={(event) => setWebsite({ ...website, aboutStory: event.target.value })} />
-            <textarea className="input min-h-20 md:col-span-3" placeholder="SEO description" value={website.seoDescription || ""} onChange={(event) => setWebsite({ ...website, seoDescription: event.target.value })} />
+            <input className="input" placeholder="Homepage headline" value={website.heroTitle || ""} onChange={(event) => setWebsiteField("heroTitle", event.target.value)} />
+            <input className="input" placeholder="Homepage subtitle" value={website.heroSubtitle || ""} onChange={(event) => setWebsiteField("heroSubtitle", event.target.value)} />
+            <input className="input" placeholder="Tagline" value={website.tagline || ""} onChange={(event) => setWebsiteField("tagline", event.target.value)} />
+            <input className="input" placeholder="Cuisine type" value={website.cuisineType || ""} onChange={(event) => setWebsiteField("cuisineType", event.target.value)} />
+            <input className="input" placeholder="Special offer text" value={website.specialOfferText || ""} onChange={(event) => setWebsiteField("specialOfferText", event.target.value)} />
+            <input className="input" placeholder="Heading font" value={website.headingFont || ""} onChange={(event) => setWebsiteField("headingFont", event.target.value)} />
+            <input className="input" placeholder="Body font" value={website.bodyFont || ""} onChange={(event) => setWebsiteField("bodyFont", event.target.value)} />
+            <input className="input" placeholder="SEO title" value={website.seoTitle || ""} onChange={(event) => setWebsiteField("seoTitle", event.target.value)} />
+            <textarea className="input min-h-24 md:col-span-3" placeholder="About story" value={website.aboutStory || ""} onChange={(event) => setWebsiteField("aboutStory", event.target.value)} />
+            <textarea className="input min-h-20 md:col-span-3" placeholder="SEO description" value={website.seoDescription || ""} onChange={(event) => setWebsiteField("seoDescription", event.target.value)} />
             <div className="md:col-span-3 grid gap-3 md:grid-cols-2">
               <div className="rounded-md border border-line p-3">
                 <p className="text-sm font-bold text-ink">Logo</p>
                 {website.logoUrl ? <img className="mt-2 h-20 w-20 rounded-md object-cover" src={resolveImage(website.logoUrl, profile.logoUrl)} alt={`${profile.name} logo`} onError={handleSafeImageError} /> : <p className="mt-2 text-sm text-slate-500">Loohar default logo will display until a logo is uploaded.</p>}
-                <label className="button-muted mt-3">
-                  <Plus size={15} />{uploadingAsset === "restaurant-logo" ? "Uploading logo" : "Upload logo"}
-                  <input className="sr-only" type="file" accept={imageAccept} onChange={uploadLogo} />
-                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <label className="button-muted">
+                    <Plus size={15} />{uploadingAsset === "restaurant-logo" ? "Uploading logo" : website.logoUrl ? "Replace logo" : "Upload logo"}
+                    <input className="sr-only" type="file" accept={logoImageAccept} onChange={uploadLogo} />
+                  </label>
+                  {website.logoUrl ? <button className="button-muted" type="button" onClick={() => removeWebsiteImage("logoUrl")} disabled={websiteSaveState === "saving"}><Trash2 size={15} />Remove</button> : null}
+                </div>
               </div>
               <div className="rounded-md border border-line p-3">
                 <p className="text-sm font-bold text-ink">Hero image</p>
                 {website.heroImageUrl ? <img className="mt-2 h-24 w-full rounded-md object-cover" src={resolveImage(website.heroImageUrl, profile.logoUrl)} alt={`${profile.name} hero`} onError={handleSafeImageError} /> : <p className="mt-2 text-sm text-slate-500">Upload a restaurant, food, or storefront hero image.</p>}
-                <label className="button-muted mt-3">
-                  <Plus size={15} />{uploadingAsset === "restaurant-hero" ? "Uploading hero" : "Upload hero"}
-                  <input className="sr-only" type="file" accept={imageAccept} onChange={uploadHero} />
-                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <label className="button-muted">
+                    <Plus size={15} />{uploadingAsset === "restaurant-hero" ? "Uploading hero" : website.heroImageUrl ? "Replace hero" : "Upload hero"}
+                    <input className="sr-only" type="file" accept={photoImageAccept} onChange={uploadHero} />
+                  </label>
+                  {website.heroImageUrl ? <button className="button-muted" type="button" onClick={() => removeWebsiteImage("heroImageUrl")} disabled={websiteSaveState === "saving"}><Trash2 size={15} />Remove</button> : null}
+                </div>
               </div>
             </div>
             <div className="md:col-span-3 flex flex-wrap gap-2">
@@ -3282,14 +3777,14 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
                   <input
                     type="checkbox"
                     checked={sectionSettings[section]}
-                    onChange={(event) => setWebsite({ ...website, sectionSettingsJson: { ...sectionSettings, [section]: event.target.checked } })}
+                    onChange={(event) => setWebsiteSections({ ...sectionSettings, [section]: event.target.checked })}
                   />
                   {readable(section)}
                 </label>
               ))}
             </div>
           </div>
-          <button className="button-primary mt-4" onClick={saveWebsiteBuilder}><Store size={16} />Save Website Settings</button>
+          <button className="button-primary mt-4" onClick={saveWebsiteBuilder} disabled={websiteSaveState === "saving"}><Store size={16} />{websiteButtonLabel()}</button>
         </div>
         <div className="panel">
           <h3 className="panel-title">Domain Management</h3>
@@ -3306,9 +3801,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <option value="DEFAULT_SUBDOMAIN">Use Loohar subdomain as canonical</option>
               <option value="CUSTOM_DOMAIN">Use custom domain as canonical</option>
             </select>
-            <button className="button-primary" onClick={() => saveDomain({ ...domain, domainStatus: "PENDING_VERIFICATION", sslStatus: "PENDING" })}>Save Domain</button>
-            <button className="button-muted" onClick={verifyDomain}>Verify Domain</button>
-            <button className="button-muted" onClick={() => saveDomain({ ...domain, customDomain: "", canonicalDomain: domain.primaryDomain || `${domain.defaultSubdomain || profile.slug}.${tenantRootDomain}`, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" })}>Remove Custom Domain</button>
+            <button className="button-primary" type="button" onClick={() => saveDomain({ ...domain, domainStatus: "PENDING_VERIFICATION", sslStatus: "PENDING" })} disabled={savingAction === "domain:save"}>{savingAction === "domain:save" ? "Saving domain..." : "Save Domain"}</button>
+            <button className="button-muted" type="button" onClick={verifyDomain} disabled={savingAction === "domain:verify"}>{savingAction === "domain:verify" ? "Checking..." : "Verify Domain"}</button>
+            <button className="button-muted" type="button" onClick={() => saveDomain({ ...domain, customDomain: "", canonicalDomain: domain.primaryDomain || `${domain.defaultSubdomain || profile.slug}.${tenantRootDomain}`, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" })} disabled={savingAction === "domain:save"}>Remove Custom Domain</button>
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <div>
@@ -3324,11 +3819,23 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
                   <option value="events">Events</option>
                 </select>
                 <label className="button-muted justify-center">
-                  <Plus size={15} />{uploadingAsset === "gallery" ? "Uploading photo" : "Upload gallery photo"}
-                  <input className="sr-only" type="file" accept={imageAccept} onChange={uploadGalleryImage} />
+                  <Plus size={15} />{uploadingAsset === "gallery" ? "Uploading photos" : "Upload gallery photos"}
+                  <input className="sr-only" type="file" accept={photoImageAccept} multiple onChange={uploadGalleryImage} />
                 </label>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">{gallery.length === 0 ? <p className="text-sm text-slate-500">No gallery photos yet.</p> : gallery.slice(0, 4).map((image) => <figure className="rounded-md border border-line p-2" key={image.id}><img className="h-20 w-full rounded-md object-cover" src={resolveImage(image.imageUrl, website.heroImageUrl)} alt={image.altText || "Restaurant gallery"} onError={handleSafeImageError} /><figcaption className="mt-1 truncate text-xs text-slate-500">{image.altText || image.category}</figcaption></figure>)}</div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {gallery.length === 0 ? <p className="text-sm text-slate-500">No gallery photos yet.</p> : [...gallery].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map((image, index, sortedGallery) => (
+                  <figure className="rounded-md border border-line p-2" key={image.id}>
+                    <img className="h-20 w-full rounded-md object-cover" src={resolveImage(image.imageUrl, website.heroImageUrl)} alt={image.altText || "Restaurant gallery"} onError={handleSafeImageError} />
+                    <figcaption className="mt-1 truncate text-xs text-slate-500">{image.altText || image.category}</figcaption>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => reorderGalleryImage(image, -1)} disabled={index === 0 || savingAction.startsWith("gallery:")}>Up</button>
+                      <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => reorderGalleryImage(image, 1)} disabled={index === sortedGallery.length - 1 || savingAction.startsWith("gallery:")}>Down</button>
+                      <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => deleteGalleryImage(image.id)} disabled={savingAction === `gallery:${image.id}:delete`}><Trash2 size={13} />Delete</button>
+                    </div>
+                  </figure>
+                ))}
+              </div>
             </div>
             <div>
               <div className="flex items-center justify-between gap-2">
@@ -3336,15 +3843,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               </div>
               <form className="mt-3 grid gap-2" onSubmit={addSocialLink}>
                 <select className="select" value={socialForm.platform} onChange={(event) => setSocialForm({ ...socialForm, platform: event.target.value })}>
-                  <option value="facebook">Facebook</option>
-                  <option value="instagram">Instagram</option>
-                  <option value="tiktok">TikTok</option>
-                  <option value="youtube">YouTube</option>
+                  {Object.entries(socialPlatformLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
                 </select>
                 <input className="input" placeholder="Profile URL" value={socialForm.url} onChange={(event) => setSocialForm({ ...socialForm, url: event.target.value })} />
-                <button className="button-primary" type="submit"><Plus size={15} />Save link</button>
+                <button className="button-primary" type="submit" disabled={savingAction === "social:save"}><Plus size={15} />{savingAction === "social:save" ? "Saving link..." : "Save link"}</button>
               </form>
-              <div className="mt-3 space-y-2">{socialLinks.length === 0 ? <p className="text-sm text-slate-500">No social links yet.</p> : socialLinks.map((link) => <div className="summary-line" key={link.id}><span>{readable(link.platform)}</span><button className="button-muted" onClick={() => deleteSocialLink(link.id)}><Trash2 size={14} />Remove</button></div>)}</div>
+              <div className="mt-3 space-y-2">{socialLinks.length === 0 ? <p className="text-sm text-slate-500">No social links yet.</p> : socialLinks.map((link) => <div className="summary-line" key={link.id}><span>{socialPlatformLabels[link.platform] || readable(link.platform)}</span><button className="button-muted" type="button" onClick={() => deleteSocialLink(link.id)} disabled={savingAction === `social:${link.id}:delete`}><Trash2 size={14} />Remove</button></div>)}</div>
             </div>
           </div>
         </div>

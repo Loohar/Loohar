@@ -424,6 +424,18 @@ textarea {
     border-color: var(--brand, #1f9d80);
   }
 
+  .site-social-links {
+    @apply mt-4 flex flex-wrap items-center gap-2;
+  }
+
+  .site-footer .site-social-links {
+    @apply mt-0;
+  }
+
+  .site-social-link {
+    @apply inline-grid h-10 w-10 place-items-center rounded-full border border-line bg-white text-xs font-black uppercase text-ink transition hover:-translate-y-0.5 hover:border-slate-400;
+  }
+
   .lux-hero {
     @apply mt-5 min-h-[560px] rounded-md bg-cover bg-center p-5 shadow-soft md:p-10;
     background: linear-gradient(90deg, rgba(8,18,16,.92), rgba(8,18,16,.55)), var(--brand, #1f9d80);

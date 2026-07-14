@@ -145,6 +145,55 @@ function pickEditable(body = {}, fields = []) {
   return Object.fromEntries(fields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]]));
 }
 
+const menuCategoryEditableFields = ["name", "sortOrder", "active"];
+const menuItemEditableFields = [
+  "categoryId",
+  "name",
+  "description",
+  "imageUrl",
+  "priceCents",
+  "preparationTimeMins",
+  "calories",
+  "spiceLevel",
+  "available",
+  "featured",
+  "recommended",
+  "isGlutenFree",
+  "isVegetarian",
+  "isVegan",
+  "isSpicy",
+  "isDairyFree",
+  "isNutFree"
+];
+
+function menuCategoryUpdateData(body = {}) {
+  const data = pickEditable(body, menuCategoryEditableFields);
+  if (data.name !== undefined) data.name = String(data.name || "").trim();
+  if (data.sortOrder !== undefined) data.sortOrder = Number(data.sortOrder);
+  return data;
+}
+
+function menuItemUpdateData(body = {}) {
+  const data = pickEditable(body, menuItemEditableFields);
+  if (data.name !== undefined) data.name = String(data.name || "").trim();
+  if (data.description !== undefined) data.description = data.description ? String(data.description).trim() : null;
+  if (data.imageUrl !== undefined) data.imageUrl = data.imageUrl ? String(data.imageUrl).trim() : null;
+  if (data.priceCents !== undefined) data.priceCents = Number(data.priceCents);
+  if (data.preparationTimeMins !== undefined) data.preparationTimeMins = Number(data.preparationTimeMins);
+  if (data.calories !== undefined) data.calories = data.calories === null || data.calories === "" ? null : Number(data.calories);
+  if (data.spiceLevel !== undefined) data.spiceLevel = data.spiceLevel ? String(data.spiceLevel).trim() : null;
+  return data;
+}
+
+function isValidHttpUrl(value = "") {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
 const printerEditableFields = [
   "kitchenPrinterName",
   "kitchenPrinterEnabled",
@@ -238,7 +287,13 @@ router.patch("/:restaurantId/branding", async (req, res, next) => {
   }
 });
 
-const categorySchema = z.object({ body: z.object({ name: z.string().min(2), sortOrder: z.number().int().optional(), active: z.boolean().optional() }) });
+const categorySchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(2),
+    sortOrder: z.coerce.number().int().optional(),
+    active: z.boolean().optional()
+  })
+});
 
 router.get("/:restaurantId/menu/categories", async (req, res, next) => {
   try {
@@ -251,7 +306,9 @@ router.get("/:restaurantId/menu/categories", async (req, res, next) => {
 
 router.post("/:restaurantId/menu/categories", validate(categorySchema), async (req, res, next) => {
   try {
-    const category = await prisma.menuCategory.create({ data: { ...req.body, restaurantId: restaurantIdFor(req) } });
+    const restaurantId = restaurantIdFor(req);
+    const category = await prisma.menuCategory.create({ data: { ...menuCategoryUpdateData(req.body), restaurantId } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.category.created", entityType: "MenuCategory", entityId: category.id });
     res.status(201).json({ category });
   } catch (error) {
     next(error);
@@ -260,7 +317,11 @@ router.post("/:restaurantId/menu/categories", validate(categorySchema), async (r
 
 router.patch("/:restaurantId/menu/categories/:categoryId", async (req, res, next) => {
   try {
-    const category = await prisma.menuCategory.update({ where: { id_restaurantId: { id: req.params.categoryId, restaurantId: restaurantIdFor(req) } }, data: req.body });
+    const restaurantId = restaurantIdFor(req);
+    const data = menuCategoryUpdateData(req.body);
+    if (data.name !== undefined && data.name.length < 2) return res.status(400).json({ error: "Category name must be at least 2 characters." });
+    const category = await prisma.menuCategory.update({ where: { id_restaurantId: { id: req.params.categoryId, restaurantId } }, data });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.category.updated", entityType: "MenuCategory", entityId: category.id, metadata: data });
     res.json({ category });
   } catch (error) {
     next(error);
@@ -269,7 +330,15 @@ router.patch("/:restaurantId/menu/categories/:categoryId", async (req, res, next
 
 router.delete("/:restaurantId/menu/categories/:categoryId", async (req, res, next) => {
   try {
-    await prisma.menuCategory.delete({ where: { id_restaurantId: { id: req.params.categoryId, restaurantId: restaurantIdFor(req) } } });
+    const restaurantId = restaurantIdFor(req);
+    const itemCount = await prisma.menuItem.count({ where: { restaurantId, categoryId: req.params.categoryId } });
+    if (itemCount > 0) {
+      const category = await prisma.menuCategory.update({ where: { id_restaurantId: { id: req.params.categoryId, restaurantId } }, data: { active: false } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.category.archived", entityType: "MenuCategory", entityId: category.id, metadata: { itemCount } });
+      return res.json({ category, archived: true, message: "Category has menu items, so it was hidden instead of permanently deleted." });
+    }
+    await prisma.menuCategory.delete({ where: { id_restaurantId: { id: req.params.categoryId, restaurantId } } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.category.deleted", entityType: "MenuCategory", entityId: req.params.categoryId });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -281,9 +350,11 @@ const menuItemSchema = z.object({
     categoryId: z.string(),
     name: z.string().min(2),
     description: z.string().optional(),
-    imageUrl: z.string().optional(),
-    priceCents: z.number().int().nonnegative(),
-    preparationTimeMins: z.number().int().positive().default(15),
+    imageUrl: z.string().nullable().optional(),
+    priceCents: z.coerce.number().int().nonnegative(),
+    preparationTimeMins: z.coerce.number().int().positive().default(15),
+    calories: z.coerce.number().int().nonnegative().nullable().optional(),
+    spiceLevel: z.string().optional().nullable(),
     available: z.boolean().default(true),
     featured: z.boolean().optional(),
     recommended: z.boolean().optional(),
@@ -309,10 +380,14 @@ router.get("/:restaurantId/menu/items", async (req, res, next) => {
 router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, res, next) => {
   try {
     const { options, ...data } = req.body;
+    const restaurantId = restaurantIdFor(req);
+    const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
+    if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
     const item = await prisma.menuItem.create({
-      data: { ...data, restaurantId: restaurantIdFor(req), options: { create: options } },
-      include: { options: true }
+      data: { ...menuItemUpdateData(data), restaurantId, options: { create: options } },
+      include: { category: true, options: true, optionGroups: { include: { options: true } } }
     });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.created", entityType: "MenuItem", entityId: item.id });
     res.status(201).json({ item });
   } catch (error) {
     next(error);
@@ -321,7 +396,20 @@ router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, r
 
 router.patch("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
   try {
-    const item = await prisma.menuItem.update({ where: { id_restaurantId: { id: req.params.itemId, restaurantId: restaurantIdFor(req) } }, data: req.body });
+    const restaurantId = restaurantIdFor(req);
+    const data = menuItemUpdateData(req.body);
+    if (data.categoryId) {
+      const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
+      if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
+    }
+    if (data.name !== undefined && data.name.length < 2) return res.status(400).json({ error: "Item name must be at least 2 characters." });
+    if (data.priceCents !== undefined && (!Number.isFinite(data.priceCents) || data.priceCents < 0)) return res.status(400).json({ error: "Price must be zero or greater." });
+    const item = await prisma.menuItem.update({
+      where: { id_restaurantId: { id: req.params.itemId, restaurantId } },
+      data,
+      include: { category: true, options: true, optionGroups: { include: { options: true } } }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.updated", entityType: "MenuItem", entityId: item.id, metadata: data });
     res.json({ item });
   } catch (error) {
     next(error);
@@ -342,7 +430,23 @@ router.patch("/:restaurantId/menu/items/:itemId/insights", async (req, res, next
 
 router.delete("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
   try {
-    await prisma.menuItem.delete({ where: { id_restaurantId: { id: req.params.itemId, restaurantId: restaurantIdFor(req) } } });
+    const restaurantId = restaurantIdFor(req);
+    const orderItemCount = await prisma.orderItem.count({ where: { menuItemId: req.params.itemId, order: { restaurantId } } });
+    if (orderItemCount > 0) {
+      const item = await prisma.menuItem.update({
+        where: { id_restaurantId: { id: req.params.itemId, restaurantId } },
+        data: { available: false },
+        include: { category: true, options: true, optionGroups: { include: { options: true } } }
+      });
+      await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.archived", entityType: "MenuItem", entityId: item.id, metadata: { orderItemCount } });
+      return res.json({ item, archived: true, message: "Item has order history, so it was marked unavailable instead of permanently deleted." });
+    }
+    await prisma.$transaction([
+      prisma.menuItemOption.deleteMany({ where: { menuItemId: req.params.itemId } }),
+      prisma.menuItemOptionGroup.deleteMany({ where: { menuItemId: req.params.itemId } }),
+      prisma.menuItem.delete({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } })
+    ]);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.deleted", entityType: "MenuItem", entityId: req.params.itemId });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1286,8 +1390,36 @@ async function getGallery(req, res, next) {
 
 async function addGalleryImage(req, res, next) {
   try {
-    const image = await prisma.restaurantGalleryImage.create({ data: { ...req.body, category: req.body.category || "food", restaurantId: restaurantIdFor(req) } });
+    const restaurantId = restaurantIdFor(req);
+    if (!req.body.imageUrl || !isValidHttpUrl(req.body.imageUrl)) return res.status(400).json({ error: "A valid uploaded image URL is required." });
+    const image = await prisma.restaurantGalleryImage.create({
+      data: {
+        imageUrl: req.body.imageUrl,
+        altText: req.body.altText || req.body.title || "Restaurant photo",
+        category: req.body.category || "food",
+        sortOrder: Number(req.body.sortOrder || 0),
+        restaurantId
+      }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.created", entityType: "RestaurantGalleryImage", entityId: image.id });
     res.status(201).json({ image });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateGalleryImage(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Gallery image not found" });
+    const data = pickEditable(req.body, ["altText", "category", "sortOrder"]);
+    if (data.altText !== undefined) data.altText = data.altText ? String(data.altText).trim() : null;
+    if (data.category !== undefined) data.category = data.category ? String(data.category).trim() : "food";
+    if (data.sortOrder !== undefined) data.sortOrder = Number(data.sortOrder);
+    const image = await prisma.restaurantGalleryImage.update({ where: { id: existing.id }, data });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.updated", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: data });
+    res.json({ image });
   } catch (error) {
     next(error);
   }
@@ -1295,9 +1427,11 @@ async function addGalleryImage(req, res, next) {
 
 async function deleteGalleryImage(req, res, next) {
   try {
-    const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId: restaurantIdFor(req) } });
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Gallery image not found" });
     await prisma.restaurantGalleryImage.delete({ where: { id: existing.id } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.deleted", entityType: "RestaurantGalleryImage", entityId: existing.id });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1315,8 +1449,17 @@ async function getSocialLinks(req, res, next) {
 
 async function addSocialLink(req, res, next) {
   try {
-    const socialLink = await prisma.restaurantSocialLink.create({ data: { ...req.body, restaurantId: restaurantIdFor(req) } });
-    res.status(201).json({ socialLink });
+    const restaurantId = restaurantIdFor(req);
+    const platform = String(req.body.platform || "").trim().toLowerCase();
+    const allowedPlatforms = new Set(["facebook", "instagram", "tiktok", "x", "youtube", "linkedin"]);
+    if (!allowedPlatforms.has(platform)) return res.status(400).json({ error: "Choose a supported social platform." });
+    if (!isValidHttpUrl(req.body.url)) return res.status(400).json({ error: "Enter a valid http or https URL." });
+    const existing = await prisma.restaurantSocialLink.findFirst({ where: { restaurantId, platform } });
+    const socialLink = existing
+      ? await prisma.restaurantSocialLink.update({ where: { id: existing.id }, data: { url: req.body.url.trim() } })
+      : await prisma.restaurantSocialLink.create({ data: { platform, url: req.body.url.trim(), restaurantId } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: existing ? "website.social.updated" : "website.social.created", entityType: "RestaurantSocialLink", entityId: socialLink.id, metadata: { platform } });
+    res.status(existing ? 200 : 201).json({ socialLink });
   } catch (error) {
     next(error);
   }
@@ -1324,9 +1467,11 @@ async function addSocialLink(req, res, next) {
 
 async function deleteSocialLink(req, res, next) {
   try {
-    const existing = await prisma.restaurantSocialLink.findFirst({ where: { id: req.params.id, restaurantId: restaurantIdFor(req) } });
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.restaurantSocialLink.findFirst({ where: { id: req.params.id, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Social link not found" });
     await prisma.restaurantSocialLink.delete({ where: { id: existing.id } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.social.deleted", entityType: "RestaurantSocialLink", entityId: existing.id, metadata: { platform: existing.platform } });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1340,6 +1485,7 @@ router.patch("/domain", updateDomain);
 router.post("/domain/verify", verifyDomain);
 router.get("/gallery", getGallery);
 router.post("/gallery", addGalleryImage);
+router.patch("/gallery/:id", updateGalleryImage);
 router.delete("/gallery/:id", deleteGalleryImage);
 router.get("/social-links", getSocialLinks);
 router.post("/social-links", addSocialLink);
@@ -1351,6 +1497,7 @@ router.patch("/:restaurantId/domain", updateDomain);
 router.post("/:restaurantId/domain/verify", verifyDomain);
 router.get("/:restaurantId/gallery", getGallery);
 router.post("/:restaurantId/gallery", addGalleryImage);
+router.patch("/:restaurantId/gallery/:id", updateGalleryImage);
 router.delete("/:restaurantId/gallery/:id", deleteGalleryImage);
 router.get("/:restaurantId/social-links", getSocialLinks);
 router.post("/:restaurantId/social-links", addSocialLink);

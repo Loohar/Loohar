@@ -314,6 +314,8 @@ model MenuItem {
   priceCents          Int
   available           Boolean               @default(true)
   preparationTimeMins Int                   @default(15)
+  calories            Int?
+  spiceLevel          String?
   featured            Boolean               @default(false)
   recommended         Boolean               @default(false)
   isGlutenFree        Boolean               @default(false)
