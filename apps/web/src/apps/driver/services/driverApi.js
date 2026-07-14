@@ -1,11 +1,11 @@
 import { api } from "../../../lib/api.js";
 
 export function loginDriver(credentials) {
-  return api("/api/auth/login", { method: "POST", body: credentials, clearOnUnauthorized: false, authRetry: false, skipAuth: true });
+  return api("/api/auth/login", { method: "POST", body: credentials });
 }
 
 export function demoLoginDriver() {
-  return api("/api/auth/demo-login", { method: "POST", body: { role: "DRIVER" }, clearOnUnauthorized: false, authRetry: false, skipAuth: true });
+  return api("/api/auth/demo-login", { method: "POST", body: { role: "DRIVER" } });
 }
 
 export function getDriverMe(token) {

@@ -51,7 +51,7 @@ async function refreshStoredSession() {
 
 export async function api(path, options = {}) {
   const body = options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body;
-  const token = options.skipAuth ? "" : options.token || localStorage.getItem("accessToken") || "";
+  const token = options.token || localStorage.getItem("accessToken") || "";
   const url = `${API_URL}${apiPath(path)}`;
   const requestOptions = {
     ...options,
@@ -64,7 +64,6 @@ export async function api(path, options = {}) {
   };
   delete requestOptions.clearOnUnauthorized;
   delete requestOptions.authRetry;
-  delete requestOptions.skipAuth;
   const response = await fetch(url, requestOptions);
 
   if (!response.ok) {
