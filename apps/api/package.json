@@ -12,8 +12,6 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:deploy:safe": "node ../../scripts/prisma-deploy-with-retry.mjs",
     "auth:audit": "node prisma/auth-audit.js",
-    "auth:verify-login": "node prisma/auth-verify-login.js",
-    "auth:repair-user": "node prisma/auth-repair-user.js",
     "bootstrap:admin": "node prisma/bootstrap-admin.js",
     "auth:repair-owner": "node prisma/repair-owner.js",
     "seed": "node prisma/seed.js",

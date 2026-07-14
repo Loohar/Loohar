@@ -21,11 +21,9 @@ import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
-import { validateAuthSecrets } from "./utils/tokens.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
-validateAuthSecrets();
 const corsOriginConfig = process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || process.env.WEB_ORIGIN || productionOriginAllowlist().join(",");
 const configuredCorsOrigins = corsOriginConfig.split(",").map((origin) => origin.trim()).filter(Boolean);
 if (isProduction && !process.env.CORS_ORIGINS) {

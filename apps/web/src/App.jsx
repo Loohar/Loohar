@@ -27,7 +27,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import QRCode from "qrcode";
 import DriverPwaApp from "./apps/driver/DriverApp.jsx";
-import { api, API_ORIGIN, apiRequestUrl, checkApiHealth } from "./lib/api.js";
+import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 
@@ -43,7 +43,6 @@ const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.
 const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
 const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
 const authDiagnosticsEnabled = import.meta.env.VITE_AUTH_DIAGNOSTICS === "true";
-const authDiagnosticPageEnabled = import.meta.env.VITE_AUTH_DIAGNOSTIC === "true";
 const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, `www.${tenantRootDomain}`, `admin.${tenantRootDomain}`, `app.${tenantRootDomain}`, `driver.${tenantRootDomain}`, `api.${tenantRootDomain}`, `sites.${tenantRootDomain}`, "localhost"]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -486,16 +485,8 @@ function kitchenNavigation(user, kitchenSlug, path) {
 }
 
 function dashboardPathFor(user) {
-  const activeRestaurantMemberships = (user?.memberships || []).filter((membership) => membership?.status === "ACTIVE" && membership?.tenantSlug);
-  const slug = activeRestaurantMemberships[0]?.tenantSlug || user?.restaurantSlug || "";
-  const hasRestaurantRole = restaurantRoles.includes(user?.role);
-  const restaurantPath = activeRestaurantMemberships.length > 1
-    ? "/restaurant/select-business"
-    : slug
-      ? `/restaurant/${slug}`
-      : hasRestaurantRole
-        ? "/restaurant/account-not-assigned"
-        : "/restaurant";
+  const slug = user?.restaurantSlug || user?.restaurantId || "";
+  const restaurantPath = slug ? `/restaurant/${slug}` : "/restaurant";
   const kitchenPath = slug ? `/kitchen/${slug}` : "/kitchen";
   const destinations = {
     SUPER_ADMIN: "/admin",
@@ -547,9 +538,7 @@ function routeSlug(path, prefix) {
 function canAccessTenantRoute(user, path, prefix) {
   if (!user || user.role === "SUPER_ADMIN") return Boolean(user);
   const slug = routeSlug(path, prefix);
-  if (!slug) return true;
-  if (["select-business", "account-not-assigned"].includes(slug)) return true;
-  return Boolean(user.restaurantSlug) && slug === user.restaurantSlug;
+  return !slug || !user.restaurantSlug || slug === user.restaurantSlug;
 }
 
 function normalizeRole(role) {
@@ -585,8 +574,7 @@ function returnToForUser(user) {
   const fallback = dashboardPathFor(user);
   const requested = safeReturnTo(fallback);
   if (user?.role === "SUPER_ADMIN" && requested.startsWith("/admin")) return requested;
-  if (restaurantRoles.concat(["CASHIER", "KITCHEN_STAFF"]).includes(user?.role) && requested.startsWith("/restaurant") && canAccessTenantRoute(user, requested, "restaurant")) return requested;
-  if (restaurantRoles.concat(["CASHIER", "KITCHEN_STAFF"]).includes(user?.role) && requested.startsWith("/kitchen") && canAccessTenantRoute(user, requested, "kitchen")) return requested;
+  if (restaurantRoles.concat(["CASHIER", "KITCHEN_STAFF"]).includes(user?.role) && (requested.startsWith("/restaurant") || requested.startsWith("/kitchen"))) return requested;
   if (user?.role === "DRIVER" && requested.startsWith("/driver")) return requested;
   if (user?.role === "CUSTOMER" && (requested.startsWith("/customer") || requested.startsWith("/app/order"))) return requested;
   return fallback;
@@ -1409,42 +1397,6 @@ function AccessDenied({ title = "Access denied.", detail = "This area requires a
   );
 }
 
-function RestaurantAccountNotAssigned({ user, onLogout }) {
-  return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <AppHeader navItems={restaurantOperationsNavigation(user, "", "/restaurant/account-not-assigned")} />
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <LoginStrip user={user} onLogout={onLogout} />
-        <AccessDenied title="Restaurant account not assigned." detail="This restaurant login succeeded, but no active tenant membership was found for the account." loginHref="/restaurant/login" />
-      </main>
-    </div>
-  );
-}
-
-function RestaurantBusinessSelector({ user, onLogout }) {
-  const memberships = (user?.memberships || []).filter((membership) => membership?.status === "ACTIVE" && membership?.tenantSlug);
-  return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <AppHeader navItems={restaurantOperationsNavigation(user, user?.restaurantSlug, "/restaurant/select-business")} />
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        <LoginStrip user={user} onLogout={onLogout} />
-        <section className="panel mt-4">
-          <h1 className="text-2xl font-black text-ink">Select a restaurant</h1>
-          <p className="mt-2 text-slate-500">Choose the active business you want to manage.</p>
-          <div className="mt-5 grid gap-3">
-            {memberships.length ? memberships.map((membership) => (
-              <a className="button-muted justify-between" href={`/restaurant/${membership.tenantSlug}`} key={membership.tenantId || membership.tenantSlug}>
-                <span>{membership.tenantName || membership.tenantSlug}</span>
-                <span className="text-xs uppercase text-slate-500">{membership.role}</span>
-              </a>
-            )) : <p className="rounded-md border border-line p-4 text-sm text-slate-500">No active tenant memberships were found.</p>}
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
 function AppLoadingState({ title = "Loading Loohar", detail = "Checking live API and session state." }) {
   return (
     <div className="panel mx-auto max-w-3xl">
@@ -1468,201 +1420,6 @@ function Redirecting({ to }) {
   return (
     <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
       <AppLoadingState title="Opening Loohar" detail="Taking you to the right dashboard." />
-    </div>
-  );
-}
-
-const authDiagnosticStages = [
-  "FORM_SUBMITTED",
-  "LOGIN_REQUEST_SENT",
-  "LOGIN_RESPONSE_STATUS",
-  "LOGIN_RESPONSE_SHAPE_VALID",
-  "SESSION_STORED",
-  "AUTH_ME_REQUEST_SENT",
-  "AUTH_ME_RESPONSE_STATUS",
-  "ROLE_RESOLVED",
-  "MEMBERSHIP_RESOLVED",
-  "REDIRECT_TARGET_CALCULATED"
-];
-
-function createDiagnosticStageState() {
-  return authDiagnosticStages.map((name) => ({ name, status: "pending", detail: "" }));
-}
-
-function AuthDiagnosticPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [expectedRole, setExpectedRole] = useState("SUPER_ADMIN");
-  const [stages, setStages] = useState(createDiagnosticStageState);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [redirectTarget, setRedirectTarget] = useState("");
-
-  function updateStage(name, status, detail = "") {
-    setStages((current) => current.map((stage) => (stage.name === name ? { ...stage, status, detail } : stage)));
-  }
-
-  function failStage(name, detail) {
-    updateStage(name, "failed", detail);
-  }
-
-  function markUnresolvedFailure(detail) {
-    setStages((current) => {
-      if (current.some((stage) => stage.status === "failed")) return current;
-      const firstPending = current.find((stage) => stage.status === "pending");
-      if (!firstPending) return current;
-      return current.map((stage) => (stage.name === firstPending.name ? { ...stage, status: "failed", detail } : stage));
-    });
-  }
-
-  async function readJson(response) {
-    return response.json().catch(() => ({}));
-  }
-
-  async function submitDiagnostic(event) {
-    event.preventDefault();
-    const submittedEmail = email.trim().toLowerCase();
-    const submittedPassword = password;
-    setError("");
-    setRedirectTarget("");
-    setStages(createDiagnosticStageState());
-
-    if (!submittedEmail || !submittedPassword) {
-      setError("Email and password are required.");
-      setPassword("");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      updateStage("FORM_SUBMITTED", "passed", "Submit handler fired.");
-      updateStage("LOGIN_REQUEST_SENT", "passed", "POST /api/auth/login");
-      const loginResponse = await fetch(apiRequestUrl("/api/auth/login"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: submittedEmail, password: submittedPassword })
-      });
-      updateStage("LOGIN_RESPONSE_STATUS", loginResponse.ok ? "passed" : "failed", `HTTP ${loginResponse.status}`);
-      const loginPayload = await readJson(loginResponse);
-      if (!loginResponse.ok) throw new Error(loginPayload.error || `Login failed with HTTP ${loginResponse.status}.`);
-
-      try {
-        validateAuthPayload(loginPayload);
-      } catch (validationError) {
-        failStage("LOGIN_RESPONSE_SHAPE_VALID", "Login response is incomplete.");
-        throw validationError;
-      }
-      updateStage("LOGIN_RESPONSE_SHAPE_VALID", "passed", "accessToken, refreshToken, user, and memberships parsed.");
-
-      const provisionalMemberships = loginPayload.memberships || [];
-      const provisionalUser = normalizeSessionUser(loginPayload.user, provisionalMemberships);
-      storeSession({ ...loginPayload, user: provisionalUser });
-      const stored = getStoredSession();
-      if (!stored.token || !stored.user?.id) {
-        failStage("SESSION_STORED", "Session material was missing after storage.");
-        throw new Error("Session was not present after storage.");
-      }
-      updateStage("SESSION_STORED", "passed", "Session material is present in the existing bearer-token store.");
-
-      updateStage("AUTH_ME_REQUEST_SENT", "passed", "GET /api/auth/me");
-      const meResponse = await fetch(apiRequestUrl("/api/auth/me"), {
-        headers: { Authorization: `Bearer ${loginPayload.accessToken}` }
-      });
-      updateStage("AUTH_ME_RESPONSE_STATUS", meResponse.ok ? "passed" : "failed", `HTTP ${meResponse.status}`);
-      const mePayload = await readJson(meResponse);
-      if (!meResponse.ok) throw new Error(mePayload.error || `auth/me failed with HTTP ${meResponse.status}.`);
-
-      const memberships = mePayload.memberships || provisionalMemberships;
-      const resolvedUser = normalizeSessionUser(mePayload.user || loginPayload.user, memberships);
-      const roleMatches = expectedRole === "SUPER_ADMIN"
-        ? resolvedUser.role === "SUPER_ADMIN"
-        : restaurantRoles.includes(resolvedUser.role);
-      if (!roleMatches) {
-        failStage("ROLE_RESOLVED", `Resolved role ${resolvedUser.role || "UNKNOWN"} does not match ${expectedRole}.`);
-        throw new Error(`Resolved role ${resolvedUser.role || "UNKNOWN"} does not match ${expectedRole}.`);
-      }
-      updateStage("ROLE_RESOLVED", "passed", resolvedUser.role);
-
-      const membership = activeMembership(memberships);
-      if (expectedRole === "RESTAURANT_OWNER" && !membership?.tenantSlug) {
-        failStage("MEMBERSHIP_RESOLVED", "No active tenant membership was resolved.");
-        throw new Error("Restaurant login succeeded but no active tenant membership was resolved.");
-      }
-      updateStage("MEMBERSHIP_RESOLVED", "passed", expectedRole === "SUPER_ADMIN" ? "No tenant membership required." : membership.tenantSlug);
-
-      const nextSession = { ...loginPayload, memberships, user: resolvedUser };
-      storeSession(nextSession);
-      const target = dashboardPathFor(resolvedUser);
-      setRedirectTarget(target);
-      updateStage("REDIRECT_TARGET_CALCULATED", "passed", target);
-    } catch (diagnosticError) {
-      markUnresolvedFailure(diagnosticError.message);
-      setError(diagnosticError.message);
-    } finally {
-      setPassword("");
-      setLoading(false);
-    }
-  }
-
-  if (!authDiagnosticPageEnabled) {
-    return (
-      <div className="min-h-screen bg-[#f7f8fb] px-4 py-10 text-slate-700">
-        <AccessDenied title="Auth diagnostic disabled." detail="Set VITE_AUTH_DIAGNOSTIC=true for a temporary controlled login trace." loginHref="/admin/login" />
-      </div>
-    );
-  }
-
-  const allPassed = stages.every((stage) => stage.status === "passed");
-
-  return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <BrandMark />
-          <a className="button-muted" href="/">Back to Loohar</a>
-        </div>
-      </header>
-      <main className="mx-auto grid max-w-5xl gap-4 px-4 py-8 lg:grid-cols-[0.8fr_1.2fr]">
-        <section className="panel">
-          <p className="text-sm font-black uppercase text-mint">Controlled auth diagnostic</p>
-          <h1 className="mt-3 text-3xl font-black text-ink">Trace one login attempt</h1>
-          <p className="mt-3 text-slate-500">This page stores a bearer-token session only after login succeeds, then verifies it with /api/auth/me. It never displays passwords, tokens, cookies, or hashes.</p>
-          <form className="mt-6 grid gap-4" onSubmit={submitDiagnostic}>
-            <label className="text-sm font-semibold text-slate-600">
-              Email
-              <input className="input mt-1" name="username" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </label>
-            <label className="text-sm font-semibold text-slate-600">
-              Password
-              <input className="input mt-1" name="current-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-            </label>
-            <label className="text-sm font-semibold text-slate-600">
-              Expected role
-              <select className="input mt-1" value={expectedRole} onChange={(event) => setExpectedRole(event.target.value)}>
-                <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-                <option value="RESTAURANT_OWNER">RESTAURANT_OWNER</option>
-              </select>
-            </label>
-            <button className="button-primary justify-center" type="submit" disabled={loading}>{loading ? "Tracing..." : "Sign In"}</button>
-            {allPassed && redirectTarget ? <a className="button-muted justify-center" href={redirectTarget}>Continue to Dashboard</a> : null}
-          </form>
-          <InlineError message={error} />
-        </section>
-        <section className="panel">
-          <h2 className="panel-title">Safe stages</h2>
-          <div className="mt-4 grid gap-2">
-            {stages.map((stage, index) => (
-              <div className="rounded-md border border-line bg-white p-3" key={stage.name}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-black text-ink">{index + 1}. {stage.name}</p>
-                  <StatusPill tone={stage.status === "passed" ? "good" : stage.status === "failed" ? "warn" : "neutral"}>{stage.status}</StatusPill>
-                </div>
-                {stage.detail ? <p className="mt-1 break-words text-sm text-slate-500">{stage.detail}</p> : null}
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
     </div>
   );
 }
@@ -4767,7 +4524,6 @@ export default function App() {
   const [apiMode, setApiMode] = useState("CHECKING");
   const [authChecking, setAuthChecking] = useState(true);
   const isLoginRoute = initialPath === "/login" || initialPath === "/admin/login" || initialPath === "/restaurant/login";
-  const isAuthDiagnosticRoute = initialPath === "/auth-diagnostic";
   const isForgotPasswordRoute = initialPath === "/forgot-password";
   const resetPasswordMatch = initialPath.match(/^\/reset-password\/([^/]+)\/?$/);
   const appOrderMatch = initialPath.match(/^\/app\/order\/([^/]+)\/?$/);
@@ -4785,13 +4541,11 @@ export default function App() {
   const orderRouteSlug = initialPath.startsWith("/order/") ? initialPath.split("/")[2] : null;
   const isAdminCreateRoute = initialPath === "/admin/business/new";
   const adminAuditMatch = initialPath.match(/^\/admin\/business\/([^/]+)\/audit\/?$/);
-  const isRestaurantBusinessSelectRoute = initialPath === "/restaurant/select-business";
-  const isRestaurantAccountNotAssignedRoute = initialPath === "/restaurant/account-not-assigned";
 
   useEffect(() => {
-    const privateRoute = isAdminRoute || isRestaurantRoute || isDriverRoute || isKitchenRoute || isCustomerRoute || isSiteAdminRoute || isLoginRoute || isAuthDiagnosticRoute || isForgotPasswordRoute || Boolean(resetPasswordMatch) || Boolean(appOrderMatch);
+    const privateRoute = isAdminRoute || isRestaurantRoute || isDriverRoute || isKitchenRoute || isCustomerRoute || isSiteAdminRoute || isLoginRoute || isForgotPasswordRoute || Boolean(resetPasswordMatch) || Boolean(appOrderMatch);
     setRobots(!privateRoute);
-  }, [isAdminRoute, isRestaurantRoute, isDriverRoute, isKitchenRoute, isCustomerRoute, isSiteAdminRoute, isLoginRoute, isAuthDiagnosticRoute, isForgotPasswordRoute, resetPasswordMatch, appOrderMatch]);
+  }, [isAdminRoute, isRestaurantRoute, isDriverRoute, isKitchenRoute, isCustomerRoute, isSiteAdminRoute, isLoginRoute, isForgotPasswordRoute, resetPasswordMatch, appOrderMatch]);
 
   useEffect(() => {
     checkApiHealth()
@@ -4909,10 +4663,6 @@ export default function App() {
     return <ForgotPasswordPage apiOnline={apiOnline} />;
   }
 
-  if (isAuthDiagnosticRoute) {
-    return <AuthDiagnosticPage />;
-  }
-
   if (resetPasswordMatch) {
     return <ResetPasswordPage apiOnline={apiOnline} token={decodeURIComponent(resetPasswordMatch[1])} onLogin={handleLogin} />;
   }
@@ -4998,8 +4748,6 @@ export default function App() {
     if (apiMode !== "CHECKING" && !(apiOnline && authChecking) && !user) {
       return <AuthPage mode="restaurant" apiOnline={apiOnline} onLogin={handleLogin} />;
     }
-    if (isRestaurantAccountNotAssignedRoute) return <RestaurantAccountNotAssigned user={user} onLogout={logout} />;
-    if (isRestaurantBusinessSelectRoute) return <RestaurantBusinessSelector user={user} onLogout={logout} />;
     const restaurantSlug = isRestaurantRoute ? routeSlug(initialPath, "restaurant") : "";
     const canOpenRestaurant = restaurantRoles.concat(["SUPER_ADMIN"]).includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
     return (
