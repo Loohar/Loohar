@@ -38,3 +38,9 @@ export function verifyAccessToken(token) {
 export function verifyRefreshToken(token) {
   return jwt.verify(token, refreshSecret());
 }
+
+export function validateAuthSecrets() {
+  accessSecret();
+  refreshSecret();
+  return true;
+}

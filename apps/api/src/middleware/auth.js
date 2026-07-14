@@ -1,13 +1,21 @@
 import { prisma } from "../config/prisma.js";
+import { authDiagnostic } from "../utils/authSecurity.js";
 import { verifyAccessToken } from "../utils/tokens.js";
 
 export async function requireAuth(req, res, next) {
+  const isAuthMeRequest = req.originalUrl === "/api/auth/me" || req.originalUrl === "/auth/me";
   try {
+    if (isAuthMeRequest) authDiagnostic("auth.me.request", { path: req.originalUrl });
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: "Missing bearer token" });
+    if (isAuthMeRequest) authDiagnostic("auth.me.token_present", { present: Boolean(token) });
+    if (!token) {
+      if (isAuthMeRequest) authDiagnostic("auth.me.failed", { reason: "missing_bearer_token" });
+      return res.status(401).json({ error: "Missing bearer token" });
+    }
 
     const payload = verifyAccessToken(token);
+    if (isAuthMeRequest) authDiagnostic("auth.me.token_valid", { userId: payload.sub, role: payload.role });
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       select: {
@@ -29,9 +37,19 @@ export async function requireAuth(req, res, next) {
       }
     });
 
-    if (!user) return res.status(401).json({ error: "Invalid token user" });
-    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) return res.status(401).json({ error: "Invalid or expired bearer token" });
-    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return res.status(403).json({ error: "Account is not active" });
+    if (isAuthMeRequest) authDiagnostic("auth.me.user_found", { userId: payload.sub, found: Boolean(user) });
+    if (!user) {
+      if (isAuthMeRequest) authDiagnostic("auth.me.failed", { reason: "invalid_token_user" });
+      return res.status(401).json({ error: "Invalid token user" });
+    }
+    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) {
+      if (isAuthMeRequest) authDiagnostic("auth.me.failed", { reason: "session_version_mismatch" });
+      return res.status(401).json({ error: "Invalid or expired bearer token" });
+    }
+    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) {
+      if (isAuthMeRequest) authDiagnostic("auth.me.failed", { reason: "inactive_account" });
+      return res.status(403).json({ error: "Account is not active" });
+    }
     req.user = {
       id: user.id,
       email: user.email,
@@ -51,8 +69,10 @@ export async function requireAuth(req, res, next) {
       mfaVerifiedAt: user.mfaVerifiedAt
     };
     req.tenantId = user.restaurantId;
+    if (isAuthMeRequest) authDiagnostic("auth.me.success", { userId: user.id, role: user.role });
     next();
   } catch (error) {
+    if (isAuthMeRequest) authDiagnostic("auth.me.failed", { reason: error.name || "unknown" });
     if (["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(error.name)) {
       return res.status(401).json({ error: "Invalid or expired bearer token" });
     }

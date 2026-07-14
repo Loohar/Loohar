@@ -10,6 +10,10 @@ function apiPath(path) {
   return path;
 }
 
+export function apiRequestUrl(path) {
+  return `${API_URL}${apiPath(path)}`;
+}
+
 export function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
@@ -52,7 +56,7 @@ async function refreshStoredSession() {
 export async function api(path, options = {}) {
   const body = options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body;
   const token = options.skipAuth ? "" : options.token || localStorage.getItem("accessToken") || "";
-  const url = `${API_URL}${apiPath(path)}`;
+  const url = apiRequestUrl(path);
   const requestOptions = {
     ...options,
     body,
