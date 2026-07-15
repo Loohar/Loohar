@@ -5,7 +5,7 @@ import { recordAudit } from "../services/auditService.js";
 import { uploadImageToSupabaseStorage } from "../services/uploadService.js";
 
 const router = Router();
-const uploadKinds = new Set(["restaurant-logo", "restaurant-hero", "menu-item", "gallery"]);
+const uploadKinds = new Set(["restaurant-logo", "restaurant-hero", "restaurant-mobile-hero", "restaurant-favicon", "menu-item", "gallery"]);
 const uploadRoles = ["SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 
 router.use(requireAuth, requireRole(...uploadRoles));
@@ -83,6 +83,26 @@ router.post("/:kind", async (req, res, next) => {
         create: { restaurantId: restaurant.id, heroImageUrl: upload.publicUrl }
       });
       await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.hero.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      return res.status(201).json({ upload, website });
+    }
+
+    if (kind === "restaurant-mobile-hero") {
+      const website = await prisma.restaurantWebsiteSettings.upsert({
+        where: { restaurantId: restaurant.id },
+        update: { mobileHeroImageUrl: upload.publicUrl },
+        create: { restaurantId: restaurant.id, mobileHeroImageUrl: upload.publicUrl }
+      });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.mobile_hero.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      return res.status(201).json({ upload, website });
+    }
+
+    if (kind === "restaurant-favicon") {
+      const website = await prisma.restaurantWebsiteSettings.upsert({
+        where: { restaurantId: restaurant.id },
+        update: { faviconUrl: upload.publicUrl },
+        create: { restaurantId: restaurant.id, faviconUrl: upload.publicUrl }
+      });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.favicon.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, website });
     }
 

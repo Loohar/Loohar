@@ -33,16 +33,27 @@ export function defaultWebsiteSettings(restaurant) {
     heroTitle: restaurant.businessName || restaurant.name,
     heroSubtitle: restaurant.description || "Order directly from our kitchen for pickup and delivery.",
     heroImageUrl: resolveImage(restaurant.brandingJson?.bannerImageUrl, restaurant.logoUrl, DEFAULT_HERO_IMAGE),
+    mobileHeroImageUrl: null,
     logoUrl: resolveImage(restaurant.logoUrl, restaurant.brandingJson?.bannerImageUrl, DEFAULT_LOGO_IMAGE),
+    faviconUrl: null,
     brandColor: restaurant.brandingJson?.primaryColor || "#1f9d80",
     accentColor: restaurant.brandingJson?.accentColor || "#f4b740",
+    buttonColor: null,
     aboutTitle: `About ${restaurant.businessName || restaurant.name}`,
     aboutStory: restaurant.description || "A neighborhood restaurant serving guests directly through our own online ordering platform.",
     missionStatement: "Serve great food, keep customer relationships local, and make ordering easy.",
     ownerStory: "Built by a local restaurant team focused on hospitality, direct customer relationships, and reliable pickup and delivery.",
     specialOfferText: "Order direct for loyalty points and restaurant-owned delivery.",
+    ctaText: "Start an order",
+    contactMessage: "Call or email the restaurant for order help, catering, and community events.",
+    cateringMessage: "Ask the restaurant team about party trays, group meals, and corporate lunches.",
+    publicEmail: restaurant.email || null,
     seoTitle: `${restaurant.businessName || restaurant.name} | Direct Online Ordering`,
-    seoDescription: restaurant.description || `Order pickup or delivery directly from ${restaurant.businessName || restaurant.name}.`
+    seoDescription: restaurant.description || `Order pickup or delivery directly from ${restaurant.businessName || restaurant.name}.`,
+    seoKeywords: null,
+    canonicalUrl: null,
+    ogImageUrl: null,
+    indexingEnabled: true
   };
 }
 
@@ -79,7 +90,10 @@ function completeWebsiteSettings(restaurant, websiteSettings) {
   const defaults = defaultWebsiteSettings(restaurant);
   const website = { ...defaults, ...(websiteSettings || {}) };
   website.heroImageUrl = resolveImage(websiteSettings?.heroImageUrl, restaurant.brandingJson?.bannerImageUrl || restaurant.logoUrl, defaults.heroImageUrl);
+  website.mobileHeroImageUrl = hasImageUrl(websiteSettings?.mobileHeroImageUrl) ? websiteSettings.mobileHeroImageUrl.trim() : null;
   website.logoUrl = resolveImage(websiteSettings?.logoUrl || restaurant.logoUrl, defaults.logoUrl, website.heroImageUrl);
+  website.faviconUrl = hasImageUrl(websiteSettings?.faviconUrl) ? websiteSettings.faviconUrl.trim() : null;
+  website.ogImageUrl = resolveImage(websiteSettings?.ogImageUrl, website.heroImageUrl, defaults.heroImageUrl);
   return website;
 }
 

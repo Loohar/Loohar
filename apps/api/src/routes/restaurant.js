@@ -121,9 +121,12 @@ const websiteEditableFields = [
   "tagline",
   "cuisineType",
   "heroImageUrl",
+  "mobileHeroImageUrl",
   "logoUrl",
+  "faviconUrl",
   "brandColor",
   "accentColor",
+  "buttonColor",
   "headingFont",
   "bodyFont",
   "sectionSettingsJson",
@@ -133,8 +136,16 @@ const websiteEditableFields = [
   "missionStatement",
   "ownerStory",
   "specialOfferText",
+  "ctaText",
+  "contactMessage",
+  "cateringMessage",
+  "publicEmail",
   "seoTitle",
-  "seoDescription"
+  "seoDescription",
+  "seoKeywords",
+  "canonicalUrl",
+  "ogImageUrl",
+  "indexingEnabled"
 ];
 
 function websiteUpdateData(body = {}) {
@@ -218,6 +229,469 @@ const notificationEditableFields = [
   "welcomeEmail",
   "providerSettingsJson"
 ];
+
+const onboardingSteps = [
+  "business",
+  "owner",
+  "branding",
+  "content",
+  "hours",
+  "fulfillment",
+  "menu",
+  "gallery",
+  "domain",
+  "payments",
+  "review"
+];
+const onboardingStepSet = new Set(onboardingSteps);
+const onboardingWebsiteSections = { hero: true, featuredMenu: true, story: true, gallery: true, loyalty: true, catering: true, contact: true };
+const ownerRoles = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN"]);
+const allowedBusinessTypes = new Set(["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"]);
+const allowedModules = new Set(["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"]);
+
+function asObject(value, fallback = {}) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
+}
+
+function compactString(value) {
+  const trimmed = String(value ?? "").trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function hasText(value) {
+  return Boolean(compactString(value));
+}
+
+function requestedStep(req, fallback = "business") {
+  const step = String(req.params.step || req.body.step || fallback || "business").trim();
+  return onboardingStepSet.has(step) ? step : "business";
+}
+
+function mergeSettingsJson(current, patch) {
+  return { ...asObject(current), ...asObject(patch) };
+}
+
+function normalizeStoreHours(input) {
+  const source = asObject(input);
+  return Object.fromEntries(Object.entries(source).map(([day, value]) => {
+    const label = compactString(typeof value === "object" ? value.label || `${value.open || ""} - ${value.close || ""}` : value);
+    return [day, label || "Closed"];
+  }));
+}
+
+function hasUsableHours(hours) {
+  return Object.values(asObject(hours)).some((value) => {
+    const label = String(value || "").trim().toLowerCase();
+    return label && label !== "closed";
+  });
+}
+
+function activeSectionCount(sectionSettings) {
+  const sections = { ...onboardingWebsiteSections, ...asObject(sectionSettings) };
+  return Object.values(sections).filter((value) => value !== false).length;
+}
+
+function publicRestaurantShape(restaurant) {
+  return {
+    id: restaurant.id,
+    name: restaurant.name,
+    businessName: restaurant.businessName,
+    businessType: restaurant.businessType,
+    enabledModules: restaurant.enabledModules,
+    slug: restaurant.slug,
+    status: restaurant.status,
+    description: restaurant.description,
+    logoUrl: restaurant.logoUrl,
+    phone: restaurant.phone,
+    email: restaurant.email,
+    address: restaurant.address,
+    city: restaurant.city,
+    state: restaurant.state,
+    zip: restaurant.zip,
+    timezone: restaurant.timezone,
+    latitude: restaurant.latitude,
+    longitude: restaurant.longitude,
+    deliveryRadiusMiles: restaurant.deliveryRadiusMiles,
+    deliveryEnabled: restaurant.deliveryEnabled,
+    pickupEnabled: restaurant.pickupEnabled,
+    deliveryFeeCents: restaurant.deliveryFeeCents,
+    storeHoursJson: restaurant.storeHoursJson,
+    settingsJson: restaurant.settingsJson,
+    onboardingStatus: restaurant.onboardingStatus,
+    onboardingCurrentStep: restaurant.onboardingCurrentStep,
+    onboardingStartedAt: restaurant.onboardingStartedAt,
+    onboardingUpdatedAt: restaurant.onboardingUpdatedAt,
+    onboardingCompletedAt: restaurant.onboardingCompletedAt,
+    onboardingSkippedSteps: restaurant.onboardingSkippedSteps,
+    websitePublishedAt: restaurant.websitePublishedAt
+  };
+}
+
+function onboardingReadiness(restaurant) {
+  const website = restaurant.websiteSettings || {};
+  const domain = restaurant.domains?.[0] || {};
+  const settings = asObject(restaurant.settingsJson);
+  const categories = restaurant.categories || [];
+  const activeCategories = categories.filter((category) => category.active !== false);
+  const availableItems = activeCategories.flatMap((category) => category.items || []).filter((item) => item.available !== false);
+  const activeZones = (restaurant.deliveryZones || []).filter((zone) => zone.active !== false);
+  const hours = website.storeHoursJson || restaurant.storeHoursJson;
+  const hasDeliveryCoverage = !restaurant.deliveryEnabled || activeZones.length > 0 || Number(restaurant.deliveryRadiusMiles || 0) > 0 || Boolean(restaurant.deliveryZoneJson);
+  const payment = asObject(settings.paymentSetup || settings.payments);
+  const paymentReady = Boolean(payment.stripeConnectAccountId || payment.providerAccountId || payment.status === "CONNECTED" || payment.connected === true);
+
+  const sections = {
+    business: hasText(restaurant.name) && hasText(restaurant.slug) && hasText(restaurant.phone) && hasText(restaurant.email) && hasText(restaurant.address) && hasText(restaurant.city) && hasText(restaurant.state) && hasText(restaurant.zip) && hasText(restaurant.timezone),
+    owner: (restaurant.users || []).some((user) => ownerRoles.has(user.role) && user.status === "ACTIVE"),
+    branding: hasText(website.logoUrl || restaurant.logoUrl) && hasText(website.heroImageUrl),
+    content: hasText(website.heroTitle) && hasText(website.heroSubtitle) && hasText(website.aboutStory) && activeSectionCount(website.sectionSettingsJson) > 0,
+    hours: hasUsableHours(hours),
+    fulfillment: (restaurant.pickupEnabled || restaurant.deliveryEnabled) && hasDeliveryCoverage,
+    menu: activeCategories.length > 0 && availableItems.length > 0,
+    gallery: (restaurant.galleryImages || []).length > 0,
+    domain: hasText(domain.defaultSubdomain || restaurant.slug),
+    payments: paymentReady
+  };
+
+  const blockers = [];
+  const warnings = [];
+  if (!sections.business) blockers.push({ step: "business", message: "Complete restaurant name, slug, contact, address, and timezone." });
+  if (!sections.owner) blockers.push({ step: "owner", message: "Assign an active restaurant owner or admin account." });
+  if (!sections.branding) blockers.push({ step: "branding", message: "Upload a logo and hero image before publishing the public website." });
+  if (!sections.content) blockers.push({ step: "content", message: "Add hero copy, about story, and at least one visible website section." });
+  if (!sections.hours) blockers.push({ step: "hours", message: "Add operating hours for at least one open day." });
+  if (!sections.fulfillment) warnings.push({ step: "fulfillment", message: "Online ordering stays disabled until pickup or delivery is configured. Delivery requires a zone, radius, or map coverage." });
+  if (!sections.menu) warnings.push({ step: "menu", message: "Online ordering stays disabled until at least one active menu category and one available menu item exist." });
+  if (!sections.gallery) warnings.push({ step: "gallery", message: "Add gallery photos to make the public website feel complete." });
+  if (domain.customDomain && !["VERIFIED", "SSL_PENDING", "ACTIVE"].includes(domain.domainStatus)) warnings.push({ step: "domain", message: "Custom domain is not verified yet. The Loohar subdomain can still be used." });
+  if (!paymentReady) warnings.push({ step: "payments", message: "Paid online ordering is blocked until payments are connected. Website publishing can still continue." });
+
+  const websiteRequired = ["business", "owner", "branding", "content", "hours", "domain"];
+  const websiteReady = websiteRequired.every((section) => sections[section]);
+  const completedCount = Object.values(sections).filter(Boolean).length;
+  return {
+    sections,
+    blockers,
+    warnings,
+    websiteReady,
+    orderingReady: websiteReady && sections.fulfillment && sections.menu && paymentReady,
+    paymentReady,
+    paymentStatus: paymentReady ? "CONNECTED" : "NOT_CONNECTED",
+    completionPercentage: Math.round((completedCount / Object.keys(sections).length) * 100),
+    counts: {
+      activeCategories: activeCategories.length,
+      availableItems: availableItems.length,
+      galleryImages: (restaurant.galleryImages || []).length,
+      socialLinks: (restaurant.socialLinks || []).length,
+      activeDeliveryZones: activeZones.length
+    }
+  };
+}
+
+async function ensureOnboardingRestaurant(req) {
+  const restaurantId = restaurantIdFor(req);
+  const existing = await prisma.restaurant.findUnique({
+    where: { id: restaurantId },
+    include: {
+      websiteSettings: true,
+      domains: true,
+      galleryImages: { orderBy: { sortOrder: "asc" } },
+      socialLinks: true,
+      categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
+      deliveryZones: { orderBy: { createdAt: "asc" } },
+      users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
+    }
+  });
+  if (!existing) return null;
+  await Promise.all([ensureWebsiteSettings(existing), ensureDomain(existing)]);
+  return prisma.restaurant.findUnique({
+    where: { id: existing.id },
+    include: {
+      websiteSettings: true,
+      domains: true,
+      galleryImages: { orderBy: { sortOrder: "asc" } },
+      socialLinks: true,
+      categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
+      deliveryZones: { orderBy: { createdAt: "asc" } },
+      users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
+    }
+  });
+}
+
+function onboardingPayload(restaurant) {
+  const readiness = onboardingReadiness(restaurant);
+  const owner = (restaurant.users || []).find((user) => ownerRoles.has(user.role)) || null;
+  const domainRecord = restaurant.domains?.[0] || null;
+  return {
+    restaurant: publicRestaurantShape(restaurant),
+    owner,
+    website: restaurant.websiteSettings,
+    domain: domainRecord ? domainInfoForRestaurant(restaurant, domainRecord) : null,
+    gallery: restaurant.galleryImages || [],
+    socialLinks: restaurant.socialLinks || [],
+    categories: restaurant.categories || [],
+    deliveryZones: restaurant.deliveryZones || [],
+    progress: {
+      steps: onboardingSteps,
+      status: restaurant.onboardingStatus,
+      currentStep: restaurant.onboardingCurrentStep,
+      startedAt: restaurant.onboardingStartedAt,
+      updatedAt: restaurant.onboardingUpdatedAt,
+      completedAt: restaurant.onboardingCompletedAt,
+      skippedSteps: restaurant.onboardingSkippedSteps || {}
+    },
+    readiness
+  };
+}
+
+async function markOnboardingProgress({ req, restaurantId, step, status = "IN_PROGRESS", skippedSteps }) {
+  const current = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { onboardingStartedAt: true, onboardingStatus: true, onboardingSkippedSteps: true } });
+  const data = {
+    onboardingStatus: current?.onboardingStatus === "COMPLETED" ? "COMPLETED" : status,
+    onboardingCurrentStep: step,
+    onboardingStartedAt: current?.onboardingStartedAt || new Date(),
+    onboardingUpdatedAt: new Date()
+  };
+  if (skippedSteps) data.onboardingSkippedSteps = skippedSteps;
+  const restaurant = await prisma.restaurant.update({ where: { id: restaurantId }, data, select: { id: true } });
+  await recordAudit({ actorUserId: req.user.id, restaurantId, action: "onboarding.progress.updated", entityType: "Restaurant", entityId: restaurant.id, metadata: { step, status } }).catch(() => {});
+}
+
+async function getOnboarding(req, res, next) {
+  try {
+    const restaurant = await ensureOnboardingRestaurant(req);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    if (restaurant.onboardingStatus === "NOT_STARTED") {
+      await markOnboardingProgress({ req, restaurantId: restaurant.id, step: "business" });
+      const started = await ensureOnboardingRestaurant(req);
+      return res.json(onboardingPayload(started));
+    }
+    res.json(onboardingPayload(restaurant));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getOnboardingReadiness(req, res, next) {
+  try {
+    const restaurant = await ensureOnboardingRestaurant(req);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    res.json({ readiness: onboardingReadiness(restaurant) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function saveOnboardingStep(req, res, next) {
+  try {
+    const restaurant = await ensureOnboardingRestaurant(req);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const restaurantId = restaurant.id;
+    const step = requestedStep(req);
+
+    if (step === "business") {
+      const settingsPatch = {};
+      if (req.body.categoryLabel !== undefined) settingsPatch.categoryLabel = compactString(req.body.categoryLabel);
+      if (req.body.addressLine2 !== undefined) settingsPatch.addressLine2 = compactString(req.body.addressLine2);
+      if (req.body.enabledModules !== undefined && Array.isArray(req.body.enabledModules)) {
+        const modules = req.body.enabledModules.filter((module) => allowedModules.has(module));
+        if (modules.length) settingsPatch.enabledModulesSnapshot = modules;
+      }
+      const data = {};
+      if (req.body.businessName !== undefined) data.businessName = compactString(req.body.businessName);
+      if (req.body.publicBusinessName !== undefined || req.body.name !== undefined) data.name = compactString(req.body.publicBusinessName ?? req.body.name);
+      if (req.body.businessType !== undefined && allowedBusinessTypes.has(req.body.businessType)) data.businessType = req.body.businessType;
+      if (req.body.description !== undefined) data.description = compactString(req.body.description);
+      if (req.body.businessEmail !== undefined || req.body.email !== undefined) data.email = compactString(req.body.businessEmail ?? req.body.email);
+      if (req.body.phone !== undefined) data.phone = compactString(req.body.phone);
+      if (req.body.address !== undefined) data.address = compactString(req.body.address);
+      if (req.body.city !== undefined) data.city = compactString(req.body.city);
+      if (req.body.state !== undefined) data.state = compactString(req.body.state);
+      if (req.body.zip !== undefined) data.zip = compactString(req.body.zip);
+      if (req.body.timezone !== undefined) data.timezone = compactString(req.body.timezone) || "America/Denver";
+      if (req.body.pickupEnabled !== undefined) data.pickupEnabled = Boolean(req.body.pickupEnabled);
+      if (req.body.deliveryEnabled !== undefined) data.deliveryEnabled = Boolean(req.body.deliveryEnabled);
+      if (req.body.enabledModules !== undefined && Array.isArray(req.body.enabledModules)) data.enabledModules = req.body.enabledModules.filter((module) => allowedModules.has(module));
+      if (Object.keys(settingsPatch).length) data.settingsJson = mergeSettingsJson(restaurant.settingsJson, settingsPatch);
+      await prisma.restaurant.update({ where: { id: restaurantId }, data });
+    }
+
+    if (step === "owner") {
+      const ownerId = req.body.ownerUserId || restaurant.users.find((candidate) => ownerRoles.has(candidate.role))?.id || req.user.id;
+      const data = {};
+      if (req.body.ownerName !== undefined || req.body.name !== undefined) data.name = compactString(req.body.ownerName ?? req.body.name) || undefined;
+      if (req.body.ownerPhone !== undefined || req.body.phone !== undefined) data.phone = compactString(req.body.ownerPhone ?? req.body.phone);
+      if (req.body.ownerEmail !== undefined || req.body.email !== undefined) {
+        const email = normalizeEmail(req.body.ownerEmail ?? req.body.email);
+        const existing = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" }, NOT: { id: ownerId } }, select: { id: true } });
+        if (existing) return res.status(409).json({ error: "That owner email is already used by another account." });
+        data.email = email;
+      }
+      if (Object.keys(data).length) {
+        await prisma.user.update({ where: { id: ownerId }, data });
+      }
+    }
+
+    if (step === "branding") {
+      const brandingJson = mergeSettingsJson(restaurant.brandingJson, {
+        primaryColor: req.body.brandColor ?? req.body.primaryColor,
+        accentColor: req.body.accentColor,
+        buttonColor: req.body.buttonColor,
+        logoUrl: req.body.logoUrl,
+        heroImageUrl: req.body.heroImageUrl,
+        mobileHeroImageUrl: req.body.mobileHeroImageUrl,
+        faviconUrl: req.body.faviconUrl
+      });
+      const restaurantData = {};
+      if (req.body.logoUrl !== undefined) restaurantData.logoUrl = compactString(req.body.logoUrl);
+      if (Object.keys(brandingJson).length) restaurantData.brandingJson = brandingJson;
+      if (Object.keys(restaurantData).length) await prisma.restaurant.update({ where: { id: restaurantId }, data: restaurantData });
+      await prisma.restaurantWebsiteSettings.upsert({
+        where: { restaurantId },
+        update: websiteUpdateData(req.body),
+        create: { restaurantId, ...websiteUpdateData(req.body) }
+      });
+    }
+
+    if (["content", "domain"].includes(step)) {
+      await prisma.restaurantWebsiteSettings.upsert({
+        where: { restaurantId },
+        update: websiteUpdateData(req.body),
+        create: { restaurantId, ...websiteUpdateData(req.body) }
+      });
+    }
+
+    if (step === "domain" && (req.body.customDomain !== undefined || req.body.defaultSubdomain !== undefined || req.body.canonicalDomain !== undefined)) {
+      const existing = await ensureDomain(restaurant);
+      await prisma.restaurantDomain.update({
+        where: { id: existing.id },
+        data: domainUpdateDataForRestaurant(restaurant, existing, req.body)
+      });
+    }
+
+    if (step === "hours") {
+      const storeHoursJson = normalizeStoreHours(req.body.storeHoursJson || req.body.hours || {});
+      await prisma.$transaction([
+        prisma.restaurant.update({ where: { id: restaurantId }, data: { storeHoursJson } }),
+        prisma.restaurantWebsiteSettings.upsert({ where: { restaurantId }, update: { storeHoursJson }, create: { restaurantId, storeHoursJson } })
+      ]);
+    }
+
+    if (step === "fulfillment") {
+      const settingsPatch = {};
+      ["minimumOrderCents", "averagePrepMinutes", "tipsEnabled", "deliveryNotes", "pickupInstructions"].forEach((field) => {
+        if (req.body[field] !== undefined) settingsPatch[field] = req.body[field];
+      });
+      const data = {};
+      if (req.body.pickupEnabled !== undefined) data.pickupEnabled = Boolean(req.body.pickupEnabled);
+      if (req.body.deliveryEnabled !== undefined) data.deliveryEnabled = Boolean(req.body.deliveryEnabled);
+      if (req.body.deliveryFeeCents !== undefined) data.deliveryFeeCents = Number(req.body.deliveryFeeCents || 0);
+      if (req.body.deliveryRadiusMiles !== undefined) data.deliveryRadiusMiles = Number(req.body.deliveryRadiusMiles || 0);
+      if (Object.keys(settingsPatch).length) data.settingsJson = mergeSettingsJson(restaurant.settingsJson, settingsPatch);
+      if (Object.keys(data).length) await prisma.restaurant.update({ where: { id: restaurantId }, data });
+      if (req.body.deliveryZone?.name) {
+        await prisma.deliveryZone.upsert({
+          where: { restaurantId_name: { restaurantId, name: req.body.deliveryZone.name } },
+          update: {
+            radiusMiles: Number(req.body.deliveryZone.radiusMiles || req.body.deliveryRadiusMiles || 0),
+            deliveryFeeCents: Number(req.body.deliveryZone.deliveryFeeCents ?? req.body.deliveryFeeCents ?? 0),
+            minimumOrderCents: Number(req.body.deliveryZone.minimumOrderCents ?? req.body.minimumOrderCents ?? 0),
+            active: req.body.deliveryZone.active !== false
+          },
+          create: {
+            restaurantId,
+            name: req.body.deliveryZone.name,
+            radiusMiles: Number(req.body.deliveryZone.radiusMiles || req.body.deliveryRadiusMiles || 0),
+            deliveryFeeCents: Number(req.body.deliveryZone.deliveryFeeCents ?? req.body.deliveryFeeCents ?? 0),
+            minimumOrderCents: Number(req.body.deliveryZone.minimumOrderCents ?? req.body.minimumOrderCents ?? 0),
+            active: req.body.deliveryZone.active !== false,
+            mapSettingsJson: req.body.deliveryZone.mapSettingsJson || { provider: "map_placeholder" }
+          }
+        });
+      }
+    }
+
+    if (step === "payments") {
+      await prisma.restaurant.update({
+        where: { id: restaurantId },
+        data: { settingsJson: mergeSettingsJson(restaurant.settingsJson, { paymentSetup: asObject(req.body.paymentSetup || req.body) }) }
+      });
+    }
+
+    await markOnboardingProgress({ req, restaurantId, step });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "onboarding.step.saved", entityType: "Restaurant", entityId: restaurantId, metadata: { step } }).catch(() => {});
+    const updated = await ensureOnboardingRestaurant(req);
+    res.json(onboardingPayload(updated));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function skipOnboardingStep(req, res, next) {
+  try {
+    const restaurant = await ensureOnboardingRestaurant(req);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const step = requestedStep(req);
+    const skippedSteps = { ...asObject(restaurant.onboardingSkippedSteps), [step]: { skippedAt: new Date().toISOString(), reason: compactString(req.body.reason) || "Skipped during setup" } };
+    await markOnboardingProgress({ req, restaurantId: restaurant.id, step, skippedSteps });
+    const updated = await ensureOnboardingRestaurant(req);
+    res.json(onboardingPayload(updated));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function publishOnboarding(req, res, next) {
+  try {
+    const restaurant = await ensureOnboardingRestaurant(req);
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const readiness = onboardingReadiness(restaurant);
+    if (!readiness.websiteReady) {
+      return res.status(400).json({ error: "Complete required onboarding steps before publishing.", readiness });
+    }
+    const nextSettings = mergeSettingsJson(restaurant.settingsJson, {
+      onlineOrderingEnabled: readiness.orderingReady,
+      websitePublished: true,
+      publishedAt: new Date().toISOString()
+    });
+    await prisma.$transaction([
+      prisma.restaurant.update({
+        where: { id: restaurant.id },
+        data: {
+          status: restaurant.status === "PENDING" ? "ACTIVE" : restaurant.status,
+          settingsJson: nextSettings,
+          onboardingStatus: "COMPLETED",
+          onboardingCurrentStep: "review",
+          onboardingCompletedAt: new Date(),
+          onboardingUpdatedAt: new Date(),
+          websitePublishedAt: new Date()
+        }
+      }),
+      prisma.restaurantWebsiteSettings.upsert({
+        where: { restaurantId: restaurant.id },
+        update: { websiteEnabled: true },
+        create: { restaurantId: restaurant.id, websiteEnabled: true }
+      })
+    ]);
+    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "onboarding.completed", entityType: "Restaurant", entityId: restaurant.id, metadata: { orderingReady: readiness.orderingReady } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.published", entityType: "Restaurant", entityId: restaurant.id, metadata: { orderingReady: readiness.orderingReady } }).catch(() => {});
+    const updated = await ensureOnboardingRestaurant(req);
+    res.json({ ...onboardingPayload(updated), published: true });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/onboarding", getOnboarding);
+router.get("/onboarding/readiness", getOnboardingReadiness);
+router.patch("/onboarding/:step", saveOnboardingStep);
+router.post("/onboarding/:step/skip", skipOnboardingStep);
+router.post("/onboarding/publish", publishOnboarding);
+router.get("/:restaurantId/onboarding", getOnboarding);
+router.get("/:restaurantId/onboarding/readiness", getOnboardingReadiness);
+router.patch("/:restaurantId/onboarding/:step", saveOnboardingStep);
+router.post("/:restaurantId/onboarding/:step/skip", skipOnboardingStep);
+router.post("/:restaurantId/onboarding/publish", publishOnboarding);
 
 router.get("/me", async (req, res, next) => {
   try {

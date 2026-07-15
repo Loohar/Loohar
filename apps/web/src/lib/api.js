@@ -107,7 +107,10 @@ export async function api(path, options = {}) {
     }
     const payload = await parseApiError(response);
     if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSessionForToken(token);
-    throw new Error(payload.error || `Request failed with ${response.status}`);
+    const error = new Error(payload.error || `Request failed with ${response.status}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
 
   if (response.status === 204) return null;

@@ -351,6 +351,15 @@ textarea {
     @apply mx-auto max-w-6xl;
   }
 
+  .site-shell .button-primary {
+    background: var(--button, var(--brand, #10231f));
+  }
+
+  .site-shell .button-primary:hover {
+    background: var(--button, var(--brand, #10231f));
+    filter: brightness(0.92);
+  }
+
   .site-header {
     @apply sticky top-0 z-20 flex flex-col justify-between gap-4 border-b border-line bg-[#f7f4ee]/95 pb-4 pt-2 backdrop-blur md:flex-row md:items-center;
   }

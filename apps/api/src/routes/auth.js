@@ -34,7 +34,7 @@ function authUserSelect() {
     mfaEnabled: true,
     mfaSetupStatus: true,
     mfaVerifiedAt: true,
-    restaurant: { select: { id: true, name: true, businessName: true, slug: true } }
+    restaurant: { select: { id: true, name: true, businessName: true, slug: true, onboardingStatus: true, onboardingCurrentStep: true, websitePublishedAt: true } }
   };
 }
 
@@ -48,6 +48,9 @@ function membershipFromRestaurant({ restaurant, role, status = "ACTIVE" }) {
     tenantId: restaurant.id,
     tenantSlug: restaurant.slug,
     tenantName: restaurant.businessName || restaurant.name,
+    onboardingStatus: restaurant.onboardingStatus || "NOT_STARTED",
+    onboardingCurrentStep: restaurant.onboardingCurrentStep || "business",
+    websitePublishedAt: restaurant.websitePublishedAt || null,
     role,
     status
   };

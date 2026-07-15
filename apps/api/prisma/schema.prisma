@@ -142,6 +142,14 @@ enum SslStatus {
   ERROR
 }
 
+enum OnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY_TO_PUBLISH
+  COMPLETED
+  BLOCKED
+}
+
 model User {
   id              String           @id @default(cuid())
   email           String           @unique
@@ -211,6 +219,14 @@ model Restaurant {
   deliveryZoneJson    Json?
   loyaltySettingsJson Json?
   storeHoursJson      Json?
+  onboardingStatus    OnboardingStatus           @default(NOT_STARTED)
+  onboardingCurrentStep String                   @default("business")
+  onboardingCompletedAt DateTime?
+  onboardingStartedAt DateTime?
+  onboardingUpdatedAt DateTime?
+  onboardingSkippedSteps Json?
+  websitePublishedAt DateTime?
+  onboardingVersion   Int                        @default(1)
   users               User[]
   staff               RestaurantStaff[]
   customers           Customer[]
@@ -550,9 +566,12 @@ model RestaurantWebsiteSettings {
   tagline          String?
   cuisineType      String?
   heroImageUrl     String?
+  mobileHeroImageUrl String?
   logoUrl          String?
+  faviconUrl       String?
   brandColor       String     @default("#1f9d80")
   accentColor      String     @default("#f4b740")
+  buttonColor      String?
   headingFont      String?
   bodyFont         String?
   sectionSettingsJson Json?
@@ -562,8 +581,16 @@ model RestaurantWebsiteSettings {
   missionStatement String?
   ownerStory       String?
   specialOfferText String?
+  ctaText          String?
+  contactMessage   String?
+  cateringMessage  String?
+  publicEmail      String?
   seoTitle         String?
   seoDescription   String?
+  seoKeywords      String?
+  canonicalUrl     String?
+  ogImageUrl       String?
+  indexingEnabled  Boolean    @default(true)
   restaurant       Restaurant @relation(fields: [restaurantId], references: [id])
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt

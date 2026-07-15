@@ -70,6 +70,19 @@ const imageMimeByExtension = {
   svg: "image/svg+xml"
 };
 const websiteSectionDefaults = { hero: true, featuredMenu: true, story: true, gallery: true, loyalty: true, catering: true, contact: true };
+const onboardingSteps = [
+  { id: "business", label: "Business" },
+  { id: "owner", label: "Owner" },
+  { id: "branding", label: "Branding" },
+  { id: "content", label: "Content" },
+  { id: "hours", label: "Hours" },
+  { id: "fulfillment", label: "Pickup & Delivery" },
+  { id: "menu", label: "Menu" },
+  { id: "gallery", label: "Gallery & Social" },
+  { id: "domain", label: "Domain & SEO" },
+  { id: "payments", label: "Payments" },
+  { id: "review", label: "Review" }
+];
 const socialPlatformLabels = {
   facebook: "Facebook",
   instagram: "Instagram",
@@ -477,7 +490,9 @@ function restaurantOperationsNavigation(user, restaurantSlug, path) {
   const base = slug ? `/restaurant/${slug}` : "/restaurant";
   const kitchenSlug = slug || user?.restaurantSlug || user?.restaurantId || "";
   const canUseKitchen = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF"].includes(user?.role);
+  const showSetup = restaurantRoles.includes(user?.role) && (!restaurantOnboardingComplete(user) || path.includes("/onboarding"));
   const items = [
+    showSetup ? { label: "Setup", icon: PackageCheck, href: `${base}/onboarding`, active: path.includes("/onboarding") } : null,
     { label: "Dashboard", icon: LayoutDashboard, href: base, active: path === base || path === "/restaurant" },
     { label: "Orders", icon: ReceiptText, href: `${base}#orders` },
     canUseKitchen ? { label: "Kitchen", icon: ReceiptText, href: kitchenSlug ? `/kitchen/${kitchenSlug}` : "/kitchen", active: path.startsWith("/kitchen") } : null,
@@ -504,19 +519,35 @@ function kitchenNavigation(user, kitchenSlug, path) {
 function dashboardPathFor(user) {
   const slug = user?.restaurantSlug || user?.restaurantId || "";
   const restaurantPath = slug ? `/restaurant/${slug}` : "/restaurant";
+  const onboardingPath = slug ? `/restaurant/${slug}/onboarding` : "/restaurant/onboarding";
   const kitchenPath = slug ? `/kitchen/${slug}` : "/kitchen";
+  const needsOnboarding = restaurantRoles.includes(normalizeRole(user?.role)) && !restaurantOnboardingComplete(user);
   const destinations = {
     SUPER_ADMIN: "/admin",
-    TENANT_OWNER: restaurantPath,
-    RESTAURANT_ADMIN: restaurantPath,
-    RESTAURANT_OWNER: restaurantPath,
-    RESTAURANT_MANAGER: restaurantPath,
+    TENANT_OWNER: needsOnboarding ? onboardingPath : restaurantPath,
+    RESTAURANT_ADMIN: needsOnboarding ? onboardingPath : restaurantPath,
+    RESTAURANT_OWNER: needsOnboarding ? onboardingPath : restaurantPath,
+    RESTAURANT_MANAGER: needsOnboarding ? onboardingPath : restaurantPath,
     CASHIER: kitchenPath,
     KITCHEN_STAFF: kitchenPath,
     DRIVER: "/driver",
     CUSTOMER: "/customer"
   };
   return destinations[user?.role] || "/login";
+}
+
+function restaurantOnboardingComplete(user) {
+  const status = user?.onboardingStatus || user?.restaurant?.onboardingStatus || user?.membership?.onboardingStatus;
+  return !status || status === "COMPLETED";
+}
+
+function restaurantOnboardingPathFor(user, fallbackSlug = "") {
+  const slug = user?.restaurantSlug || fallbackSlug || user?.restaurantId || "";
+  return slug ? `/restaurant/${slug}/onboarding` : "/restaurant/onboarding";
+}
+
+function isRestaurantOnboardingPath(path = "") {
+  return path === "/restaurant/onboarding" || /^\/restaurant\/[^/]+\/onboarding\/?$/.test(path);
 }
 
 function isAuthPagePath(path = "") {
@@ -531,6 +562,7 @@ function routeSlug(path, prefix) {
 function canAccessTenantRoute(user, path, prefix) {
   if (!user || user.role === "SUPER_ADMIN") return Boolean(user);
   const slug = routeSlug(path, prefix);
+  if (prefix === "restaurant" && slug === "onboarding") return restaurantRoles.includes(user.role);
   return !slug || !user.restaurantSlug || slug === user.restaurantSlug;
 }
 
@@ -551,6 +583,9 @@ function normalizeSessionUser(user, memberships = []) {
     restaurantId: user.restaurantId || user.tenantId || membership?.tenantId || null,
     restaurantSlug: user.restaurantSlug || user.tenantSlug || user.restaurant?.slug || membership?.tenantSlug || null,
     restaurantName: user.restaurantName || user.tenantName || user.restaurant?.businessName || user.restaurant?.name || membership?.tenantName || null,
+    onboardingStatus: user.onboardingStatus || user.restaurant?.onboardingStatus || membership?.onboardingStatus || null,
+    onboardingCurrentStep: user.onboardingCurrentStep || user.restaurant?.onboardingCurrentStep || membership?.onboardingCurrentStep || "business",
+    websitePublishedAt: user.websitePublishedAt || user.restaurant?.websitePublishedAt || membership?.websitePublishedAt || null,
     memberships
   };
 }
@@ -819,6 +854,14 @@ function defaultPublicWebsiteFields(restaurant = {}) {
     missionStatement: "Serve guests directly with simple pickup, delivery, loyalty, and restaurant-owned ordering.",
     ownerStory: "This restaurant is setting up its direct ordering website.",
     specialOfferText: "Order direct for restaurant-owned rewards.",
+    ctaText: "Start an order",
+    contactMessage: "Call or email the restaurant for questions, private events, and order help.",
+    cateringMessage: "Tell us your event date, guest count, and menu preferences.",
+    publicEmail: restaurant.email || "",
+    buttonColor: restaurant.brandingJson?.buttonColor || restaurant.brandingJson?.primaryColor || "#111827",
+    mobileHeroImageUrl: resolveImage(restaurant.brandingJson?.mobileBannerImageUrl, restaurant.brandingJson?.bannerImageUrl, defaultLooharImage),
+    faviconUrl: resolveImage(restaurant.logoUrl, restaurant.brandingJson?.bannerImageUrl, defaultLooharImage),
+    ogImageUrl: resolveImage(restaurant.brandingJson?.bannerImageUrl, restaurant.logoUrl, defaultLooharImage),
     seoTitle: `${name} | Direct Online Ordering`,
     seoDescription: restaurant.description || `Order pickup or delivery directly from ${name}.`
   };
@@ -837,15 +880,26 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
   const fallbackGallery = usingDemoFallback && Array.isArray(fallback.gallery) && fallback.gallery.length ? fallback.gallery : [];
   const liveGallery = Array.isArray(live.gallery) ? live.gallery : [];
   const heroImageUrl = resolveImage(liveWebsite.heroImageUrl, fallbackWebsite.heroImageUrl || fallbackGallery[0]?.imageUrl, defaultWebsite.heroImageUrl);
+  const mobileHeroImageUrl = resolveImage(liveWebsite.mobileHeroImageUrl, fallbackWebsite.mobileHeroImageUrl, heroImageUrl);
   const logoUrl = resolveImage(liveWebsite.logoUrl || liveRestaurant.logoUrl, fallbackWebsite.logoUrl || fallbackRestaurant.logoUrl, heroImageUrl);
+  const faviconUrl = resolveImage(liveWebsite.faviconUrl, fallbackWebsite.faviconUrl, logoUrl);
+  const ogImageUrl = resolveImage(liveWebsite.ogImageUrl, fallbackWebsite.ogImageUrl, heroImageUrl);
   const website = {
     ...defaultWebsite,
     ...(usingDemoFallback ? fallbackWebsite : {}),
     ...liveWebsite,
     heroImageUrl,
+    mobileHeroImageUrl,
     logoUrl,
+    faviconUrl,
+    ogImageUrl,
     brandColor: liveWebsite.brandColor || fallbackWebsite.brandColor || defaultWebsite.brandColor,
     accentColor: liveWebsite.accentColor || fallbackWebsite.accentColor || defaultWebsite.accentColor,
+    buttonColor: liveWebsite.buttonColor || fallbackWebsite.buttonColor || liveWebsite.brandColor || fallbackWebsite.brandColor || defaultWebsite.buttonColor,
+    ctaText: liveWebsite.ctaText || fallbackWebsite.ctaText || defaultWebsite.ctaText,
+    contactMessage: liveWebsite.contactMessage || fallbackWebsite.contactMessage || defaultWebsite.contactMessage,
+    cateringMessage: liveWebsite.cateringMessage || fallbackWebsite.cateringMessage || defaultWebsite.cateringMessage,
+    publicEmail: liveWebsite.publicEmail || fallbackWebsite.publicEmail || baseRestaurant.email || defaultWebsite.publicEmail,
     sectionSettingsJson: { ...websiteSectionDefaults, ...(fallbackWebsite.sectionSettingsJson || {}), ...(liveWebsite.sectionSettingsJson || {}) }
   };
   const sourceGallery = liveGallery.length ? liveGallery : usingDemoFallback ? fallbackGallery : [];
@@ -986,7 +1040,7 @@ function applyPublicSeo(bundle, page = "home") {
   setMetaTag('meta[name="twitter:description"]', { identity: { name: "twitter:description" }, values: { content: bundle.seo?.twitterDescription || description } });
   setMetaTag('meta[name="twitter:image"]', { identity: { name: "twitter:image" }, values: { content: image } });
   setLinkTag("canonical", canonicalUrl);
-  setRobots(true);
+  setRobots(website.indexingEnabled !== false);
   const jsonLd = bundle.jsonLd || bundle.seo?.schemaPlaceholder;
   if (jsonLd) {
     let script = document.head.querySelector("#loohar-public-jsonld");
@@ -1234,13 +1288,14 @@ function PremiumRestaurantSite({ apiOnline }) {
   const hours = Object.entries(restaurant.storeHoursJson || {});
   const hoursPreview = hours.slice(0, 3).map(([day, value]) => `${readable(day)} ${value}`).join(" / ");
   const isLiquor = restaurant.businessType === "LIQUOR_STORE";
-  const heroImage = resolveImage(website.heroImageUrl, gallery[0]?.imageUrl);
+  const heroImage = resolveImage(website.heroImageUrl, website.mobileHeroImageUrl || gallery[0]?.imageUrl);
   const logoImage = resolveImage(website.logoUrl, heroImage, heroImage);
+  const publicEmail = website.publicEmail || restaurant.email || "";
   const address = bundle.contactInfo?.address || fullRestaurantAddress(restaurant);
   const mapSrc = bundle.location?.mapEmbedUrl || googleMapEmbedUrl(address);
   const directionsHref = bundle.location?.directionsUrl || googleDirectionsUrl(address);
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
-  const siteStyle = { "--brand": website.brandColor, "--accent": website.accentColor, "--heading-font": website.headingFont || "inherit", "--body-font": website.bodyFont || "inherit" };
+  const siteStyle = { "--brand": website.brandColor, "--accent": website.accentColor, "--button": website.buttonColor || website.brandColor, "--heading-font": website.headingFont || "inherit", "--body-font": website.bodyFont || "inherit" };
 
   function navLink(target, label) {
     return <a className={page === target ? "site-nav active" : "site-nav"} href={publicSiteHref(route, currentSlug, target)}>{label}</a>;
@@ -1306,7 +1361,7 @@ function PremiumRestaurantSite({ apiOnline }) {
               <h2>{website.heroTitle || restaurant.name}</h2>
               <p>{website.heroSubtitle || restaurant.description}</p>
               <div className="mt-6 flex flex-wrap gap-2">
-                <a className="button-primary" href={`${routeBase}/order`}><CreditCard size={18} />Order Online</a>
+                <a className="button-primary" href={`${routeBase}/order`}><CreditCard size={18} />{website.ctaText || "Order Online"}</a>
                 <a className="button-muted" href={`${routeBase}/menu`}>View Menu</a>
                 <a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call {restaurant.phone || "Restaurant"}</a>
               </div>
@@ -1332,23 +1387,23 @@ function PremiumRestaurantSite({ apiOnline }) {
             </div>
           </section> : null}
           <section className="site-grid">
-            <div className="site-card"><h3>Special offer</h3><p>{website.specialOfferText}</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Redeem online</a></div>
+            <div className="site-card"><h3>Special offer</h3><p>{website.specialOfferText}</p><a className="button-primary mt-4" href={`${routeBase}/order`}>{website.ctaText || "Redeem online"}</a></div>
             <div className="site-card"><h3>Direct ordering</h3><p>Order from this restaurant-owned site for pickup, delivery, loyalty, and direct customer support.</p></div>
             {sectionSettings.contact ? <div className="site-card"><h3>Location & hours</h3><p>{restaurant.address}</p><p>{restaurant.phone}</p><p>{hoursPreview || "Hours available soon"}</p></div> : null}
           </section>
           {isLiquor ? <section className="site-card"><h3>Age verification and compliance</h3><p>{bundle.complianceNote || "Age verification and local delivery compliance are required for regulated items."}</p></section> : null}
           {sectionSettings.gallery && gallery.length ? <section className="lux-gallery-strip">{gallery.slice(0, 4).map((image) => <img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} key={image.id} loading="lazy" onError={handleSafeImageError} />)}</section> : null}
-          <section className="lux-cta"><h2>Order direct from {restaurant.businessName || restaurant.name}</h2><p>Keep more value with the restaurant while earning loyalty rewards.</p><a className="button-primary" href={`${routeBase}/order`}>Start an order</a></section>
+          <section className="lux-cta"><h2>Order direct from {restaurant.businessName || restaurant.name}</h2><p>Keep more value with the restaurant while earning loyalty rewards.</p><a className="button-primary" href={`${routeBase}/order`}>{website.ctaText || "Start an order"}</a></section>
         </>
       ) : null}
 
       {page === "menu" ? <section className="lux-section"><div className="lux-section-head"><p>Full menu</p><h2>{isLiquor ? "Bottle shop catalog" : "Prepared for pickup and delivery"}</h2><a href={`${routeBase}/order`}>Order now</a></div>{isLiquor ? <div className="site-card mb-4"><h3>Regulated items</h3><p>{bundle.complianceNote || "Age verification and local delivery rules apply."}</p></div> : null}{categories.length === 0 ? <EmptyState title="Menu coming soon" detail="This restaurant has not published public menu items yet." /> : categories.map((category) => <div className="lux-category" key={category.id}><h3>{category.name}</h3><div className="lux-card-grid">{(category.items || []).map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div></div>)}</section> : null}
       {page === "order" ? <section className="lux-section public-order-page"><div className="lux-section-head"><p>Order Online</p><h2>{restaurant.pickupEnabled && restaurant.deliveryEnabled ? "Pickup and delivery" : restaurant.deliveryEnabled ? "Delivery" : "Pickup"} from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><div className="public-order-hero"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} food`} loading="lazy" onError={handleSafeImageError} /><div><p className="lux-kicker">{website.cuisineType || readable(restaurant.businessType)}</p><h3>{website.heroTitle || restaurant.businessName || restaurant.name}</h3><p>{website.heroSubtitle || restaurant.description}</p><div className="mt-4 flex flex-wrap gap-2"><StatusPill tone={restaurant.pickupEnabled ? "good" : "neutral"}>{restaurant.pickupEnabled ? "Pickup available" : "Pickup unavailable"}</StatusPill><StatusPill tone={restaurant.deliveryEnabled ? "good" : "neutral"}>{restaurant.deliveryEnabled ? "Delivery available" : "Delivery unavailable"}</StatusPill><StatusPill>{hoursPreview || "Hours vary"}</StatusPill></div></div></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
       {page === "about" ? <section className="lux-split page"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt="Chef and restaurant team" onError={handleSafeImageError} /><div><p className="lux-kicker">Our story</p><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Fresh ingredients</h3><p>Seasonal produce, thoughtful sourcing, and a menu designed for dining room quality at home.</p><h3>Community</h3><p>Ordering direct helps keep customer relationships and revenue with the local restaurant team.</p></div></section> : null}
-      {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">Call or email the restaurant for private events, questions, and order help.</p></div></section> : null}
+      {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{publicEmail}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${publicEmail}`}>Email</a></div><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">{website.contactMessage || "Call or email the restaurant for private events, questions, and order help."}</p></div></section> : null}
       {page === "gallery" && sectionIsVisible("gallery") ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div>}</section> : null}
       {page === "loyalty" && sectionIsVisible("loyalty") ? <section className="lux-section"><div className="lux-section-head"><p>Loyalty</p><h2>Rewards for ordering direct</h2><a href={`${routeBase}/order`}>Join at checkout</a></div><div className="site-grid"><div className="site-card"><h3>How it works</h3><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar on eligible direct orders. Redeem points for restaurant-owned rewards.</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></div>{rewards.map((reward) => <div className="site-card" key={reward.id}><h3>{reward.name}</h3><p>{reward.pointsRequired} points required.</p></div>)}</div></section> : null}
-      {page === "catering" && sectionIsVisible("catering") ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>Send event date, guest count, and menu preferences to the restaurant team.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request quote</a></div></section> : null}
+      {page === "catering" && sectionIsVisible("catering") ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>{website.cateringMessage || "Send event date, guest count, and menu preferences to the restaurant team."}</p><a className="button-primary mt-4" href={`mailto:${publicEmail}`}>Request quote</a></div></section> : null}
       {page === "careers" ? <section className="lux-section"><div className="lux-section-head"><p>Careers</p><h2>Join the restaurant team</h2><a href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></div><div className="site-grid"><div className="site-card"><h3>Why work here</h3><p>Focused service, direct customer relationships, and a team built around hospitality.</p></div><div className="site-card"><h3>Open roles</h3><p>Contact the restaurant for current kitchen, service, and driver opportunities.</p></div><div className="site-card"><h3>Apply</h3><p>Email the hiring manager with your experience and availability.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Apply by email</a></div></div></section> : null}
 
       <footer className="site-footer premium">
@@ -1513,6 +1568,715 @@ function PublicHome({ user, onLogout }) {
           <span>{tenantRootDomain}</span>
         </div>
       </footer>
+    </div>
+  );
+}
+
+function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }) {
+  const [routeRestaurantId, setRouteRestaurantId] = useState("");
+  const restaurantKey = user?.restaurantId || routeRestaurantId || initialSlug || user?.restaurantSlug || "";
+  const apiBase = restaurantKey ? `/api/restaurants/${restaurantKey}` : "/api/restaurant";
+  const [payload, setPayload] = useState(null);
+  const [activeStep, setActiveStep] = useState(user?.onboardingCurrentStep || "business");
+  const [draft, setDraft] = useState({});
+  const [menuDraft, setMenuDraft] = useState({ categoryName: "", itemName: "", itemDescription: "", itemPriceCents: 1295 });
+  const [socialDraft, setSocialDraft] = useState({ platform: "instagram", url: "" });
+  const [saving, setSaving] = useState("");
+  const [uploading, setUploading] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const restaurant = payload?.restaurant || {};
+  const website = payload?.website || {};
+  const readiness = payload?.readiness || { sections: {}, blockers: [], warnings: [], completionPercentage: 0, counts: {} };
+  const domain = payload?.domain || {};
+  const categories = payload?.categories || [];
+  const gallery = payload?.gallery || [];
+  const socialLinks = payload?.socialLinks || [];
+  const deliveryZones = payload?.deliveryZones || [];
+  const restaurantSlug = restaurant.slug || user?.restaurantSlug || initialSlug || "";
+  const dashboardHref = restaurantSlug ? `/restaurant/${restaurantSlug}` : "/restaurant";
+  const publicHref = restaurantSlug ? `https://${restaurantSlug}.${tenantRootDomain}` : "/";
+  const currentStepIndex = Math.max(0, onboardingSteps.findIndex((step) => step.id === activeStep));
+  const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
+
+  function stepEndpoint(step = activeStep) {
+    return `${apiBase}/onboarding/${step}`;
+  }
+
+  function normalizePayload(nextPayload) {
+    setPayload(nextPayload);
+    const nextRestaurant = nextPayload.restaurant || {};
+    const nextWebsite = nextPayload.website || {};
+    const nextDomain = nextPayload.domain || {};
+    const nextOwner = nextPayload.owner || {};
+    const nextDeliveryZones = nextPayload.deliveryZones || [];
+    const nextHours = nextWebsite.storeHoursJson || nextRestaurant.storeHoursJson || {
+      monday: "11:00 AM - 9:00 PM",
+      tuesday: "11:00 AM - 9:00 PM",
+      wednesday: "11:00 AM - 9:00 PM",
+      thursday: "11:00 AM - 9:00 PM",
+      friday: "11:00 AM - 10:00 PM",
+      saturday: "11:00 AM - 10:00 PM",
+      sunday: "Closed"
+    };
+    setDraft({
+      businessName: nextRestaurant.businessName || nextRestaurant.name || "",
+      publicBusinessName: nextRestaurant.name || nextRestaurant.businessName || "",
+      businessType: nextRestaurant.businessType || "RESTAURANT",
+      categoryLabel: nextRestaurant.settingsJson?.categoryLabel || nextWebsite.cuisineType || "Restaurant",
+      description: nextRestaurant.description || "",
+      businessEmail: nextRestaurant.email || "",
+      phone: nextRestaurant.phone || "",
+      address: nextRestaurant.address || "",
+      city: nextRestaurant.city || "",
+      state: nextRestaurant.state || "",
+      zip: nextRestaurant.zip || "",
+      timezone: nextRestaurant.timezone || "America/Denver",
+      ownerName: nextOwner.name || user?.name || "",
+      ownerEmail: nextOwner.email || user?.email || "",
+      ownerPhone: nextOwner.phone || "",
+      logoUrl: nextWebsite.logoUrl || nextRestaurant.logoUrl || "",
+      heroImageUrl: nextWebsite.heroImageUrl || "",
+      mobileHeroImageUrl: nextWebsite.mobileHeroImageUrl || "",
+      faviconUrl: nextWebsite.faviconUrl || "",
+      brandColor: nextWebsite.brandColor || "#1f9d80",
+      accentColor: nextWebsite.accentColor || "#f4b740",
+      buttonColor: nextWebsite.buttonColor || nextWebsite.brandColor || "#1f9d80",
+      headingFont: nextWebsite.headingFont || "",
+      bodyFont: nextWebsite.bodyFont || "",
+      heroTitle: nextWebsite.heroTitle || nextRestaurant.name || "",
+      heroSubtitle: nextWebsite.heroSubtitle || nextRestaurant.description || "",
+      tagline: nextWebsite.tagline || "",
+      cuisineType: nextWebsite.cuisineType || "",
+      aboutTitle: nextWebsite.aboutTitle || `About ${nextRestaurant.name || "our restaurant"}`,
+      aboutStory: nextWebsite.aboutStory || "",
+      missionStatement: nextWebsite.missionStatement || "",
+      ownerStory: nextWebsite.ownerStory || "",
+      specialOfferText: nextWebsite.specialOfferText || "",
+      ctaText: nextWebsite.ctaText || "Start an order",
+      contactMessage: nextWebsite.contactMessage || "",
+      cateringMessage: nextWebsite.cateringMessage || "",
+      publicEmail: nextWebsite.publicEmail || nextRestaurant.email || "",
+      seoTitle: nextWebsite.seoTitle || "",
+      seoDescription: nextWebsite.seoDescription || "",
+      seoKeywords: nextWebsite.seoKeywords || "",
+      canonicalUrl: nextWebsite.canonicalUrl || nextDomain.canonicalUrl || "",
+      ogImageUrl: nextWebsite.ogImageUrl || nextWebsite.heroImageUrl || "",
+      indexingEnabled: nextWebsite.indexingEnabled !== false,
+      sectionSettingsJson: { ...websiteSectionDefaults, ...(nextWebsite.sectionSettingsJson || {}) },
+      storeHoursJson: nextHours,
+      pickupEnabled: nextRestaurant.pickupEnabled !== false,
+      deliveryEnabled: nextRestaurant.deliveryEnabled !== false,
+      deliveryFeeCents: nextRestaurant.deliveryFeeCents ?? 399,
+      minimumOrderCents: nextRestaurant.settingsJson?.minimumOrderCents ?? nextDeliveryZones[0]?.minimumOrderCents ?? 1500,
+      deliveryRadiusMiles: nextRestaurant.deliveryRadiusMiles ?? nextDeliveryZones[0]?.radiusMiles ?? 3,
+      averagePrepMinutes: nextRestaurant.settingsJson?.averagePrepMinutes ?? 20,
+      tipsEnabled: nextRestaurant.settingsJson?.tipsEnabled !== false,
+      deliveryZoneName: nextDeliveryZones[0]?.name || "Local Delivery",
+      customDomain: nextDomain.customDomain || "",
+      defaultSubdomain: nextDomain.defaultSubdomain || nextRestaurant.slug || "",
+      paymentStatus: nextPayload.readiness?.paymentStatus || "NOT_CONNECTED",
+      paymentProvider: nextRestaurant.settingsJson?.paymentSetup?.provider || "stripe_connect"
+    });
+    setActiveStep(nextPayload.progress?.currentStep || user?.onboardingCurrentStep || "business");
+  }
+
+  async function resolveRouteRestaurant() {
+    if (!apiOnline || !token || user?.restaurantId || !initialSlug || user?.role !== "SUPER_ADMIN") return;
+    const tenants = await api("/api/admin/tenants", { token });
+    const tenant = (tenants.businesses || tenants.restaurants || []).find((item) => item.slug === initialSlug || item.id === initialSlug);
+    if (tenant?.id) setRouteRestaurantId(tenant.id);
+  }
+
+  async function loadOnboarding() {
+    if (!apiOnline || !token || !restaurantKey) return;
+    setError("");
+    try {
+      const nextPayload = await api(`${apiBase}/onboarding`, { token });
+      normalizePayload(nextPayload);
+    } catch (loadError) {
+      setError(loadError.message);
+    }
+  }
+
+  useEffect(() => {
+    resolveRouteRestaurant().catch((resolveError) => setError(resolveError.message));
+  }, [apiOnline, token, user?.restaurantId, user?.role, initialSlug]);
+
+  useEffect(() => {
+    loadOnboarding();
+  }, [apiOnline, token, restaurantKey]);
+
+  function updateDraft(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateSection(section, value) {
+    setDraft((current) => ({ ...current, sectionSettingsJson: { ...(current.sectionSettingsJson || {}), [section]: value } }));
+  }
+
+  function updateHour(day, value) {
+    setDraft((current) => ({ ...current, storeHoursJson: { ...(current.storeHoursJson || {}), [day]: value } }));
+  }
+
+  function bodyForStep(step) {
+    if (step === "business") {
+      return {
+        businessName: draft.businessName,
+        publicBusinessName: draft.publicBusinessName,
+        businessType: draft.businessType,
+        categoryLabel: draft.categoryLabel,
+        description: draft.description,
+        businessEmail: draft.businessEmail,
+        phone: draft.phone,
+        address: draft.address,
+        city: draft.city,
+        state: draft.state,
+        zip: draft.zip,
+        timezone: draft.timezone,
+        pickupEnabled: draft.pickupEnabled,
+        deliveryEnabled: draft.deliveryEnabled,
+        enabledModules: businessModules
+      };
+    }
+    if (step === "owner") return { ownerName: draft.ownerName, ownerEmail: draft.ownerEmail, ownerPhone: draft.ownerPhone };
+    if (step === "branding") {
+      return {
+        logoUrl: draft.logoUrl,
+        heroImageUrl: draft.heroImageUrl,
+        mobileHeroImageUrl: draft.mobileHeroImageUrl,
+        faviconUrl: draft.faviconUrl,
+        brandColor: draft.brandColor,
+        accentColor: draft.accentColor,
+        buttonColor: draft.buttonColor,
+        headingFont: draft.headingFont,
+        bodyFont: draft.bodyFont
+      };
+    }
+    if (step === "content") {
+      return {
+        heroTitle: draft.heroTitle,
+        heroSubtitle: draft.heroSubtitle,
+        tagline: draft.tagline,
+        cuisineType: draft.cuisineType,
+        aboutTitle: draft.aboutTitle,
+        aboutStory: draft.aboutStory,
+        missionStatement: draft.missionStatement,
+        ownerStory: draft.ownerStory,
+        specialOfferText: draft.specialOfferText,
+        ctaText: draft.ctaText,
+        contactMessage: draft.contactMessage,
+        cateringMessage: draft.cateringMessage,
+        publicEmail: draft.publicEmail,
+        sectionSettingsJson: draft.sectionSettingsJson
+      };
+    }
+    if (step === "hours") return { storeHoursJson: draft.storeHoursJson };
+    if (step === "fulfillment") {
+      return {
+        pickupEnabled: draft.pickupEnabled,
+        deliveryEnabled: draft.deliveryEnabled,
+        deliveryFeeCents: Number(draft.deliveryFeeCents || 0),
+        deliveryRadiusMiles: Number(draft.deliveryRadiusMiles || 0),
+        minimumOrderCents: Number(draft.minimumOrderCents || 0),
+        averagePrepMinutes: Number(draft.averagePrepMinutes || 20),
+        tipsEnabled: draft.tipsEnabled !== false,
+        deliveryZone: draft.deliveryEnabled ? {
+          name: draft.deliveryZoneName || "Local Delivery",
+          radiusMiles: Number(draft.deliveryRadiusMiles || 0),
+          deliveryFeeCents: Number(draft.deliveryFeeCents || 0),
+          minimumOrderCents: Number(draft.minimumOrderCents || 0),
+          active: true
+        } : null
+      };
+    }
+    if (step === "domain") {
+      return {
+        defaultSubdomain: draft.defaultSubdomain,
+        customDomain: draft.customDomain,
+        seoTitle: draft.seoTitle,
+        seoDescription: draft.seoDescription,
+        seoKeywords: draft.seoKeywords,
+        canonicalUrl: draft.canonicalUrl,
+        ogImageUrl: draft.ogImageUrl,
+        indexingEnabled: draft.indexingEnabled !== false
+      };
+    }
+    if (step === "payments") return { paymentSetup: { provider: draft.paymentProvider, status: draft.paymentStatus } };
+    return {};
+  }
+
+  async function saveStep(step = activeStep) {
+    if (!apiOnline || !token) {
+      setError("Live API connection and restaurant login are required for onboarding.");
+      return;
+    }
+    setSaving(step);
+    setError("");
+    setMessage("");
+    try {
+      const nextPayload = await api(stepEndpoint(step), { method: "PATCH", token, body: bodyForStep(step) });
+      normalizePayload(nextPayload);
+      setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} saved.`);
+    } catch (saveError) {
+      setError(saveError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function skipStep(step = activeStep) {
+    if (!optionalOnboardingSteps.has(step)) return;
+    if (!apiOnline || !token) {
+      setError("Live API connection and restaurant login are required for onboarding.");
+      return;
+    }
+    setSaving(`skip:${step}`);
+    setError("");
+    setMessage("");
+    try {
+      const nextPayload = await api(`${apiBase}/onboarding/${step}/skip`, { method: "POST", token });
+      normalizePayload(nextPayload);
+      setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} skipped for now.`);
+      nextStep();
+    } catch (skipError) {
+      setError(skipError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function uploadOnboardingImage(kind, event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    const validationError = validateImageFile(file, { accept: kind === "restaurant-logo" || kind === "restaurant-favicon" ? logoImageAccept : photoImageAccept, label: kind.includes("logo") || kind.includes("favicon") ? "logo" : "photo" });
+    if (validationError) return setError(validationError);
+    setUploading(kind);
+    setError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const uploaded = await api(`/api/uploads/${kind}`, {
+        method: "POST",
+        token,
+        body: {
+          restaurantId: restaurant.id,
+          fileName: file.name,
+          mimeType: mimeTypeForFile(file),
+          base64: base64FromDataUrl(dataUrl)
+        }
+      });
+      const nextWebsite = uploaded.website || website;
+      setPayload((current) => current ? { ...current, website: nextWebsite, restaurant: uploaded.restaurant || current.restaurant, gallery: uploaded.image ? [...(current.gallery || []), uploaded.image] : current.gallery } : current);
+      if (uploaded.website) {
+        ["logoUrl", "heroImageUrl", "mobileHeroImageUrl", "faviconUrl"].forEach((field) => {
+          if (uploaded.website[field]) updateDraft(field, uploaded.website[field]);
+        });
+      }
+      if (uploaded.restaurant?.logoUrl) updateDraft("logoUrl", uploaded.restaurant.logoUrl);
+      setMessage("Image uploaded and saved.");
+      await loadOnboarding();
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setUploading("");
+    }
+  }
+
+  async function uploadGallery(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const validationError = validateImageFile(file, { accept: photoImageAccept, label: "photo" });
+    if (validationError) return setError(validationError);
+    setUploading("gallery");
+    setError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await api("/api/uploads/gallery", {
+        method: "POST",
+        token,
+        body: {
+          restaurantId: restaurant.id,
+          fileName: file.name,
+          mimeType: mimeTypeForFile(file),
+          base64: base64FromDataUrl(dataUrl),
+          altText: `${restaurant.name || "Restaurant"} gallery photo`,
+          category: "food"
+        }
+      });
+      setMessage("Gallery photo uploaded.");
+      await loadOnboarding();
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setUploading("");
+    }
+  }
+
+  async function uploadMenuItemImage(menuItemId, event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const validationError = validateImageFile(file, { accept: photoImageAccept, label: "menu item photo" });
+    if (validationError) return setError(validationError);
+    setUploading(`menu-item:${menuItemId}`);
+    setError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await api("/api/uploads/menu-item", {
+        method: "POST",
+        token,
+        body: {
+          restaurantId: restaurant.id,
+          menuItemId,
+          fileName: file.name,
+          mimeType: mimeTypeForFile(file),
+          base64: base64FromDataUrl(dataUrl)
+        }
+      });
+      setMessage("Menu item image uploaded.");
+      await loadOnboarding();
+    } catch (uploadError) {
+      setError(uploadError.message);
+    } finally {
+      setUploading("");
+    }
+  }
+
+  async function createQuickCategory(event) {
+    event.preventDefault();
+    if (!menuDraft.categoryName.trim()) return setError("Enter a category name.");
+    setSaving("menu-category");
+    setError("");
+    try {
+      await api(`${apiBase}/menu/categories`, { method: "POST", token, body: { name: menuDraft.categoryName.trim(), sortOrder: categories.length + 1, active: true } });
+      setMenuDraft((current) => ({ ...current, categoryName: "" }));
+      await loadOnboarding();
+      setMessage("Menu category added.");
+    } catch (categoryError) {
+      setError(categoryError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function createQuickItem(event) {
+    event.preventDefault();
+    const categoryId = categories[0]?.id;
+    if (!categoryId) return setError("Add a category before adding a menu item.");
+    if (!menuDraft.itemName.trim()) return setError("Enter an item name.");
+    setSaving("menu-item");
+    setError("");
+    try {
+      await api(`${apiBase}/menu/items`, {
+        method: "POST",
+        token,
+        body: {
+          categoryId,
+          name: menuDraft.itemName.trim(),
+          description: menuDraft.itemDescription.trim(),
+          priceCents: Number(menuDraft.itemPriceCents || 0),
+          preparationTimeMins: Number(draft.averagePrepMinutes || 20),
+          available: true,
+          featured: true,
+          options: []
+        }
+      });
+      setMenuDraft((current) => ({ ...current, itemName: "", itemDescription: "", itemPriceCents: 1295 }));
+      await loadOnboarding();
+      setMessage("Menu item added.");
+    } catch (itemError) {
+      setError(itemError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function addSocial(event) {
+    event.preventDefault();
+    if (!socialDraft.url.trim()) return setError("Enter a social URL.");
+    setSaving("social");
+    setError("");
+    try {
+      await api(`${apiBase}/social-links`, { method: "POST", token, body: socialDraft });
+      setSocialDraft({ platform: "instagram", url: "" });
+      await loadOnboarding();
+      setMessage("Social link saved.");
+    } catch (socialError) {
+      setError(socialError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function publish() {
+    setSaving("publish");
+    setError("");
+    try {
+      const nextPayload = await api(`${apiBase}/onboarding/publish`, { method: "POST", token });
+      normalizePayload(nextPayload);
+      setMessage(nextPayload.readiness?.orderingReady ? "Website and ordering are live." : "Website is live. Payments are still required before paid ordering.");
+      window.setTimeout(() => navigateInApp(dashboardHref, { replace: true }), 900);
+    } catch (publishError) {
+      setError(publishError.message);
+      if (publishError.payload?.readiness) setPayload((current) => ({ ...(current || {}), readiness: publishError.payload.readiness }));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function nextStep() {
+    const next = onboardingSteps[Math.min(onboardingSteps.length - 1, currentStepIndex + 1)];
+    setActiveStep(next.id);
+  }
+
+  function previousStep() {
+    const previous = onboardingSteps[Math.max(0, currentStepIndex - 1)];
+    setActiveStep(previous.id);
+  }
+
+  function Field({ label, children }) {
+    return <label className="grid gap-1 text-sm font-semibold text-slate-600"><span>{label}</span>{children}</label>;
+  }
+
+  function TextInput({ field, type = "text", placeholder = "", rows = 0 }) {
+    if (rows) return <textarea className="input min-h-28" value={draft[field] || ""} placeholder={placeholder} onChange={(event) => updateDraft(field, event.target.value)} />;
+    return <input className="input" type={type} value={draft[field] ?? ""} placeholder={placeholder} onChange={(event) => updateDraft(field, type === "number" ? event.target.valueAsNumber || 0 : event.target.value)} />;
+  }
+
+  function Toggle({ field, label }) {
+    return (
+      <button type="button" className={`nav-tab ${draft[field] ? "active" : ""}`} onClick={() => updateDraft(field, !draft[field])}>
+        {draft[field] ? <CheckCircle2 size={16} /> : null}{label}
+      </button>
+    );
+  }
+
+  function StepStatus({ step }) {
+    const done = readiness.sections?.[step.id];
+    const active = activeStep === step.id;
+    return (
+      <button className={`nav-tab justify-start ${active ? "active" : ""}`} type="button" onClick={() => setActiveStep(step.id)}>
+        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black ${done ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{done ? "✓" : onboardingSteps.findIndex((item) => item.id === step.id) + 1}</span>
+        {step.label}
+      </button>
+    );
+  }
+
+  if (!apiOnline) return <AccessDenied title="Live API required" detail="Restaurant onboarding saves directly to PostgreSQL and requires the live API." loginHref="/restaurant/login" />;
+  if (!payload) return <AppLoadingState title="Loading onboarding" detail="Preparing the restaurant setup checklist." />;
+
+  return (
+    <div className="grid gap-5">
+      <div className="panel flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-sm font-black uppercase text-mint">Restaurant onboarding</p>
+          <h1 className="mt-1 text-3xl font-black text-ink">{restaurant.name || "Restaurant setup"}</h1>
+          <p className="mt-1 text-sm text-slate-500">Complete the required launch checklist for the public website and direct ordering foundation.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusPill tone={readiness.websiteReady ? "good" : "warn"}>{readiness.completionPercentage || 0}% complete</StatusPill>
+          <StatusPill tone={readiness.orderingReady ? "good" : "warn"}>{readiness.orderingReady ? "Ordering ready" : "Payments pending"}</StatusPill>
+          <a className="button-muted" href={dashboardHref}>Dashboard</a>
+          <a className="button-muted" href={publicHref} target="_blank" rel="noreferrer">Public site</a>
+        </div>
+      </div>
+
+      <InlineError message={error} />
+      {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+
+      <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+        <aside className="grid gap-2 self-start rounded-md border border-line bg-white p-3">
+          {onboardingSteps.map((step) => <StepStatus step={step} key={step.id} />)}
+        </aside>
+
+        <section className="panel">
+          <div className="flex flex-col gap-3 border-b border-line pb-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-black uppercase text-mint">Step {currentStepIndex + 1} of {onboardingSteps.length}</p>
+              <h2 className="text-2xl font-black text-ink">{onboardingSteps[currentStepIndex]?.label}</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="button-muted" type="button" onClick={previousStep} disabled={currentStepIndex === 0}>Back</button>
+              <button className="button-muted" type="button" onClick={nextStep} disabled={currentStepIndex === onboardingSteps.length - 1}>Next</button>
+              {optionalOnboardingSteps.has(activeStep) ? <button className="button-muted" type="button" onClick={() => skipStep(activeStep)} disabled={Boolean(saving)}>{saving === `skip:${activeStep}` ? "Skipping..." : "Skip for now"}</button> : null}
+              {activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
+            </div>
+          </div>
+
+          {activeStep === "business" ? (
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <Field label="Legal business name"><TextInput field="businessName" /></Field>
+              <Field label="Public restaurant name"><TextInput field="publicBusinessName" /></Field>
+              <Field label="Business type"><select className="input" value={draft.businessType || "RESTAURANT"} onChange={(event) => updateDraft("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></Field>
+              <Field label="Cuisine/category label"><TextInput field="categoryLabel" /></Field>
+              <Field label="Business email"><TextInput field="businessEmail" type="email" /></Field>
+              <Field label="Phone"><TextInput field="phone" /></Field>
+              <Field label="Address"><TextInput field="address" /></Field>
+              <Field label="City"><TextInput field="city" /></Field>
+              <Field label="State"><TextInput field="state" /></Field>
+              <Field label="ZIP"><TextInput field="zip" /></Field>
+              <Field label="Timezone"><TextInput field="timezone" /></Field>
+              <div className="flex flex-wrap gap-2 self-end"><Toggle field="pickupEnabled" label="Pickup" /><Toggle field="deliveryEnabled" label="Delivery" /></div>
+              <Field label="Restaurant description"><TextInput field="description" rows={4} /></Field>
+            </div>
+          ) : null}
+
+          {activeStep === "owner" ? (
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <Field label="Owner name"><TextInput field="ownerName" /></Field>
+              <Field label="Owner email"><TextInput field="ownerEmail" type="email" /></Field>
+              <Field label="Owner phone"><TextInput field="ownerPhone" /></Field>
+              <div className="rounded-md border border-line bg-slate-50 p-4 text-sm text-slate-500">Owner updates save to the tenant owner account. Passwords are never displayed in the browser.</div>
+            </div>
+          ) : null}
+
+          {activeStep === "branding" ? (
+            <div className="mt-5 grid gap-5">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Field label="Brand color"><TextInput field="brandColor" type="color" /></Field>
+                <Field label="Accent color"><TextInput field="accentColor" type="color" /></Field>
+                <Field label="Button color"><TextInput field="buttonColor" type="color" /></Field>
+                <Field label="Heading font"><TextInput field="headingFont" placeholder="Inter, serif, system" /></Field>
+                <Field label="Body font"><TextInput field="bodyFont" placeholder="Inter, system" /></Field>
+              </div>
+              <div className="grid gap-4 md:grid-cols-4">
+                <label className="button-muted justify-center">Upload logo<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-logo", event)} /></label>
+                <label className="button-muted justify-center">Upload hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-hero", event)} /></label>
+                <label className="button-muted justify-center">Mobile hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-mobile-hero", event)} /></label>
+                <label className="button-muted justify-center">Favicon<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-favicon", event)} /></label>
+              </div>
+              {uploading ? <p className="text-sm font-bold text-slate-500">Uploading {readable(uploading)}...</p> : null}
+              <div className="grid gap-4 md:grid-cols-3">
+                {draft.logoUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.logoUrl)} alt="Logo preview" onError={handleSafeImageError} /> : null}
+                {draft.heroImageUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.heroImageUrl)} alt="Hero preview" onError={handleSafeImageError} /> : null}
+                {draft.mobileHeroImageUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.mobileHeroImageUrl)} alt="Mobile hero preview" onError={handleSafeImageError} /> : null}
+              </div>
+            </div>
+          ) : null}
+
+          {activeStep === "content" ? (
+            <div className="mt-5 grid gap-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Hero title"><TextInput field="heroTitle" /></Field>
+                <Field label="Tagline"><TextInput field="tagline" /></Field>
+                <Field label="Cuisine type"><TextInput field="cuisineType" /></Field>
+                <Field label="CTA text"><TextInput field="ctaText" /></Field>
+              </div>
+              <Field label="Hero subtitle"><TextInput field="heroSubtitle" rows={3} /></Field>
+              <Field label="About story"><TextInput field="aboutStory" rows={5} /></Field>
+              <Field label="Mission statement"><TextInput field="missionStatement" rows={3} /></Field>
+              <Field label="Owner story"><TextInput field="ownerStory" rows={3} /></Field>
+              <Field label="Special offer"><TextInput field="specialOfferText" rows={2} /></Field>
+              <Field label="Contact message"><TextInput field="contactMessage" rows={2} /></Field>
+              <Field label="Catering message"><TextInput field="cateringMessage" rows={2} /></Field>
+              <div className="flex flex-wrap gap-2">
+                {Object.keys(websiteSectionDefaults).map((section) => <button className={`nav-tab ${draft.sectionSettingsJson?.[section] !== false ? "active" : ""}`} type="button" key={section} onClick={() => updateSection(section, draft.sectionSettingsJson?.[section] === false)}>{readable(section)}</button>)}
+              </div>
+            </div>
+          ) : null}
+
+          {activeStep === "hours" ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {Object.entries(draft.storeHoursJson || {}).map(([day, value]) => <Field label={readable(day)} key={day}><input className="input" value={value || ""} onChange={(event) => updateHour(day, event.target.value)} /></Field>)}
+            </div>
+          ) : null}
+
+          {activeStep === "fulfillment" ? (
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div className="flex flex-wrap gap-2 md:col-span-2"><Toggle field="pickupEnabled" label="Pickup enabled" /><Toggle field="deliveryEnabled" label="Delivery enabled" /><Toggle field="tipsEnabled" label="Tips enabled" /></div>
+              <Field label="Delivery zone name"><TextInput field="deliveryZoneName" /></Field>
+              <Field label="Delivery radius miles"><TextInput field="deliveryRadiusMiles" type="number" /></Field>
+              <Field label="Delivery fee cents"><TextInput field="deliveryFeeCents" type="number" /></Field>
+              <Field label="Minimum order cents"><TextInput field="minimumOrderCents" type="number" /></Field>
+              <Field label="Average prep minutes"><TextInput field="averagePrepMinutes" type="number" /></Field>
+              <div className="rounded-md border border-line bg-slate-50 p-4 text-sm text-slate-500">{deliveryZones.length} active delivery zone{deliveryZones.length === 1 ? "" : "s"} configured.</div>
+            </div>
+          ) : null}
+
+          {activeStep === "menu" ? (
+            <div className="mt-5 grid gap-5">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-md border border-line bg-slate-50 p-4"><p className="text-sm font-bold uppercase text-slate-500">Categories</p><strong className="text-3xl text-ink">{readiness.counts?.activeCategories || 0}</strong></div>
+                <div className="rounded-md border border-line bg-slate-50 p-4"><p className="text-sm font-bold uppercase text-slate-500">Available items</p><strong className="text-3xl text-ink">{readiness.counts?.availableItems || 0}</strong></div>
+                <a className="button-muted self-center justify-center" href={`${dashboardHref}#menu`}>Open full menu manager</a>
+              </div>
+              <form className="grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={createQuickCategory}>
+                <input className="input" value={menuDraft.categoryName} placeholder="Quick add category" onChange={(event) => setMenuDraft((current) => ({ ...current, categoryName: event.target.value }))} />
+                <button className="button-primary" disabled={saving === "menu-category"}>{saving === "menu-category" ? "Adding..." : "Add category"}</button>
+              </form>
+              <form className="grid gap-3 md:grid-cols-4" onSubmit={createQuickItem}>
+                <input className="input" value={menuDraft.itemName} placeholder="Featured item name" onChange={(event) => setMenuDraft((current) => ({ ...current, itemName: event.target.value }))} />
+                <input className="input" value={menuDraft.itemDescription} placeholder="Description" onChange={(event) => setMenuDraft((current) => ({ ...current, itemDescription: event.target.value }))} />
+                <input className="input" type="number" value={menuDraft.itemPriceCents} onChange={(event) => setMenuDraft((current) => ({ ...current, itemPriceCents: event.target.valueAsNumber || 0 }))} />
+                <button className="button-primary" disabled={saving === "menu-item"}>{saving === "menu-item" ? "Adding..." : "Add item"}</button>
+              </form>
+              <div className="grid gap-3">
+                {categories.flatMap((category) => (category.items || []).map((item) => ({ ...item, categoryName: category.name }))).slice(0, 8).map((item) => (
+                  <div className="flex flex-col gap-3 rounded-md border border-line bg-white p-3 sm:flex-row sm:items-center sm:justify-between" key={item.id}>
+                    <div className="flex items-center gap-3">
+                      {item.imageUrl ? <img className="h-14 w-14 rounded-md object-cover" src={resolveImage(item.imageUrl)} alt={item.name} onError={handleSafeImageError} /> : <div className="grid h-14 w-14 place-items-center rounded-md bg-slate-100 text-xs font-black text-slate-400">IMG</div>}
+                      <div><strong className="text-ink">{item.name}</strong><p className="text-xs text-slate-500">{item.categoryName} - {money(item.priceCents)}</p></div>
+                    </div>
+                    <label className="button-muted min-h-10 justify-center">{uploading === `menu-item:${item.id}` ? "Uploading..." : item.imageUrl ? "Replace image" : "Upload image"}<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadMenuItemImage(item.id, event)} /></label>
+                  </div>
+                ))}
+              </div>
+              <button className="button-primary justify-center" type="button" onClick={() => saveStep("menu")}>Mark menu reviewed</button>
+            </div>
+          ) : null}
+
+          {activeStep === "gallery" ? (
+            <div className="mt-5 grid gap-5">
+              <div className="flex flex-wrap gap-2">
+                <label className="button-muted">Upload gallery photo<input className="sr-only" type="file" accept={photoImageAccept} onChange={uploadGallery} /></label>
+                <button className="button-primary" type="button" onClick={() => saveStep("gallery")}>Save gallery step</button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-4">{gallery.slice(0, 8).map((image) => <img className="h-28 w-full rounded-md object-cover" src={resolveImage(image.imageUrl)} alt={image.altText || "Restaurant gallery"} key={image.id} onError={handleSafeImageError} />)}</div>
+              <form className="grid gap-3 md:grid-cols-[180px_1fr_auto]" onSubmit={addSocial}>
+                <select className="input" value={socialDraft.platform} onChange={(event) => setSocialDraft((current) => ({ ...current, platform: event.target.value }))}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
+                <input className="input" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => setSocialDraft((current) => ({ ...current, url: event.target.value }))} />
+                <button className="button-primary" disabled={saving === "social"}>{saving === "social" ? "Saving..." : "Add social"}</button>
+              </form>
+              <div className="flex flex-wrap gap-2">{socialLinks.map((link) => <StatusPill key={link.id}>{readable(link.platform)}</StatusPill>)}</div>
+            </div>
+          ) : null}
+
+          {activeStep === "domain" ? (
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <Field label="Default Loohar subdomain"><TextInput field="defaultSubdomain" /></Field>
+              <Field label="Custom domain"><TextInput field="customDomain" placeholder="restaurant.com" /></Field>
+              <Field label="SEO title"><TextInput field="seoTitle" /></Field>
+              <Field label="Canonical URL"><TextInput field="canonicalUrl" /></Field>
+              <Field label="SEO description"><TextInput field="seoDescription" rows={3} /></Field>
+              <Field label="SEO keywords"><TextInput field="seoKeywords" rows={3} /></Field>
+              <div className="flex flex-wrap gap-2 md:col-span-2"><Toggle field="indexingEnabled" label="Allow search indexing" /></div>
+              <div className="rounded-md border border-line bg-slate-50 p-4 text-sm text-slate-500 md:col-span-2">DNS target: <strong>{domain.dnsTarget || "cname.vercel-dns.com"}</strong>. Default URL: <strong>{domain.defaultUrl || publicHref}</strong></div>
+            </div>
+          ) : null}
+
+          {activeStep === "payments" ? (
+            <div className="mt-5 grid gap-4">
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Stripe Connect is not marked connected yet. The public website can publish, but paid online ordering remains blocked until payments are connected.</div>
+              <Field label="Payment provider"><TextInput field="paymentProvider" /></Field>
+              <Field label="Payment status"><select className="input" value={draft.paymentStatus || "NOT_CONNECTED"} onChange={(event) => updateDraft("paymentStatus", event.target.value)}><option value="NOT_CONNECTED">Not connected</option><option value="CONNECTED">Connected</option></select></Field>
+              <button className="button-primary w-fit" type="button" onClick={() => saveStep("payments")}>Save payment status</button>
+            </div>
+          ) : null}
+
+          {activeStep === "review" ? (
+            <div className="mt-5 grid gap-5">
+              <div className="grid gap-3 md:grid-cols-2">
+                {readiness.blockers?.length ? <div className="rounded-md border border-rose-200 bg-rose-50 p-4"><h3 className="font-black text-rose-700">Required before publishing</h3><ul className="mt-3 grid gap-2 text-sm text-rose-700">{readiness.blockers.map((blocker) => <li key={`${blocker.step}-${blocker.message}`}>• {blocker.message}</li>)}</ul></div> : <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 font-bold text-emerald-700">Website requirements are complete.</div>}
+                <div className="rounded-md border border-line bg-slate-50 p-4"><h3 className="font-black text-ink">Launch summary</h3><p className="mt-2 text-sm text-slate-500">Website: {readiness.websiteReady ? "Ready" : "Not ready"}</p><p className="text-sm text-slate-500">Paid ordering: {readiness.orderingReady ? "Ready" : "Blocked until payments connect"}</p><p className="text-sm text-slate-500">Menu items: {readiness.counts?.availableItems || 0}</p></div>
+              </div>
+              {readiness.warnings?.length ? <div className="rounded-md border border-amber-200 bg-amber-50 p-4"><h3 className="font-black text-amber-800">Warnings</h3><ul className="mt-3 grid gap-2 text-sm text-amber-800">{readiness.warnings.map((warning) => <li key={`${warning.step}-${warning.message}`}>• {warning.message}</li>)}</ul></div> : null}
+              <button className="button-primary w-fit" type="button" onClick={publish} disabled={saving === "publish" || !readiness.websiteReady}>{saving === "publish" ? "Publishing..." : "Publish website"}</button>
+            </div>
+          ) : null}
+        </section>
+      </div>
     </div>
   );
 }
@@ -2402,7 +3166,10 @@ function AdminApp({ apiOnline, token, onImpersonate }) {
                       <td><strong>{restaurant.businessName || restaurant.name}</strong><span>{restaurant.slug} - {restaurant.email || "No business email"}</span><span>{[restaurant.address, restaurant.city, restaurant.state, restaurant.zip].filter(Boolean).join(", ") || "Address not set"}</span></td>
                       <td>{readable(restaurant.businessType || "RESTAURANT")}</td>
                       <td>{ownerFor(restaurant)?.email || "Owner not loaded"}</td>
-                      <td><StatusPill tone={restaurant.websiteSettings?.websiteEnabled === false ? "warn" : "good"}>{restaurant.websiteSettings?.websiteEnabled === false ? "Disabled" : "Enabled"}</StatusPill><span>{restaurant.websiteSettings?.websiteEnabled === false ? "Food ordering" : "Website active"}</span></td>
+                      <td>
+                        <StatusPill tone={restaurant.websiteSettings?.websiteEnabled === false ? "warn" : restaurant.onboarding?.websitePublished ? "good" : "neutral"}>{restaurant.websiteSettings?.websiteEnabled === false ? "Disabled" : restaurant.onboarding?.websitePublished ? "Published" : "Enabled"}</StatusPill>
+                        <span>{restaurant.onboarding ? `Setup ${restaurant.onboarding.completionPercentage || 0}% - ${readable(restaurant.onboarding.currentStep || restaurant.onboarding.status || "setup")}` : restaurant.websiteSettings?.websiteEnabled === false ? "Food ordering" : "Website active"}</span>
+                      </td>
                       <td>{readable(planFor(restaurant))}</td>
                       <td>{restaurant._count?.orders || 0}</td>
                       <td>{restaurant._count?.customers || 0}</td>
@@ -5025,6 +5792,7 @@ export default function App() {
   const isAdminRoute = initialPath === "/admin" || initialPath.startsWith("/admin/");
   const isKitchenRoute = initialPath === "/kitchen" || initialPath.startsWith("/kitchen/");
   const isRestaurantRoute = initialPath === "/restaurant" || initialPath.startsWith("/restaurant/");
+  const isRestaurantOnboardingRoute = isRestaurantOnboardingPath(initialPath);
   const isCustomerRoute = initialPath === "/customer" || initialPath.startsWith("/customer/");
   const isSiteAdminRoute = /^\/sites\/[^/]+\/admin\/?$/.test(initialPath);
   const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/");
@@ -5272,8 +6040,14 @@ export default function App() {
     if (apiMode !== "CHECKING" && !(apiOnline && authChecking) && !user) {
       return <AuthPage mode="restaurant" apiOnline={apiOnline} onLogin={handleLogin} />;
     }
-    const restaurantSlug = isRestaurantRoute ? routeSlug(initialPath, "restaurant") : "";
+    const restaurantSlug = isRestaurantRoute && !isRestaurantOnboardingRoute ? routeSlug(initialPath, "restaurant") : isRestaurantOnboardingRoute && initialPath !== "/restaurant/onboarding" ? routeSlug(initialPath, "restaurant") : "";
     const canOpenRestaurant = restaurantRoles.concat(["SUPER_ADMIN"]).includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
+    const shouldResumeOnboarding = canOpenRestaurant && restaurantRoles.includes(user?.role) && !restaurantOnboardingComplete(user) && !isRestaurantOnboardingRoute && (initialPath === "/restaurant" || initialPath === `/restaurant/${restaurantSlug}`);
+    const restaurantContent = isRestaurantOnboardingRoute
+      ? <RestaurantOnboardingWizard apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} />
+      : shouldResumeOnboarding
+        ? <Redirecting to={restaurantOnboardingPathFor(user, restaurantSlug)} />
+        : <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} />;
     return (
       <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
         <AppHeader navItems={restaurantOperationsNavigation(user, restaurantSlug, initialPath)} />
@@ -5283,7 +6057,7 @@ export default function App() {
             <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
             <StatusPill tone={canOpenRestaurant ? "good" : "warn"}>{user?.role || "Restaurant login required"}</StatusPill>
           </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenRestaurant ? <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} /> : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />}
+          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenRestaurant ? restaurantContent : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />}
         </main>
       </div>
     );

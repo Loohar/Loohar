@@ -99,6 +99,8 @@ function encodeStoragePath(path) {
 function storageFolderFor({ kind, menuItemId }) {
   if (kind === "restaurant-logo") return "logo";
   if (kind === "restaurant-hero") return "hero";
+  if (kind === "restaurant-mobile-hero") return "hero/mobile";
+  if (kind === "restaurant-favicon") return "favicon";
   if (kind === "menu-item") return `menu/${String(menuItemId || "").replace(/[^a-z0-9_-]/gi, "-")}`;
   if (kind === "gallery") return "gallery";
   return String(kind).replace(/[^a-z0-9_-]/gi, "-");
@@ -153,8 +155,8 @@ async function ensureSupabaseBucket({ supabaseUrl, serviceRoleKey, bucket }) {
 
 export async function uploadImageToSupabaseStorage({ restaurantId, kind, fileName, dataUrl, base64, mimeType, menuItemId }) {
   const parsed = parseImageUpload({ dataUrl, base64, mimeType, fileName });
-  if (parsed.mimeType === "image/svg+xml" && kind !== "restaurant-logo") {
-    throw apiError("SVG uploads are only allowed for restaurant logos.");
+  if (parsed.mimeType === "image/svg+xml" && !["restaurant-logo", "restaurant-favicon"].includes(kind)) {
+    throw apiError("SVG uploads are only allowed for restaurant logos and favicons.");
   }
   const { supabaseUrl, serviceRoleKey, bucket } = supabaseStorageConfig();
   const safeRestaurantId = String(restaurantId).replace(/[^a-z0-9_-]/gi, "-");

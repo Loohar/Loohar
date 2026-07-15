@@ -20,6 +20,7 @@
     "upload:probe": "node scripts/upload-endpoint-probe.mjs",
     "smoke:test": "node scripts/smoke-test.mjs",
     "smoke:production": "node scripts/production-smoke-test.mjs",
+    "test:onboarding": "node scripts/onboarding-test.mjs",
     "auth:audit": "npm --workspace apps/api run auth:audit",
     "auth:verify-login": "npm --workspace apps/api run auth:verify-login",
     "bootstrap:admin": "npm --workspace apps/api run bootstrap:admin",

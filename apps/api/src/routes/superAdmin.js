@@ -20,6 +20,7 @@ const tenantInclude = {
   users: { select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true, createdAt: true, updatedAt: true } },
   websiteSettings: true,
   domains: true,
+  deliveryZones: true,
   subscriptions: { include: { plan: true } },
   _count: { select: { orders: true, menuItems: true, drivers: true, customers: true } }
 };
@@ -39,6 +40,40 @@ function generatedAdminEmail(ownerEmail, slug) {
   const [local, domain] = normalizeEmail(ownerEmail).split("@");
   if (!domain) return `admin+${slug}@loohar.local`;
   return `${local}+admin@${domain}`;
+}
+
+function adminOnboardingSummary(restaurant) {
+  const website = restaurant.websiteSettings || {};
+  const domain = restaurant.domains?.[0] || {};
+  const ownerReady = (restaurant.users || []).some((user) => ["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN"].includes(user.role) && user.status === "ACTIVE");
+  const sections = {
+    business: Boolean(restaurant.name && restaurant.slug && restaurant.email && restaurant.phone && restaurant.address && restaurant.city && restaurant.state && restaurant.zip),
+    owner: ownerReady,
+    branding: Boolean((website.logoUrl || restaurant.logoUrl) && website.heroImageUrl),
+    content: Boolean(website.heroTitle && website.heroSubtitle && website.aboutStory),
+    hours: Boolean(website.storeHoursJson || restaurant.storeHoursJson),
+    fulfillment: Boolean(restaurant.pickupEnabled || restaurant.deliveryEnabled) && (!restaurant.deliveryEnabled || (restaurant.deliveryZones || []).length > 0 || Number(restaurant.deliveryRadiusMiles || 0) > 0),
+    menu: (restaurant._count?.menuItems || 0) > 0,
+    domain: Boolean(domain.defaultSubdomain || restaurant.slug),
+    payments: Boolean(restaurant.settingsJson?.paymentSetup?.status === "CONNECTED" || restaurant.settingsJson?.paymentSetup?.connected === true)
+  };
+  const completedSectionCount = Object.values(sections).filter(Boolean).length;
+  const completionPercentage = Math.round((completedSectionCount / Object.keys(sections).length) * 100);
+  return {
+    status: restaurant.onboardingStatus,
+    currentStep: restaurant.onboardingCurrentStep,
+    completionPercentage,
+    websitePublished: Boolean(restaurant.websitePublishedAt),
+    websitePublishedAt: restaurant.websitePublishedAt,
+    orderingEnabled: Boolean(restaurant.settingsJson?.onlineOrderingEnabled),
+    paymentConnected: sections.payments,
+    domainStatus: domain.domainStatus || "NOT_CONFIGURED",
+    lastUpdatedAt: restaurant.onboardingUpdatedAt || restaurant.updatedAt
+  };
+}
+
+function attachAdminOnboardingSummary(restaurant) {
+  return { ...restaurant, onboarding: adminOnboardingSummary(restaurant) };
 }
 
 function generateTemporaryPassword() {
@@ -101,7 +136,8 @@ async function listBusinesses(req, res, next) {
       include: tenantInclude,
       orderBy: { createdAt: "desc" }
     });
-    res.json({ restaurants, businesses: restaurants });
+    const businesses = restaurants.map(attachAdminOnboardingSummary);
+    res.json({ restaurants: businesses, businesses });
   } catch (error) {
     next(error);
   }
