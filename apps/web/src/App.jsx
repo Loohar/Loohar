@@ -30,6 +30,7 @@ import DriverPwaApp from "./apps/driver/DriverApp.jsx";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
+import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -42,7 +43,8 @@ const appName = import.meta.env.VITE_APP_NAME || "Loohar";
 const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.env.VITE_PLATFORM_DOMAIN || "loohar.com";
 const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
 const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
-const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, `www.${tenantRootDomain}`, `admin.${tenantRootDomain}`, `app.${tenantRootDomain}`, `driver.${tenantRootDomain}`, `api.${tenantRootDomain}`, `sites.${tenantRootDomain}`, "localhost"]);
+const reservedHostLabels = RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes("."));
+const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, "localhost", ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 const kitchenRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "SUPER_ADMIN"];
@@ -61,7 +63,7 @@ const planCodes = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
 const photoImageAccept = "image/png,image/jpeg,image/jpg,image/webp";
 const logoImageAccept = `${photoImageAccept},image/svg+xml`;
 const imageAccept = logoImageAccept;
-const maxImageBytes = 10 * 1024 * 1024;
+const maxImageBytes = 5 * 1024 * 1024;
 const imageMimeByExtension = {
   png: "image/png",
   jpg: "image/jpeg",
@@ -89,7 +91,10 @@ const socialPlatformLabels = {
   tiktok: "TikTok",
   x: "X",
   youtube: "YouTube",
-  linkedin: "LinkedIn"
+  linkedin: "LinkedIn",
+  yelp: "Yelp",
+  google: "Google Business",
+  google_business: "Google Business"
 };
 const socialPlatformMarks = {
   facebook: "Fb",
@@ -97,7 +102,10 @@ const socialPlatformMarks = {
   tiktok: "Tk",
   x: "X",
   youtube: "Yt",
-  linkedin: "In"
+  linkedin: "In",
+  yelp: "Yp",
+  google: "G",
+  google_business: "G"
 };
 const defaultLooharImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80";
 const demoEmployees = [
@@ -302,7 +310,10 @@ function validateTenantForm(form) {
     else if (typeof value === "boolean") return;
     else if (!String(value ?? "").trim()) errors[field] = `${label} is required.`;
   });
-  if (form.slug && !/^[a-z0-9-]+$/.test(form.slug)) errors.slug = "Use lowercase letters, numbers, and hyphens only.";
+  if (form.slug) {
+    const slugValidation = validatePublicSlug(form.slug);
+    if (!slugValidation.ok) errors.slug = slugValidation.error;
+  }
   if (form.ownerEmail && !emailPattern.test(form.ownerEmail)) errors.ownerEmail = "Enter a valid owner email.";
   if (form.businessEmail && !emailPattern.test(form.businessEmail)) errors.businessEmail = "Enter a valid business email.";
   return errors;
@@ -640,7 +651,7 @@ function validateImageFile(file, { accept = imageAccept, label = "image" } = {})
   if (!accept.split(",").includes(mimeTypeForFile(file))) {
     return label === "logo" ? "Use PNG, JPG, JPEG, WEBP, or SVG." : "Use PNG, JPG, JPEG, or WEBP.";
   }
-  if (file.size > maxImageBytes) return "Image must be 10MB or smaller.";
+  if (file.size > maxImageBytes) return "Image must be 5MB or smaller.";
   return "";
 }
 
@@ -748,11 +759,13 @@ function websitePathParts() {
   const hostRoute = tenantHostRouteInfo();
   if (hostRoute.isTenantHost) {
     const [, page = "home"] = window.location.pathname.split("/");
-    return { slug: hostRoute.slug || "", page: page || "home", byHost: true, host: hostRoute.host };
+    return { slug: hostRoute.slug || "", page: page || "home", byHost: true, host: hostRoute.host, legacy: false };
   }
-  const [, root, slug, page = "home"] = window.location.pathname.split("/");
-  if (root !== "sites") return null;
-  return { slug: slug || "", page, byHost: false, host: "" };
+  const [, root, maybeSlug, maybePage = "home"] = window.location.pathname.split("/");
+  if (root === "sites") return { slug: maybeSlug || "", page: maybePage, byHost: false, host: "", legacy: true };
+  const slugValidation = validatePublicSlug(root || "");
+  if (!slugValidation.ok) return null;
+  return { slug: slugValidation.slug, page: maybeSlug || "home", byHost: false, host: "", legacy: false };
 }
 
 function normalizeBrowserHost(value = window.location.hostname) {
@@ -775,7 +788,7 @@ function tenantHostRouteInfo() {
 
 function routeBaseForPublicSite(route, slug) {
   if (route?.byHost) return "";
-  return `/sites/${slug}`;
+  return `/${slug}`;
 }
 
 function publicSiteHref(route, slug, target = "home") {
@@ -786,13 +799,23 @@ function publicSiteHref(route, slug, target = "home") {
 
 function defaultTenantUrlFor(profile = {}, domain = {}) {
   if (domain.defaultUrl) return domain.defaultUrl;
-  return `https://${domain.defaultSubdomain || profile.slug || "restaurant"}.${tenantRootDomain}`;
+  return `https://${appDomain}/${profile.slug || domain.defaultSubdomain || "restaurant"}`;
 }
 
 function canonicalTenantUrlFor(profile = {}, domain = {}) {
   if (domain.canonicalUrl) return domain.canonicalUrl;
-  if (domain.canonicalDomain) return `https://${domain.canonicalDomain}`;
+  if (domain.customDomain && ["VERIFIED", "SSL_PENDING", "ACTIVE"].includes(domain.domainStatus)) return `https://${domain.customDomain}`;
   return defaultTenantUrlFor(profile, domain);
+}
+
+function publicPathForSlug(slug, target = "home") {
+  const safeSlug = slug || "restaurant";
+  return target === "home" ? `/${safeSlug}` : `/${safeSlug}/${target}`;
+}
+
+function isPathBasedPublicRestaurantPath(path = window.location.pathname) {
+  const [first] = path.split("/").filter(Boolean);
+  return Boolean(validatePublicSlug(first || "").ok);
 }
 
 function isValidImageUrl(value) {
@@ -808,7 +831,7 @@ function resolveImage(liveImage, fallbackImage, defaultImage = defaultLooharImag
 }
 
 function publicSocialLinks(links = []) {
-  return links.filter((link) => link?.url && socialPlatformLabels[link.platform]);
+  return links.filter((link) => link?.url && link.enabled !== false && /^https:\/\//i.test(link.url) && socialPlatformLabels[link.platform]);
 }
 
 function PublicSocialLinks({ links = [] }) {
@@ -877,9 +900,9 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
   const liveWebsite = live.website || live.websiteSettings || {};
   const fallbackWebsite = usingDemoFallback ? fallback.website || demoWebsiteSettings : {};
   const defaultWebsite = defaultPublicWebsiteFields(baseRestaurant);
-  const fallbackGallery = usingDemoFallback && Array.isArray(fallback.gallery) && fallback.gallery.length ? fallback.gallery : [];
   const liveGallery = Array.isArray(live.gallery) ? live.gallery : [];
-  const heroImageUrl = resolveImage(liveWebsite.heroImageUrl, fallbackWebsite.heroImageUrl || fallbackGallery[0]?.imageUrl, defaultWebsite.heroImageUrl);
+  const fallbackGallery = usingDemoFallback && Array.isArray(fallback.gallery) && fallback.gallery.length ? fallback.gallery : [];
+  const heroImageUrl = resolveImage(liveWebsite.heroImageUrl, fallbackWebsite.heroImageUrl, defaultWebsite.heroImageUrl);
   const mobileHeroImageUrl = resolveImage(liveWebsite.mobileHeroImageUrl, fallbackWebsite.mobileHeroImageUrl, heroImageUrl);
   const logoUrl = resolveImage(liveWebsite.logoUrl || liveRestaurant.logoUrl, fallbackWebsite.logoUrl || fallbackRestaurant.logoUrl, heroImageUrl);
   const faviconUrl = resolveImage(liveWebsite.faviconUrl, fallbackWebsite.faviconUrl, logoUrl);
@@ -902,7 +925,7 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
     publicEmail: liveWebsite.publicEmail || fallbackWebsite.publicEmail || baseRestaurant.email || defaultWebsite.publicEmail,
     sectionSettingsJson: { ...websiteSectionDefaults, ...(fallbackWebsite.sectionSettingsJson || {}), ...(liveWebsite.sectionSettingsJson || {}) }
   };
-  const sourceGallery = liveGallery.length ? liveGallery : usingDemoFallback ? fallbackGallery : [];
+  const sourceGallery = (liveGallery.length ? liveGallery : usingDemoFallback ? fallbackGallery : []).filter((image) => image?.published !== false);
   const gallery = sourceGallery.map((image, index) => {
     const fallbackImage = usingDemoFallback ? fallbackGallery[index] || fallbackGallery[0] || {} : {};
     return {
@@ -910,7 +933,7 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
       ...image,
       id: image.id || fallbackImage.id || `gallery-${index}`,
       altText: image.altText || fallbackImage.altText || `${publicRestaurantName(baseRestaurant)} photo`,
-      imageUrl: resolveImage(image.imageUrl, fallbackImage.imageUrl, heroImageUrl)
+      imageUrl: resolveImage(image.imageUrl, fallbackImage.imageUrl, defaultLooharImage)
     };
   });
   const fallbackCategories = usingDemoFallback && Array.isArray(fallbackRestaurant.categories) ? fallbackRestaurant.categories : [];
@@ -925,7 +948,7 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
       return {
         ...(usingDemoFallback ? fallbackItem : {}),
         ...item,
-        imageUrl: resolveImage(item.imageUrl, fallbackItem.imageUrl, heroImageUrl)
+        imageUrl: resolveImage(item.imageUrl, fallbackItem.imageUrl, defaultLooharImage)
       };
     });
     return { ...(usingDemoFallback ? fallbackCategory : {}), ...category, items };
@@ -946,7 +969,7 @@ function withSafePublicImages(liveBundle, fallbackBundle = null) {
     website,
     websiteSettings: website,
     gallery,
-    socialLinks: Array.isArray(live.socialLinks) ? live.socialLinks : usingDemoFallback && Array.isArray(fallback.socialLinks) ? fallback.socialLinks : [],
+    socialLinks: publicSocialLinks(Array.isArray(live.socialLinks) ? live.socialLinks : usingDemoFallback && Array.isArray(fallback.socialLinks) ? fallback.socialLinks : []),
     featuredItems: Array.isArray(live.featuredItems) ? live.featuredItems : categories.flatMap((category) => category.items || []).filter((item) => item.featured || item.recommended).slice(0, 8),
     seo: {
       ...(usingDemoFallback ? fallback.seo || {} : {}),
@@ -1024,7 +1047,7 @@ function applyPublicSeo(bundle, page = "home") {
   const restaurant = bundle.restaurant || {};
   const website = bundle.website || {};
   const name = restaurant.businessName || restaurant.name || "Restaurant";
-  const canonicalUrl = bundle.seo?.canonicalUrl || `${window.location.origin}/sites/${restaurant.slug || ""}${page === "home" ? "" : `/${page}`}`;
+  const canonicalUrl = bundle.seo?.canonicalUrl || `${window.location.origin}${publicPathForSlug(restaurant.slug || "", page)}`;
   const title = bundle.seo?.title || website.seoTitle || `${name} | Direct Online Ordering`;
   const description = bundle.seo?.description || website.seoDescription || website.heroSubtitle || restaurant.description || `Order pickup or delivery directly from ${name}.`;
   const image = resolveImage(bundle.seo?.openGraphImage || bundle.seo?.twitterImage, website.heroImageUrl || restaurant.logoUrl);
@@ -1109,7 +1132,7 @@ function PublicRestaurantSite({ apiOnline }) {
     setLoading(true);
     setError("");
     setBundle(null);
-    const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/sites/${slug}`;
+    const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/restaurants/${slug}`;
     api(endpoint)
       .then((payload) => {
         const safeBundle = withSafePublicImages(payload);
@@ -1139,7 +1162,7 @@ function PublicRestaurantSite({ apiOnline }) {
   const featuredItems = categories.flatMap((category) => category.items || []).filter((item) => item.featured || item.recommended).slice(0, 4);
   const currentSlug = restaurant.slug || slug;
   const routeBase = routeBaseForPublicSite(route, currentSlug);
-  const heroImage = resolveImage(website.heroImageUrl, gallery[0]?.imageUrl);
+  const heroImage = resolveImage(website.heroImageUrl, website.mobileHeroImageUrl, defaultLooharImage);
   const logoImage = resolveImage(website.logoUrl, heroImage, heroImage);
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
   const siteStyle = { "--brand": website.brandColor, "--accent": website.accentColor, "--heading-font": website.headingFont || "inherit", "--body-font": website.bodyFont || "inherit" };
@@ -1203,7 +1226,7 @@ function PublicRestaurantSite({ apiOnline }) {
             <div className="mt-5" key={category.id}>
               <h3>{category.name}</h3>
               <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {(category.items || []).map((item) => <div className="food-card" key={item.id}>{item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, heroImage)} alt={item.name} loading="lazy" onError={handleSafeImageError} /> : null}<div><p className="font-bold text-ink">{item.name}</p><p className="text-sm text-slate-500">{item.description}</p><p className="mt-2 text-sm">{item.available === false ? "Unavailable" : "Available"} {item.featured ? "- Featured" : ""} {item.recommended ? "- Recommended" : ""}</p><p className="mt-2 text-xs font-bold uppercase text-slate-400">{item.preparationTimeMins || 15} min</p></div><a className="button-primary h-fit" href={`${routeBase}/order`}>{money(item.priceCents)}</a></div>)}
+                {(category.items || []).map((item) => <div className="food-card" key={item.id}>{item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, "", defaultLooharImage)} alt={item.name} loading="lazy" onError={handleSafeImageError} /> : null}<div><p className="font-bold text-ink">{item.name}</p><p className="text-sm text-slate-500">{item.description}</p><p className="mt-2 text-sm">{item.available === false ? "Unavailable" : "Available"} {item.featured ? "- Featured" : ""} {item.recommended ? "- Recommended" : ""}</p><p className="mt-2 text-xs font-bold uppercase text-slate-400">{item.preparationTimeMins || 15} min</p></div><a className="button-primary h-fit" href={`${routeBase}/order`}>{money(item.priceCents)}</a></div>)}
               </div>
             </div>
           ))}
@@ -1211,9 +1234,9 @@ function PublicRestaurantSite({ apiOnline }) {
       ) : null}
       {page === "order" ? <section className="lux-section"><div className="lux-section-head"><p>Order Online</p><h2>Pickup and delivery from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
 
-      {page === "about" ? <section className="site-card"><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Owner / chef story</h3><p>{website.ownerStory}</p><div className="site-image mt-4"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt={gallery[1]?.altText || "Restaurant story"} onError={handleSafeImageError} /></div></section> : null}
+      {page === "about" ? <section className="site-card"><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Owner / chef story</h3><p>{website.ownerStory}</p><div className="site-image mt-4"><img src={resolveImage(heroImage, "", defaultLooharImage)} alt={`${restaurant.businessName || restaurant.name} story`} onError={handleSafeImageError} /></div></section> : null}
       {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid"><div className="site-card"><h2>Contact</h2><p>{fullRestaurantAddress(restaurant) || restaurant.address}</p><p>{restaurant.phone}</p><p>{restaurant.email}</p><p>{Object.entries(restaurant.storeHoursJson || {}).map(([day, hours]) => `${readable(day)}: ${hours}`).join(" / ") || "Call for current hours"}</p><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Location</h3>{googleMapEmbedUrl(fullRestaurantAddress(restaurant)) ? <iframe className="map-frame" title={`${restaurant.name} map`} src={googleMapEmbedUrl(fullRestaurantAddress(restaurant))} loading="lazy" /> : <div className="map-card">{restaurant.address || "Address coming soon"}</div>}<div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={googleDirectionsUrl(fullRestaurantAddress(restaurant))} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${restaurant.email || ""}`}>Email</a></div><h3 className="mt-4">Questions</h3><p>Call or email the restaurant for event requests, order help, or catering details.</p></div></section> : null}
-      {page === "gallery" && sectionIsVisible("gallery") ? <section className="site-card"><h2>Gallery</h2>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <div className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText || "Restaurant photo"} onError={handleSafeImageError} /></div>)}</div>}</section> : null}
+      {page === "gallery" && sectionIsVisible("gallery") ? <section className="site-card"><h2>Gallery</h2>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="mt-4 grid gap-3 md:grid-cols-3">{gallery.map((image) => <figure className="site-image" key={image.id}><img src={resolveImage(image.imageUrl, "", defaultLooharImage)} alt={image.altText || image.title || "Restaurant photo"} onError={handleSafeImageError} />{image.title || image.caption ? <figcaption>{image.title || image.altText}{image.caption ? ` / ${image.caption}` : ""}</figcaption> : null}</figure>)}</div>}</section> : null}
       {page === "loyalty" && sectionIsVisible("loyalty") ? <section className="site-card"><h2>Loyalty</h2><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar when ordering direct.</p><div className="mt-4 grid gap-3 md:grid-cols-2">{(restaurant.loyaltyRewards || bundle.restaurant?.loyaltyRewards || []).map((reward) => <div className="summary-line rounded-md bg-slate-50 px-3" key={reward.id}><span>{reward.name}</span><strong>{reward.pointsRequired} pts</strong></div>)}</div><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></section> : null}
       {page === "catering" && sectionIsVisible("catering") ? <section className="site-card"><h2>Catering</h2><p>Bring restaurant favorites to your next event.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Request catering</a><p className="mt-3 text-sm text-slate-500">Include event date, guest count, and menu preferences.</p></section> : null}
       {page === "careers" ? <section className="site-card"><h2>Careers</h2><p>We are always interested in great restaurant people.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></section> : null}
@@ -1253,7 +1276,7 @@ function PremiumRestaurantSite({ apiOnline }) {
     setLoading(true);
     setError("");
     setBundle(null);
-    const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/sites/${slug}`;
+    const endpoint = route?.byHost ? `/api/public/site-by-host?host=${encodeURIComponent(route.host)}` : `/api/public/restaurants/${slug}`;
     api(endpoint)
       .then((payload) => {
         const safeBundle = withSafePublicImages(payload);
@@ -1288,7 +1311,7 @@ function PremiumRestaurantSite({ apiOnline }) {
   const hours = Object.entries(restaurant.storeHoursJson || {});
   const hoursPreview = hours.slice(0, 3).map(([day, value]) => `${readable(day)} ${value}`).join(" / ");
   const isLiquor = restaurant.businessType === "LIQUOR_STORE";
-  const heroImage = resolveImage(website.heroImageUrl, website.mobileHeroImageUrl || gallery[0]?.imageUrl);
+  const heroImage = resolveImage(website.heroImageUrl, website.mobileHeroImageUrl, defaultLooharImage);
   const logoImage = resolveImage(website.logoUrl, heroImage, heroImage);
   const publicEmail = website.publicEmail || restaurant.email || "";
   const address = bundle.contactInfo?.address || fullRestaurantAddress(restaurant);
@@ -1306,7 +1329,7 @@ function PremiumRestaurantSite({ apiOnline }) {
   }
 
   function MenuCard({ item: menuItem }) {
-    const itemImage = resolveImage(menuItem.imageUrl, website.heroImageUrl || gallery[0]?.imageUrl, heroImage);
+    const itemImage = resolveImage(menuItem.imageUrl, "", defaultLooharImage);
     return (
       <article className="lux-menu-card">
         <img src={itemImage} alt={menuItem.name} loading="lazy" onError={handleSafeImageError} />
@@ -1378,7 +1401,7 @@ function PremiumRestaurantSite({ apiOnline }) {
             {featuredItems.length === 0 ? <EmptyState title="Menu coming soon" detail="Menu items are being added. Please check back soon." /> : <div className="lux-card-grid">{featuredItems.map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div>}
           </section> : null}
           {sectionSettings.story ? <section className="lux-split">
-            <img src={resolveImage(gallery[0]?.imageUrl, heroImage)} alt={gallery[0]?.altText || restaurant.name} onError={handleSafeImageError} />
+            <img src={heroImage} alt={`${restaurant.name} story`} onError={handleSafeImageError} />
             <div>
               <p className="lux-kicker">About the restaurant</p>
               <h2>{website.aboutTitle}</h2>
@@ -1392,16 +1415,16 @@ function PremiumRestaurantSite({ apiOnline }) {
             {sectionSettings.contact ? <div className="site-card"><h3>Location & hours</h3><p>{restaurant.address}</p><p>{restaurant.phone}</p><p>{hoursPreview || "Hours available soon"}</p></div> : null}
           </section>
           {isLiquor ? <section className="site-card"><h3>Age verification and compliance</h3><p>{bundle.complianceNote || "Age verification and local delivery compliance are required for regulated items."}</p></section> : null}
-          {sectionSettings.gallery && gallery.length ? <section className="lux-gallery-strip">{gallery.slice(0, 4).map((image) => <img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} key={image.id} loading="lazy" onError={handleSafeImageError} />)}</section> : null}
+          {sectionSettings.gallery && gallery.length ? <section className="lux-gallery-strip">{gallery.slice(0, 4).map((image) => <img src={resolveImage(image.imageUrl, "", defaultLooharImage)} alt={image.altText} key={image.id} loading="lazy" onError={handleSafeImageError} />)}</section> : null}
           <section className="lux-cta"><h2>Order direct from {restaurant.businessName || restaurant.name}</h2><p>Keep more value with the restaurant while earning loyalty rewards.</p><a className="button-primary" href={`${routeBase}/order`}>{website.ctaText || "Start an order"}</a></section>
         </>
       ) : null}
 
       {page === "menu" ? <section className="lux-section"><div className="lux-section-head"><p>Full menu</p><h2>{isLiquor ? "Bottle shop catalog" : "Prepared for pickup and delivery"}</h2><a href={`${routeBase}/order`}>Order now</a></div>{isLiquor ? <div className="site-card mb-4"><h3>Regulated items</h3><p>{bundle.complianceNote || "Age verification and local delivery rules apply."}</p></div> : null}{categories.length === 0 ? <EmptyState title="Menu coming soon" detail="This restaurant has not published public menu items yet." /> : categories.map((category) => <div className="lux-category" key={category.id}><h3>{category.name}</h3><div className="lux-card-grid">{(category.items || []).map((menuItem) => <MenuCard item={menuItem} key={menuItem.id} />)}</div></div>)}</section> : null}
       {page === "order" ? <section className="lux-section public-order-page"><div className="lux-section-head"><p>Order Online</p><h2>{restaurant.pickupEnabled && restaurant.deliveryEnabled ? "Pickup and delivery" : restaurant.deliveryEnabled ? "Delivery" : "Pickup"} from {restaurant.businessName || restaurant.name}</h2><a href={`${routeBase}/menu`}>View menu</a></div><div className="public-order-hero"><img src={heroImage} alt={`${restaurant.businessName || restaurant.name} food`} loading="lazy" onError={handleSafeImageError} /><div><p className="lux-kicker">{website.cuisineType || readable(restaurant.businessType)}</p><h3>{website.heroTitle || restaurant.businessName || restaurant.name}</h3><p>{website.heroSubtitle || restaurant.description}</p><div className="mt-4 flex flex-wrap gap-2"><StatusPill tone={restaurant.pickupEnabled ? "good" : "neutral"}>{restaurant.pickupEnabled ? "Pickup available" : "Pickup unavailable"}</StatusPill><StatusPill tone={restaurant.deliveryEnabled ? "good" : "neutral"}>{restaurant.deliveryEnabled ? "Delivery available" : "Delivery unavailable"}</StatusPill><StatusPill>{hoursPreview || "Hours vary"}</StatusPill></div></div></div><CustomerApp apiOnline={apiOnline} initialSlug={currentSlug} embedded /></section> : null}
-      {page === "about" ? <section className="lux-split page"><img src={resolveImage(gallery[1]?.imageUrl, heroImage)} alt="Chef and restaurant team" onError={handleSafeImageError} /><div><p className="lux-kicker">Our story</p><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Fresh ingredients</h3><p>Seasonal produce, thoughtful sourcing, and a menu designed for dining room quality at home.</p><h3>Community</h3><p>Ordering direct helps keep customer relationships and revenue with the local restaurant team.</p></div></section> : null}
+      {page === "about" ? <section className="lux-split page"><img src={resolveImage(heroImage, "", defaultLooharImage)} alt={`${restaurant.businessName || restaurant.name} story`} onError={handleSafeImageError} /><div><p className="lux-kicker">Our story</p><h2>{website.aboutTitle}</h2><p>{website.aboutStory}</p><h3>Mission</h3><p>{website.missionStatement}</p><h3>Fresh ingredients</h3><p>Seasonal produce, thoughtful sourcing, and a menu designed for dining room quality at home.</p><h3>Community</h3><p>Ordering direct helps keep customer relationships and revenue with the local restaurant team.</p></div></section> : null}
       {page === "contact" && sectionIsVisible("contact") ? <section className="site-grid contact"><div className="site-card"><h2>Contact</h2><p>{address || restaurant.address}</p><p>{restaurant.phone}</p><p>{publicEmail}</p><p>Delivery availability depends on restaurant settings.</p><div className="mt-4 flex flex-wrap gap-2"><a className="button-primary" href={directionsHref} target="_blank" rel="noreferrer"><MapPin size={16} />Directions</a><a className="button-muted" href={`tel:${restaurant.phone || ""}`}>Call</a><a className="button-muted" href={`mailto:${publicEmail}`}>Email</a></div><PublicSocialLinks links={socialLinks} /></div><div className="site-card"><h3>Opening hours</h3>{hours.length ? hours.map(([day, value]) => <div className="summary-line" key={day}><span>{readable(day)}</span><strong>{value}</strong></div>) : <p className="mt-2 text-sm text-slate-500">Call for current hours.</p>}</div><div className="site-card"><h3>Location & message</h3>{mapSrc ? <iframe className="map-frame" title={`${restaurant.businessName || restaurant.name} map`} src={mapSrc} loading="lazy" /> : <div className="map-card">{address || "Address coming soon"}</div>}<p className="mt-4">{website.contactMessage || "Call or email the restaurant for private events, questions, and order help."}</p></div></section> : null}
-      {page === "gallery" && sectionIsVisible("gallery") ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, heroImage)} alt={image.altText} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.altText} / {image.category || "food"}</figcaption></figure>)}</div>}</section> : null}
+      {page === "gallery" && sectionIsVisible("gallery") ? <section className="lux-section"><div className="lux-section-head"><p>Gallery</p><h2>Food, room, team, and events</h2><a href={`${routeBase}/order`}>Order from the menu</a></div>{gallery.length === 0 ? <EmptyState title="Gallery coming soon" detail="This restaurant has not added gallery images yet." /> : <div className="lux-gallery-grid">{gallery.map((image) => <figure key={image.id}><img src={resolveImage(image.imageUrl, "", defaultLooharImage)} alt={image.altText || image.title || "Restaurant photo"} loading="lazy" onError={handleSafeImageError} /><figcaption>{image.title || image.altText || readable(image.category || "food")}{image.caption ? ` / ${image.caption}` : ""}</figcaption></figure>)}</div>}</section> : null}
       {page === "loyalty" && sectionIsVisible("loyalty") ? <section className="lux-section"><div className="lux-section-head"><p>Loyalty</p><h2>Rewards for ordering direct</h2><a href={`${routeBase}/order`}>Join at checkout</a></div><div className="site-grid"><div className="site-card"><h3>How it works</h3><p>Earn {restaurant.loyaltySettingsJson?.pointsPerDollar || 1} point per dollar on eligible direct orders. Redeem points for restaurant-owned rewards.</p><a className="button-primary mt-4" href={`${routeBase}/order`}>Join at checkout</a></div>{rewards.map((reward) => <div className="site-card" key={reward.id}><h3>{reward.name}</h3><p>{reward.pointsRequired} points required.</p></div>)}</div></section> : null}
       {page === "catering" && sectionIsVisible("catering") ? <section className="lux-section"><div className="lux-section-head"><p>Catering</p><h2>Events, party trays, and corporate lunches</h2><a href={`tel:${restaurant.phone || ""}`}>Call restaurant</a></div><div className="site-grid"><div className="site-card"><h3>Party trays</h3><p>Shareable appetizers, salads, and entrees sized for groups.</p></div><div className="site-card"><h3>Corporate lunch</h3><p>Pickup and delivery-friendly lunch packages for teams.</p></div><div className="site-card"><h3>Family meals</h3><p>Comfortable dinner packages built around restaurant favorites.</p></div></div><div className="site-card"><h3>Request quote</h3><p>{website.cateringMessage || "Send event date, guest count, and menu preferences to the restaurant team."}</p><a className="button-primary mt-4" href={`mailto:${publicEmail}`}>Request quote</a></div></section> : null}
       {page === "careers" ? <section className="lux-section"><div className="lux-section-head"><p>Careers</p><h2>Join the restaurant team</h2><a href={`mailto:${restaurant.email || ""}`}>Contact hiring manager</a></div><div className="site-grid"><div className="site-card"><h3>Why work here</h3><p>Focused service, direct customer relationships, and a team built around hospitality.</p></div><div className="site-card"><h3>Open roles</h3><p>Contact the restaurant for current kitchen, service, and driver opportunities.</p></div><div className="site-card"><h3>Apply</h3><p>Email the hiring manager with your experience and availability.</p><a className="button-primary mt-4" href={`mailto:${restaurant.email || ""}`}>Apply by email</a></div></div></section> : null}
@@ -3180,7 +3203,7 @@ function AdminApp({ apiOnline, token, onImpersonate }) {
                           <div>
                             <button onClick={() => setSelectedTenant(tenantEditState(restaurant))}>Edit Tenant</button>
                             <button disabled={!apiOnline} onClick={() => openTenantUsers(restaurant)}>Manage Users</button>
-                            <a href={`/sites/${restaurant.slug}`} target="_blank" rel="noreferrer">View Website</a>
+                            <a href={publicPathForSlug(restaurant.slug)} target="_blank" rel="noreferrer">View Website</a>
                             <a href={`/restaurant/${restaurant.slug}`} target="_blank" rel="noreferrer">Open Restaurant Admin</a>
                             <button onClick={() => setSelectedTenant(tenantEditState(restaurant))}>Website Settings</button>
                             <button disabled={!apiOnline} onClick={() => manageDomain(restaurant)}>Manage Domain</button>
@@ -3363,12 +3386,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const [websiteDirty, setWebsiteDirty] = useState(false);
   const [websiteLastSavedAt, setWebsiteLastSavedAt] = useState(null);
   const [toast, setToast] = useState(null);
-  const [galleryForm, setGalleryForm] = useState({ title: "", category: "food" });
+  const [galleryForm, setGalleryForm] = useState({ title: "", altText: "", caption: "", category: "food", published: true });
   const [socialForm, setSocialForm] = useState({ platform: "instagram", url: "" });
   const [employeeForm, setEmployeeForm] = useState({ name: "", email: "", phone: "", role: "KITCHEN_STAFF" });
   const [zoneForm, setZoneForm] = useState({ name: "Zone A", radiusMiles: 3, deliveryFeeCents: 399, minimumOrderCents: 1500 });
   const [inventoryForm, setInventoryForm] = useState({ name: "Chicken", quantity: 10, unit: "lb", costCents: 2500 });
-  const publicPreviewPath = `/sites/${profile.slug || "demo-bistro"}`;
+  const publicPreviewPath = publicPathForSlug(profile.slug || "demo-bistro");
   const publicSiteUrl = canonicalTenantUrlFor(profile, domain);
 
   function showToast(message, tone = "good") {
@@ -3619,16 +3642,19 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
     const files = Array.from(event.target.files || []);
     let uploadedCount = 0;
     for (const [index, file] of files.entries()) {
+      const fallbackTitle = file.name.replace(/\.[^.]+$/, "");
       const uploaded = await uploadRestaurantImage("gallery", file, {
-        title: galleryForm.title || file.name.replace(/\.[^.]+$/, ""),
-        altText: galleryForm.title || file.name.replace(/\.[^.]+$/, ""),
+        title: galleryForm.title || fallbackTitle,
+        altText: galleryForm.altText || galleryForm.title || fallbackTitle,
+        caption: galleryForm.caption,
         category: galleryForm.category,
+        published: galleryForm.published,
         sortOrder: gallery.length + index + 1
       });
       if (uploaded) uploadedCount += 1;
     }
     if (uploadedCount) {
-      setGalleryForm({ title: "", category: "food" });
+      setGalleryForm({ title: "", altText: "", caption: "", category: "food", published: true });
       showToast(`${uploadedCount} gallery photo${uploadedCount === 1 ? "" : "s"} uploaded successfully.`);
     }
     event.target.value = "";
@@ -3729,6 +3755,26 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
       ]);
       await loadRestaurant();
       showToast("Gallery order updated.");
+    } catch (galleryError) {
+      setError(galleryError.message);
+      showToast(galleryError.message, "bad");
+      await loadRestaurant();
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function updateGalleryImage(image, updates, message = "Gallery photo updated.") {
+    setSavingAction(`gallery:${image.id}:update`);
+    setGallery((current) => current.map((item) => (item.id === image.id ? { ...item, ...updates } : item)));
+    if (!apiOnline) {
+      setSavingAction("");
+      return showToast(message);
+    }
+    try {
+      const payload = await api(`/api/restaurants/${restaurantId}/gallery/${image.id}`, { method: "PATCH", token, body: updates });
+      setGallery((current) => current.map((item) => (item.id === image.id ? payload.image : item)));
+      showToast(message);
     } catch (galleryError) {
       setError(galleryError.message);
       showToast(galleryError.message, "bad");
@@ -4018,10 +4064,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
     }
     try {
       const parsed = new globalThis.URL(socialForm.url);
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Invalid protocol");
+      if (parsed.protocol !== "https:") throw new Error("Invalid protocol");
     } catch {
-      setError("Enter a valid http or https social URL.");
-      return showToast("Enter a valid http or https social URL.", "bad");
+      setError("Enter a valid https social URL.");
+      return showToast("Enter a valid https social URL.", "bad");
     }
     setSavingAction("social:save");
     if (!apiOnline) {
@@ -4034,6 +4080,21 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
       setSocialForm({ platform: "instagram", url: "" });
       await loadRestaurant();
       showToast("Social link saved successfully.");
+    } catch (socialError) {
+      setError(socialError.message);
+      showToast(socialError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function updateSocialLink(link, updates, message = "Social link updated.") {
+    if (!apiOnline) return showToast("Live API connection is required to update social links.", "bad");
+    setSavingAction(`social:${link.id}:update`);
+    try {
+      const payload = await api(`/api/restaurants/${restaurantId}/social-links/${link.id}`, { method: "PATCH", token, body: updates });
+      setSocialLinks((current) => current.map((item) => (item.id === link.id ? payload.socialLink : item)));
+      showToast(message);
     } catch (socialError) {
       setError(socialError.message);
       showToast(socialError.message, "bad");
@@ -4325,11 +4386,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
                     <div className="rounded-md border border-line bg-white p-3" key={item.id}>
                       <div className="grid gap-3 lg:grid-cols-[112px_1fr]">
                         <div>
-                          {item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, website.heroImageUrl)} alt={item.name} onError={handleSafeImageError} /> : <div className="grid h-28 w-28 shrink-0 place-items-center rounded-md bg-slate-100 text-xs font-bold text-slate-400">Photo</div>}
+                          {item.imageUrl ? <img className="order-card-img" src={resolveImage(item.imageUrl, "", defaultLooharImage)} alt={item.name} onError={handleSafeImageError} /> : <div className="grid h-28 w-28 shrink-0 place-items-center rounded-md bg-slate-100 text-xs font-bold text-slate-400">Photo</div>}
                           <label className="button-muted mt-2 w-full justify-center">
                             <Plus size={15} />{uploadingAsset === "menu-item" ? "Uploading" : item.imageUrl ? "Replace" : "Add photo"}
                             <input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadMenuItemImage(item, event)} />
                           </label>
+                          <p className="mt-2 text-xs text-slate-500">Square food photo recommended. JPG, PNG, or WEBP up to 5MB.</p>
                           {item.imageUrl ? <button className="button-muted mt-2 w-full justify-center" type="button" onClick={() => updateItem(item, { imageUrl: null }, "Menu item image removed.")}>Remove photo</button> : null}
                         </div>
                         <div className="grid gap-3">
@@ -4579,12 +4641,22 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               </div>
               <div className="mt-3 grid gap-2">
                 <input className="input" placeholder="Gallery title" value={galleryForm.title} onChange={(event) => setGalleryForm({ ...galleryForm, title: event.target.value })} />
+                <input className="input" placeholder="Alt text for accessibility" value={galleryForm.altText} onChange={(event) => setGalleryForm({ ...galleryForm, altText: event.target.value })} />
+                <input className="input" placeholder="Caption" value={galleryForm.caption} onChange={(event) => setGalleryForm({ ...galleryForm, caption: event.target.value })} />
                 <select className="select" value={galleryForm.category} onChange={(event) => setGalleryForm({ ...galleryForm, category: event.target.value })}>
                   <option value="food">Food</option>
-                  <option value="interior">Interior</option>
-                  <option value="team">Team</option>
+                  <option value="dining-room">Dining Room</option>
+                  <option value="kitchen">Kitchen</option>
+                  <option value="staff">Staff</option>
                   <option value="events">Events</option>
+                  <option value="catering">Catering</option>
+                  <option value="exterior">Exterior</option>
+                  <option value="other">Other</option>
                 </select>
+                <label className="flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-semibold text-slate-600">
+                  <input type="checkbox" checked={galleryForm.published} onChange={(event) => setGalleryForm({ ...galleryForm, published: event.target.checked })} />
+                  Show on public website
+                </label>
                 <label className="button-muted justify-center">
                   <Plus size={15} />{uploadingAsset === "gallery" ? "Uploading photos" : "Upload gallery photos"}
                   <input className="sr-only" type="file" accept={photoImageAccept} multiple onChange={uploadGalleryImage} />
@@ -4593,11 +4665,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {gallery.length === 0 ? <p className="text-sm text-slate-500">No gallery photos yet.</p> : [...gallery].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map((image, index, sortedGallery) => (
                   <figure className="rounded-md border border-line p-2" key={image.id}>
-                    <img className="h-20 w-full rounded-md object-cover" src={resolveImage(image.imageUrl, website.heroImageUrl)} alt={image.altText || "Restaurant gallery"} onError={handleSafeImageError} />
-                    <figcaption className="mt-1 truncate text-xs text-slate-500">{image.altText || image.category}</figcaption>
+                    <img className="h-20 w-full rounded-md object-cover" src={resolveImage(image.imageUrl, "", defaultLooharImage)} alt={image.altText || "Restaurant gallery"} onError={handleSafeImageError} />
+                    <figcaption className="mt-1 text-xs text-slate-500"><strong className="block truncate text-ink">{image.title || image.altText || readable(image.category)}</strong>{image.caption ? <span className="block truncate">{image.caption}</span> : null}<span className="block">{image.published === false ? "Hidden from public site" : "Published"}</span></figcaption>
                     <div className="mt-2 flex flex-wrap gap-1">
                       <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => reorderGalleryImage(image, -1)} disabled={index === 0 || savingAction.startsWith("gallery:")}>Up</button>
                       <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => reorderGalleryImage(image, 1)} disabled={index === sortedGallery.length - 1 || savingAction.startsWith("gallery:")}>Down</button>
+                      <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => updateGalleryImage(image, { published: image.published === false }, image.published === false ? "Gallery photo published." : "Gallery photo hidden.")} disabled={savingAction === `gallery:${image.id}:update`}>{image.published === false ? "Publish" : "Hide"}</button>
                       <button className="button-muted min-h-8 px-2 py-1 text-xs" type="button" onClick={() => deleteGalleryImage(image.id)} disabled={savingAction === `gallery:${image.id}:delete`}><Trash2 size={13} />Delete</button>
                     </div>
                   </figure>
@@ -4612,10 +4685,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
                 <select className="select" value={socialForm.platform} onChange={(event) => setSocialForm({ ...socialForm, platform: event.target.value })}>
                   {Object.entries(socialPlatformLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
                 </select>
-                <input className="input" placeholder="Profile URL" value={socialForm.url} onChange={(event) => setSocialForm({ ...socialForm, url: event.target.value })} />
+                <input className="input" placeholder="https:// social profile URL" value={socialForm.url} onChange={(event) => setSocialForm({ ...socialForm, url: event.target.value })} />
                 <button className="button-primary" type="submit" disabled={savingAction === "social:save"}><Plus size={15} />{savingAction === "social:save" ? "Saving link..." : "Save link"}</button>
               </form>
-              <div className="mt-3 space-y-2">{socialLinks.length === 0 ? <p className="text-sm text-slate-500">No social links yet.</p> : socialLinks.map((link) => <div className="summary-line" key={link.id}><span>{socialPlatformLabels[link.platform] || readable(link.platform)}</span><button className="button-muted" type="button" onClick={() => deleteSocialLink(link.id)} disabled={savingAction === `social:${link.id}:delete`}><Trash2 size={14} />Remove</button></div>)}</div>
+              <div className="mt-3 space-y-2">{socialLinks.length === 0 ? <p className="text-sm text-slate-500">No social links yet.</p> : socialLinks.map((link) => <div className="summary-line gap-3" key={link.id}><span><strong>{socialPlatformLabels[link.platform] || readable(link.platform)}</strong><small className="block max-w-[220px] truncate text-slate-500">{link.enabled === false ? "Hidden" : "Visible"} - {link.url}</small></span><span className="flex flex-wrap gap-1"><button className="button-muted" type="button" onClick={() => updateSocialLink(link, { enabled: link.enabled === false }, link.enabled === false ? "Social link visible." : "Social link hidden.")} disabled={savingAction === `social:${link.id}:update`}>{link.enabled === false ? "Show" : "Hide"}</button><button className="button-muted" type="button" onClick={() => deleteSocialLink(link.id)} disabled={savingAction === `social:${link.id}:delete`}><Trash2 size={14} />Remove</button></span></div>)}</div>
             </div>
           </div>
         </div>
@@ -5460,7 +5533,7 @@ function CustomerOrderTrackingPage({ apiOnline, orderId }) {
             <div className="tracking-status">
               <StatusPill tone={["DELIVERED", "READY"].includes(order.status) ? "good" : "neutral"}>{readable(order.status)}</StatusPill>
               <p>{order.restaurant?.name}</p>
-              <a href={`/sites/${order.restaurant?.slug}/order`}>Open restaurant menu</a>
+              <a href={publicPathForSlug(order.restaurant?.slug, "order")}>Open restaurant menu</a>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="panel">
@@ -5481,7 +5554,7 @@ function CustomerOrderTrackingPage({ apiOnline, orderId }) {
               <h3 className="panel-title">Loohar mobile app</h3>
               <p className="text-sm text-slate-500">Native app deep links are prepared for a future mobile release. For now, this web tracking page is the secure fallback.</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <a className="button-primary" href={`/sites/${order.restaurant?.slug}/order`}>Reorder</a>
+                <a className="button-primary" href={publicPathForSlug(order.restaurant?.slug, "order")}>Reorder</a>
                 <button className="button-muted" type="button">Rate order placeholder</button>
               </div>
             </div>
@@ -5630,11 +5703,9 @@ function DiscoveryPage({ apiOnline }) {
           pickupEnabled: bundle.restaurant.pickupEnabled !== false,
           deliveryEnabled: bundle.restaurant.deliveryEnabled !== false,
           distanceMiles: null,
-          rating: 4.8,
-          reviewCount: 128,
           openStatus: "Hours vary",
-          websiteUrl: `/sites/${restaurant.slug}`,
-          orderUrl: `/sites/${restaurant.slug}/order`
+          websiteUrl: publicPathForSlug(restaurant.slug),
+          orderUrl: publicPathForSlug(restaurant.slug, "order")
         };
       });
   }
@@ -5796,7 +5867,8 @@ export default function App() {
   const isCustomerRoute = initialPath === "/customer" || initialPath.startsWith("/customer/");
   const isSiteAdminRoute = /^\/sites\/[^/]+\/admin\/?$/.test(initialPath);
   const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/");
-  const isSiteRoute = ((initialPath === "/sites" || initialPath.startsWith("/sites/")) && !isSiteAdminRoute) || isTenantHostPublicPath;
+  const isPathPublicSiteRoute = isPathBasedPublicRestaurantPath(initialPath);
+  const isSiteRoute = ((initialPath === "/sites" || initialPath.startsWith("/sites/")) && !isSiteAdminRoute) || isTenantHostPublicPath || isPathPublicSiteRoute;
   const orderRouteSlug = initialPath.startsWith("/order/") ? initialPath.split("/")[2] : null;
   const isAdminCreateRoute = initialPath === "/admin/business/new";
   const adminAuditMatch = initialPath.match(/^\/admin\/business\/([^/]+)\/audit\/?$/);

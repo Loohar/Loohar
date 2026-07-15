@@ -4,7 +4,7 @@ import { join } from "node:path";
 const appOrigin = (process.env.PRODUCTION_SMOKE_APP_URL || "https://loohar.com").replace(/\/+$/, "");
 const apiOrigin = (process.env.PRODUCTION_SMOKE_API_URL || appOrigin).replace(/\/+$/, "");
 const tenantRootDomain = process.env.PRODUCTION_SMOKE_TENANT_ROOT_DOMAIN || "loohar.com";
-const tenantSiteOrigin = (process.env.PRODUCTION_SMOKE_TENANT_SITE_URL || `https://loohar-restaurant.${tenantRootDomain}`).replace(/\/+$/, "");
+const tenantSiteOrigin = (process.env.PRODUCTION_SMOKE_TENANT_SITE_URL || appOrigin).replace(/\/+$/, "");
 const driverOrigin = (process.env.PRODUCTION_SMOKE_DRIVER_URL || "https://driver.loohar.com").replace(/\/+$/, "");
 const liveMode = process.env.PRODUCTION_SMOKE_LIVE === "true";
 const strictMode = process.env.PRODUCTION_SMOKE_STRICT === "true";
@@ -102,11 +102,11 @@ function bundleHasNoLocalUrls() {
 function staticQrUrlCheck() {
   const customerQr = `${appOrigin}/app/order/order-smoke?token=tracking-smoke`;
   const driverQr = `${driverOrigin}/order/order-smoke`;
-  const publicSite = `${tenantSiteOrigin}/order`;
+  const publicSite = `${appOrigin}/loohar-restaurant/order`;
   if (!customerQr.startsWith(appOrigin)) return fail("Customer QR production URL", customerQr);
   if (!driverQr.startsWith("https://driver.loohar.com")) return fail("Driver QR production URL", driverQr);
-  if (!publicSite.startsWith(`https://loohar-restaurant.${tenantRootDomain}`)) return fail("Public restaurant canonical URL", publicSite);
-  pass("Production QR URL config", "app, driver, and tenant public domains");
+  if (!publicSite.startsWith(`${appOrigin}/loohar-restaurant`)) return fail("Public restaurant canonical URL", publicSite);
+  pass("Production QR URL config", "app, driver, and path-based public restaurant URLs");
 }
 
 bundleHasNoLocalUrls();
@@ -115,18 +115,18 @@ staticQrUrlCheck();
 if (liveMode) {
   await requestJson("Production API health", `${apiOrigin}/health`, {}, (response, body) => response.ok && body?.ok === true);
   await requestJson("Production forgot password generic response", `${apiOrigin}/api/auth/forgot-password`, { method: "POST", body: JSON.stringify({ email: "missing-smoke-user@loohar.com" }) }, (response, body) => response.ok && body?.ok === true);
-  const publicSite = await requestJson("Production public site fallback load", `${apiOrigin}/api/public/sites/loohar-restaurant`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug));
+  const publicSite = await requestJson("Production public restaurant load", `${apiOrigin}/api/public/restaurants/loohar-restaurant`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug));
   assertNoLocalUrls("Production public site no-localhost URLs", publicSite);
   const tenantHostSite = await requestJson("Production tenant host resolver", `${apiOrigin}/api/public/site-by-host?host=loohar-restaurant.${tenantRootDomain}`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug));
   assertNoLocalUrls("Production tenant host no-localhost URLs", tenantHostSite);
   const kathmanduForbidden = ["Demo Bistro", "demo-bistro", "Seasonal American Bistro"];
-  const kathmanduSite = await requestJson("Production Kathmandu site resolves exact tenant", `${apiOrigin}/api/public/sites/kathmandu-restaurant-ii`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
+  const kathmanduSite = await requestJson("Production Kathmandu site resolves exact tenant", `${apiOrigin}/api/public/restaurants/kathmandu-restaurant-ii`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
   assertTenantIsolated("Production Kathmandu site has no Demo Bistro leakage", kathmanduSite, "kathmandu-restaurant-ii", kathmanduForbidden);
-  const kathmanduMenu = await requestJson("Production Kathmandu menu resolves exact tenant", `${apiOrigin}/api/public/sites/kathmandu-restaurant-ii/menu`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
+  const kathmanduMenu = await requestJson("Production Kathmandu menu resolves exact tenant", `${apiOrigin}/api/public/restaurants/kathmandu-restaurant-ii/menu`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
   assertTenantIsolated("Production Kathmandu menu has no Demo Bistro leakage", kathmanduMenu, "kathmandu-restaurant-ii", kathmanduForbidden);
   const kathmanduHost = await requestJson("Production Kathmandu tenant host resolver", `${apiOrigin}/api/public/site-by-host?host=kathmandu-restaurant-ii.${tenantRootDomain}`, {}, (response, body) => response.ok && body?.restaurant?.slug === "kathmandu-restaurant-ii");
   assertTenantIsolated("Production Kathmandu host has no Demo Bistro leakage", kathmanduHost, "kathmandu-restaurant-ii", kathmanduForbidden);
-  await requestJson("Production unknown tenant returns 404", `${apiOrigin}/api/public/sites/not-a-real-loohar-tenant`, {}, (response) => response.status === 404);
+  await requestJson("Production unknown tenant returns 404", `${apiOrigin}/api/public/restaurants/not-a-real-loohar-tenant`, {}, (response) => response.status === 404);
   await requestJson("Production upload endpoint rejects anonymous", `${apiOrigin}/api/uploads/gallery`, { method: "POST", body: JSON.stringify({}) }, (response) => response.status === 401);
   await requestJson("Production CORS allows Loohar app origin", `${apiOrigin}/health`, { headers: { Origin: appOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === appOrigin);
   await requestJson("Production CORS allows tenant subdomain origin", `${apiOrigin}/health`, { headers: { Origin: tenantSiteOrigin } }, (response) => response.ok && response.headers.get("access-control-allow-origin") === tenantSiteOrigin);

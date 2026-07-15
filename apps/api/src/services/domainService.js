@@ -1,7 +1,8 @@
 import { prisma } from "../config/prisma.js";
 import { tenantRootDomain } from "../config/urls.js";
+import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../../shared/reservedSlugs.js";
 
-const reservedLooharSubdomains = ["www", "admin", "app", "driver", "api", "sites"];
+const reservedLooharSubdomains = RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes("."));
 const reservedLooharHosts = new Set(["loohar.com", tenantRootDomain(), ...reservedLooharSubdomains.map((subdomain) => `${subdomain}.${tenantRootDomain()}`)]);
 const verifiedDomainStatuses = new Set(["VERIFIED", "SSL_PENDING", "ACTIVE"]);
 const activeSslStatuses = new Set(["SSL_PENDING", "ACTIVE"]);
@@ -25,8 +26,8 @@ export function normalizeDomainInput(value = "") {
 }
 
 export function normalizeTenantSlug(value = "") {
-  const slug = String(value || "").trim().toLowerCase();
-  return slugPattern.test(slug) ? slug : "";
+  const result = validatePublicSlug(value);
+  return result.ok && slugPattern.test(result.slug) ? result.slug : "";
 }
 
 export function isReservedPlatformHost(value = "") {
@@ -38,7 +39,7 @@ export function defaultTenantHost(slug) {
 }
 
 export function defaultTenantUrl(slug, suffix = "") {
-  return `https://${defaultTenantHost(slug)}${suffix.startsWith("/") || !suffix ? suffix : `/${suffix}`}`;
+  return `https://${tenantRootDomain()}/${slug}${suffix.startsWith("/") || !suffix ? suffix : `/${suffix}`}`;
 }
 
 function isCustomDomainActive(domain = {}) {
@@ -57,22 +58,32 @@ export function canonicalHostForDomain(restaurant = {}, domain = {}) {
 
 export function publicUrlForRestaurant(restaurant = {}, suffix = "") {
   const domain = restaurant.domains?.[0] || restaurant.domain || {};
-  const host = canonicalHostForDomain(restaurant, domain);
-  return `https://${host}${suffix.startsWith("/") || !suffix ? suffix : `/${suffix}`}`;
+  const customHost = normalizeDomainInput(domain.customDomain);
+  const canonicalHost = normalizeDomainInput(domain.canonicalDomain);
+  if (customHost && canonicalHost === customHost && isCustomDomainActive(domain)) {
+    return `https://${customHost}${suffix.startsWith("/") || !suffix ? suffix : `/${suffix}`}`;
+  }
+  if (customHost && domain.domainStatus === "ACTIVE" && activeSslStatuses.has(domain.sslStatus)) {
+    return `https://${customHost}${suffix.startsWith("/") || !suffix ? suffix : `/${suffix}`}`;
+  }
+  return defaultTenantUrl(restaurant.slug, suffix);
 }
 
 export function domainInfoForRestaurant(restaurant = {}, domain = {}) {
   const defaultHost = defaultTenantHost(domain.defaultSubdomain || restaurant.slug);
   const customHost = normalizeDomainInput(domain.customDomain);
   const canonicalHost = canonicalHostForDomain(restaurant, domain);
+  const defaultUrl = defaultTenantUrl(domain.defaultSubdomain || restaurant.slug);
+  const canonicalUrl = publicUrlForRestaurant({ ...restaurant, domains: [domain] });
   return {
     ...domain,
     defaultSubdomain: domain.defaultSubdomain || restaurant.slug,
-    defaultUrl: `https://${defaultHost}`,
+    defaultUrl,
+    defaultSubdomainUrl: `https://${defaultHost}`,
     customUrl: customHost ? `https://${customHost}` : null,
     primaryDomain: domain.primaryDomain || defaultHost,
     canonicalDomain: canonicalHost,
-    canonicalUrl: `https://${canonicalHost}`,
+    canonicalUrl,
     dnsTarget: domain.dnsTarget || "cname.vercel-dns.com",
     dnsInstructions: {
       type: "CNAME",
@@ -108,10 +119,10 @@ function slugFromTenantHost(host) {
   const root = tenantRootDomain();
   if (host.endsWith(`.${root}`)) {
     const label = host.slice(0, -(root.length + 1)).split(".").pop();
-    return label && !reservedLooharHosts.has(host) ? label : "";
+    return label && !reservedLooharHosts.has(host) ? normalizeTenantSlug(label) : "";
   }
   if (process.env.NODE_ENV !== "production" && host.endsWith(".localhost")) {
-    return host.replace(/\.localhost$/, "");
+    return normalizeTenantSlug(host.replace(/\.localhost$/, ""));
   }
   return "";
 }

@@ -621,11 +621,15 @@ model RestaurantGalleryImage {
   id           String     @id @default(cuid())
   restaurantId String
   imageUrl     String
+  title        String?
   altText      String?
+  caption      String?
   category     String     @default("food")
   sortOrder    Int        @default(0)
+  published    Boolean    @default(true)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 }
 
 model RestaurantSocialLink {
@@ -633,8 +637,11 @@ model RestaurantSocialLink {
   restaurantId String
   platform     String
   url          String
+  enabled      Boolean    @default(true)
+  sortOrder    Int        @default(0)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 }
 
 model RestaurantPrinterSettings {

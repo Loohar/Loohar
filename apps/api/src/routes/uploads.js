@@ -15,6 +15,16 @@ function requestedRestaurantId(req) {
   return req.tenantId;
 }
 
+function toBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  return fallback;
+}
+
 async function ensureUploadRestaurant(req, res) {
   const restaurantId = requestedRestaurantId(req);
   if (!restaurantId) {
@@ -72,7 +82,7 @@ router.post("/:kind", async (req, res, next) => {
           create: { restaurantId: restaurant.id, logoUrl: upload.publicUrl }
         })
       ]);
-      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "logo.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.logo.uploaded", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, restaurant: updatedRestaurant, website });
     }
 
@@ -82,7 +92,7 @@ router.post("/:kind", async (req, res, next) => {
         update: { heroImageUrl: upload.publicUrl },
         create: { restaurantId: restaurant.id, heroImageUrl: upload.publicUrl }
       });
-      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.hero.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.hero.uploaded", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, website });
     }
 
@@ -92,7 +102,7 @@ router.post("/:kind", async (req, res, next) => {
         update: { mobileHeroImageUrl: upload.publicUrl },
         create: { restaurantId: restaurant.id, mobileHeroImageUrl: upload.publicUrl }
       });
-      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.mobile_hero.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.hero.uploaded", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { variant: "mobile", provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, website });
     }
 
@@ -102,7 +112,7 @@ router.post("/:kind", async (req, res, next) => {
         update: { faviconUrl: upload.publicUrl },
         create: { restaurantId: restaurant.id, faviconUrl: upload.publicUrl }
       });
-      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.favicon.updated", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.favicon.uploaded", entityType: "RestaurantWebsiteSettings", entityId: website.id, metadata: { provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, website });
     }
 
@@ -112,7 +122,7 @@ router.post("/:kind", async (req, res, next) => {
         data: { imageUrl: upload.publicUrl },
         include: { category: true, options: true, optionGroups: { include: { options: true } } }
       });
-      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "menu.updated", entityType: "MenuItem", entityId: item.id, metadata: { imageUrl: upload.publicUrl, provider: upload.provider, key: upload.key } });
+      await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "menu.item.image.uploaded", entityType: "MenuItem", entityId: item.id, metadata: { imageUrl: upload.publicUrl, provider: upload.provider, key: upload.key } });
       return res.status(201).json({ upload, item });
     }
 
@@ -121,12 +131,15 @@ router.post("/:kind", async (req, res, next) => {
       data: {
         restaurantId: restaurant.id,
         imageUrl: upload.publicUrl,
+        title: req.body.title ? String(req.body.title).trim() : null,
         altText: req.body.altText || req.body.title || `${restaurant.businessName || restaurant.name} photo`,
+        caption: req.body.caption ? String(req.body.caption).trim() : null,
         category: req.body.category || "food",
-        sortOrder: Number.isInteger(req.body.sortOrder) ? req.body.sortOrder : count + 1
+        published: toBoolean(req.body.published, true),
+        sortOrder: Number.isInteger(Number(req.body.sortOrder)) ? Number(req.body.sortOrder) : count + 1
       }
     });
-    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "website.gallery.updated", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: { provider: upload.provider, key: upload.key } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "gallery.image.uploaded", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: { provider: upload.provider, key: upload.key } });
     return res.status(201).json({ upload, image });
   } catch (error) {
     next(error);

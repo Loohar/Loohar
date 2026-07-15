@@ -60,11 +60,11 @@ async function demoLogin(role) {
 await requestJson("API health", `${apiOrigin}/health`, {}, (response, body) => response.ok && body?.ok === true);
 await requestJson("API namespaced health", `${apiOrigin}/api/health`, {}, (response, body) => response.ok && body?.ok === true);
 await requestHead("Web root", `${webOrigin}/`);
-await requestHead("Web public site route", `${webOrigin}/sites/loohar-restaurant`);
+await requestHead("Web public restaurant route", `${webOrigin}/loohar-restaurant`);
 await requestHead("Web restaurant route", `${webOrigin}/restaurant/loohar-restaurant`);
 
-await requestJson("Public site bundle", `${apiOrigin}/api/public/sites/loohar-restaurant`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug) && Boolean(body?.seo) && Boolean(body?.jsonLd));
-await requestJson("Public menu bundle", `${apiOrigin}/api/public/sites/loohar-restaurant/menu`, {}, (response, body) => response.ok && Array.isArray(body?.menuItems));
+await requestJson("Public restaurant bundle", `${apiOrigin}/api/public/restaurants/loohar-restaurant`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.slug) && Boolean(body?.seo) && Boolean(body?.jsonLd));
+await requestJson("Public menu bundle", `${apiOrigin}/api/public/restaurants/loohar-restaurant/menu`, {}, (response, body) => response.ok && Array.isArray(body?.menuItems));
 await requestJson("Discovery search", `${apiOrigin}/api/public/discover?city=Denver&type=RESTAURANT`, {}, (response, body) => response.ok && Array.isArray(body?.restaurants));
 await requestJson("Customer restaurant menu API", `${apiOrigin}/api/customer/restaurants/loohar-restaurant`, {}, (response, body) => response.ok && Boolean(body?.restaurant?.id));
 await requestJson("Admin route rejects anonymous", `${apiOrigin}/api/admin/tenants`, {}, (response) => response.status === 401);

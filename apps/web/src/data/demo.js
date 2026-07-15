@@ -429,15 +429,15 @@ export function demoWebsiteBundle(slug = "demo-bistro") {
     complianceNote: profile.complianceNote,
     seo: { title: `${listing.businessName || listing.name} | Order Online`, description: profile.heroSubtitle, openGraphImage: profile.heroImageUrl },
     routes: {
-      home: `/sites/${listing.slug}`,
-      menu: `/sites/${listing.slug}/menu`,
-      order: `/sites/${listing.slug}/order`,
-      about: `/sites/${listing.slug}/about`,
-      contact: `/sites/${listing.slug}/contact`,
-      gallery: `/sites/${listing.slug}/gallery`,
-      loyalty: `/sites/${listing.slug}/loyalty`,
-      catering: `/sites/${listing.slug}/catering`,
-      careers: `/sites/${listing.slug}/careers`
+      home: `/${listing.slug}`,
+      menu: `/${listing.slug}/menu`,
+      order: `/${listing.slug}/order`,
+      about: `/${listing.slug}/about`,
+      contact: `/${listing.slug}/contact`,
+      gallery: `/${listing.slug}/gallery`,
+      loyalty: `/${listing.slug}/loyalty`,
+      catering: `/${listing.slug}/catering`,
+      careers: `/${listing.slug}/careers`
     }
   };
 }

@@ -1,4 +1,4 @@
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 const MIME_EXTENSIONS = new Map([
   ["image/png", "png"],
@@ -69,7 +69,7 @@ export function parseImageUpload({ dataUrl, base64, mimeType, fileName }) {
 
   const buffer = Buffer.from(rawBase64, "base64");
   if (!buffer.length) throw apiError("Uploaded image is empty.");
-  if (buffer.length > MAX_UPLOAD_BYTES) throw apiError("Image exceeds the 10MB upload limit.", 413);
+  if (buffer.length > MAX_UPLOAD_BYTES) throw apiError("Image exceeds the 5MB upload limit.", 413);
   if (!validateMagicBytes(buffer, detectedMime)) {
     throw apiError("Uploaded file content does not match the declared image type.");
   }
@@ -97,11 +97,11 @@ function encodeStoragePath(path) {
 }
 
 function storageFolderFor({ kind, menuItemId }) {
-  if (kind === "restaurant-logo") return "logo";
-  if (kind === "restaurant-hero") return "hero";
-  if (kind === "restaurant-mobile-hero") return "hero/mobile";
-  if (kind === "restaurant-favicon") return "favicon";
-  if (kind === "menu-item") return `menu/${String(menuItemId || "").replace(/[^a-z0-9_-]/gi, "-")}`;
+  if (kind === "restaurant-logo") return "branding/logo";
+  if (kind === "restaurant-hero") return "branding/hero";
+  if (kind === "restaurant-mobile-hero") return "branding/hero/mobile";
+  if (kind === "restaurant-favicon") return "branding/favicon";
+  if (kind === "menu-item") return `menu-items/${String(menuItemId || "").replace(/[^a-z0-9_-]/gi, "-")}`;
   if (kind === "gallery") return "gallery";
   return String(kind).replace(/[^a-z0-9_-]/gi, "-");
 }

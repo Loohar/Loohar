@@ -98,19 +98,12 @@ function completeWebsiteSettings(restaurant, websiteSettings) {
 }
 
 function completeGallery(restaurant, galleryImages, website) {
-  const ownedGalleryImages = (galleryImages || []).filter((image) => image.restaurantId === restaurant.id);
-  const source = ownedGalleryImages.length ? ownedGalleryImages : DEFAULT_GALLERY_IMAGES.map((image, index) => ({
-    id: `${restaurant.slug || restaurant.id}-gallery-${index + 1}`,
-    restaurantId: restaurant.id,
-    sortOrder: index + 1,
-    ...image,
-    altText: `${restaurant.businessName || restaurant.name} ${image.altText.toLowerCase()}`
-  }));
-  return source.map((image, index) => {
+  const ownedGalleryImages = (galleryImages || []).filter((image) => image.restaurantId === restaurant.id && image.published !== false);
+  return ownedGalleryImages.map((image, index) => {
     const fallback = DEFAULT_GALLERY_IMAGES[index % DEFAULT_GALLERY_IMAGES.length];
     return {
       ...image,
-      imageUrl: resolveImage(image.imageUrl, fallback.imageUrl, website.heroImageUrl),
+      imageUrl: resolveImage(image.imageUrl, "", fallback.imageUrl),
       altText: image.altText || `${restaurant.businessName || restaurant.name} photo`,
       category: image.category || fallback.category || "food"
     };
@@ -122,7 +115,7 @@ function completeCategories(categories, website, restaurantId) {
     ...category,
     items: (category.items || []).filter((item) => item.restaurantId === restaurantId).map((item, itemIndex) => ({
       ...item,
-      imageUrl: resolveImage(item.imageUrl, website.heroImageUrl, DEFAULT_MENU_IMAGES[(categoryIndex + itemIndex) % DEFAULT_MENU_IMAGES.length])
+      imageUrl: hasImageUrl(item.imageUrl) ? item.imageUrl.trim() : null
     }))
   }));
 }
@@ -140,8 +133,8 @@ export async function getWebsiteBundleBySlug(slug) {
       loyaltyRewards: { where: { active: true }, orderBy: { pointsRequired: "asc" } },
       websiteSettings: true,
       domains: true,
-      galleryImages: { orderBy: { sortOrder: "asc" } },
-      socialLinks: true
+      galleryImages: { where: { published: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+      socialLinks: { where: { enabled: true }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }
     }
   });
   if (!restaurant || restaurant.status !== "ACTIVE") return null;
@@ -158,5 +151,5 @@ export async function getWebsiteBundleBySlug(slug) {
   };
   const gallery = completeGallery(restaurant, restaurant.galleryImages, website);
   const featuredItems = categories.flatMap((category) => category.items || []).filter((item) => item.featured || item.recommended).slice(0, 8);
-  return { restaurant: completedRestaurant, website, domain, domainInfo: domain, gallery, socialLinks: restaurant.socialLinks, featuredItems };
+  return { restaurant: completedRestaurant, website, domain, domainInfo: domain, gallery, socialLinks: restaurant.socialLinks.filter((link) => link.enabled !== false), featuredItems };
 }

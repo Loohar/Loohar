@@ -21,6 +21,7 @@ import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
+import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -33,7 +34,7 @@ if (isProduction && configuredCorsOrigins.includes("*")) {
   throw new Error("Wildcard CORS is not allowed in production. Set CORS_ORIGINS to explicit Loohar domains.");
 }
 const localDevHosts = new Set(["localhost", ["127", "0", "0", "1"].join("."), "::1"]);
-const reservedCorsSubdomains = new Set(["admin", "api", "app", "driver", "sites", "www"]);
+const reservedCorsSubdomains = new Set(RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes(".")));
 const allowLocalCors = !isProduction || process.env.ALLOW_LOCAL_CORS === "true";
 const allowTenantSubdomainCors = process.env.ALLOW_TENANT_SUBDOMAIN_CORS === "true";
 function isLocalDevOrigin(origin = "") {

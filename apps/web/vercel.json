@@ -1,4 +1,16 @@
 {
+  "redirects": [
+    {
+      "source": "/sites/:slug",
+      "destination": "/:slug",
+      "permanent": true
+    },
+    {
+      "source": "/sites/:slug/:path*",
+      "destination": "/:slug/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/:path*",
@@ -7,6 +19,14 @@
     {
       "source": "/health",
       "destination": "https://loohar-api.onrender.com/health"
+    },
+    {
+      "source": "/:slug/sitemap.xml",
+      "destination": "https://loohar-api.onrender.com/api/public/restaurants/:slug/sitemap.xml"
+    },
+    {
+      "source": "/:slug/robots.txt",
+      "destination": "https://loohar-api.onrender.com/api/public/restaurants/:slug/robots.txt"
     },
     {
       "source": "/(.*)",

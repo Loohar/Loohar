@@ -205,6 +205,27 @@ function isValidHttpUrl(value = "") {
   }
 }
 
+function isValidHttpsUrl(value = "") {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function toBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  return fallback;
+}
+
+const allowedSocialPlatforms = new Set(["facebook", "instagram", "tiktok", "x", "youtube", "linkedin", "yelp", "google", "google_business"]);
+
 const printerEditableFields = [
   "kitchenPrinterName",
   "kitchenPrinterEnabled",
@@ -1855,7 +1876,7 @@ async function verifyDomain(req, res, next) {
 
 async function getGallery(req, res, next) {
   try {
-    const gallery = await prisma.restaurantGalleryImage.findMany({ where: { restaurantId: restaurantIdFor(req) }, orderBy: { sortOrder: "asc" } });
+    const gallery = await prisma.restaurantGalleryImage.findMany({ where: { restaurantId: restaurantIdFor(req) }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
     res.json({ gallery });
   } catch (error) {
     next(error);
@@ -1869,13 +1890,16 @@ async function addGalleryImage(req, res, next) {
     const image = await prisma.restaurantGalleryImage.create({
       data: {
         imageUrl: req.body.imageUrl,
+        title: req.body.title ? String(req.body.title).trim() : null,
         altText: req.body.altText || req.body.title || "Restaurant photo",
+        caption: req.body.caption ? String(req.body.caption).trim() : null,
         category: req.body.category || "food",
+        published: toBoolean(req.body.published, true),
         sortOrder: Number(req.body.sortOrder || 0),
         restaurantId
       }
     });
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.created", entityType: "RestaurantGalleryImage", entityId: image.id });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "gallery.image.created", entityType: "RestaurantGalleryImage", entityId: image.id });
     res.status(201).json({ image });
   } catch (error) {
     next(error);
@@ -1887,12 +1911,15 @@ async function updateGalleryImage(req, res, next) {
     const restaurantId = restaurantIdFor(req);
     const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Gallery image not found" });
-    const data = pickEditable(req.body, ["altText", "category", "sortOrder"]);
+    const data = pickEditable(req.body, ["title", "altText", "caption", "category", "sortOrder", "published"]);
+    if (data.title !== undefined) data.title = data.title ? String(data.title).trim() : null;
     if (data.altText !== undefined) data.altText = data.altText ? String(data.altText).trim() : null;
+    if (data.caption !== undefined) data.caption = data.caption ? String(data.caption).trim() : null;
     if (data.category !== undefined) data.category = data.category ? String(data.category).trim() : "food";
     if (data.sortOrder !== undefined) data.sortOrder = Number(data.sortOrder);
+    if (data.published !== undefined) data.published = toBoolean(data.published, existing.published);
     const image = await prisma.restaurantGalleryImage.update({ where: { id: existing.id }, data });
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.updated", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: data });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "gallery.image.updated", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: data });
     res.json({ image });
   } catch (error) {
     next(error);
@@ -1905,7 +1932,7 @@ async function deleteGalleryImage(req, res, next) {
     const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Gallery image not found" });
     await prisma.restaurantGalleryImage.delete({ where: { id: existing.id } });
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.gallery.deleted", entityType: "RestaurantGalleryImage", entityId: existing.id });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "gallery.image.deleted", entityType: "RestaurantGalleryImage", entityId: existing.id });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1914,7 +1941,7 @@ async function deleteGalleryImage(req, res, next) {
 
 async function getSocialLinks(req, res, next) {
   try {
-    const socialLinks = await prisma.restaurantSocialLink.findMany({ where: { restaurantId: restaurantIdFor(req) }, orderBy: { createdAt: "asc" } });
+    const socialLinks = await prisma.restaurantSocialLink.findMany({ where: { restaurantId: restaurantIdFor(req) }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
     res.json({ socialLinks });
   } catch (error) {
     next(error);
@@ -1925,15 +1952,39 @@ async function addSocialLink(req, res, next) {
   try {
     const restaurantId = restaurantIdFor(req);
     const platform = String(req.body.platform || "").trim().toLowerCase();
-    const allowedPlatforms = new Set(["facebook", "instagram", "tiktok", "x", "youtube", "linkedin"]);
-    if (!allowedPlatforms.has(platform)) return res.status(400).json({ error: "Choose a supported social platform." });
-    if (!isValidHttpUrl(req.body.url)) return res.status(400).json({ error: "Enter a valid http or https URL." });
+    if (!allowedSocialPlatforms.has(platform)) return res.status(400).json({ error: "Choose a supported social platform." });
+    if (!isValidHttpsUrl(req.body.url)) return res.status(400).json({ error: "Enter a valid https URL." });
+    const data = {
+      url: req.body.url.trim(),
+      enabled: toBoolean(req.body.enabled, true),
+      sortOrder: Number(req.body.sortOrder || 0)
+    };
     const existing = await prisma.restaurantSocialLink.findFirst({ where: { restaurantId, platform } });
     const socialLink = existing
-      ? await prisma.restaurantSocialLink.update({ where: { id: existing.id }, data: { url: req.body.url.trim() } })
-      : await prisma.restaurantSocialLink.create({ data: { platform, url: req.body.url.trim(), restaurantId } });
+      ? await prisma.restaurantSocialLink.update({ where: { id: existing.id }, data })
+      : await prisma.restaurantSocialLink.create({ data: { ...data, platform, restaurantId } });
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: existing ? "website.social.updated" : "website.social.created", entityType: "RestaurantSocialLink", entityId: socialLink.id, metadata: { platform } });
     res.status(existing ? 200 : 201).json({ socialLink });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateSocialLink(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.restaurantSocialLink.findFirst({ where: { id: req.params.id, restaurantId } });
+    if (!existing) return res.status(404).json({ error: "Social link not found" });
+    const data = pickEditable(req.body, ["url", "enabled", "sortOrder"]);
+    if (data.url !== undefined) {
+      if (!isValidHttpsUrl(data.url)) return res.status(400).json({ error: "Enter a valid https URL." });
+      data.url = data.url.trim();
+    }
+    if (data.enabled !== undefined) data.enabled = toBoolean(data.enabled, existing.enabled);
+    if (data.sortOrder !== undefined) data.sortOrder = Number(data.sortOrder);
+    const socialLink = await prisma.restaurantSocialLink.update({ where: { id: existing.id }, data });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "website.social.updated", entityType: "RestaurantSocialLink", entityId: socialLink.id, metadata: data });
+    res.json({ socialLink });
   } catch (error) {
     next(error);
   }
@@ -1963,6 +2014,7 @@ router.patch("/gallery/:id", updateGalleryImage);
 router.delete("/gallery/:id", deleteGalleryImage);
 router.get("/social-links", getSocialLinks);
 router.post("/social-links", addSocialLink);
+router.patch("/social-links/:id", updateSocialLink);
 router.delete("/social-links/:id", deleteSocialLink);
 router.get("/:restaurantId/website", getWebsite);
 router.patch("/:restaurantId/website", updateWebsite);
@@ -1975,6 +2027,7 @@ router.patch("/:restaurantId/gallery/:id", updateGalleryImage);
 router.delete("/:restaurantId/gallery/:id", deleteGalleryImage);
 router.get("/:restaurantId/social-links", getSocialLinks);
 router.post("/:restaurantId/social-links", addSocialLink);
+router.patch("/:restaurantId/social-links/:id", updateSocialLink);
 router.delete("/:restaurantId/social-links/:id", deleteSocialLink);
 
 export default router;

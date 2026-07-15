@@ -12,6 +12,7 @@ import { defaultTenantHost, domainInfoForRestaurant, domainUpdateDataForRestaura
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
+import { validatePublicSlug } from "../../../shared/reservedSlugs.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("SUPER_ADMIN"));
@@ -110,7 +111,7 @@ const restaurantSchema = z.object({
 function normalizeTenantPayload(req, res, next) {
   const body = { ...req.body };
   const businessName = body.businessName || body.name;
-  const slug = body.slug || businessName?.toLowerCase()?.trim()?.replace(/[^a-z0-9]+/g, "-")?.replace(/^-+|-+$/g, "");
+  const slug = (body.slug || businessName?.toLowerCase()?.trim()?.replace(/[^a-z0-9]+/g, "-")?.replace(/^-+|-+$/g, "") || "").toLowerCase();
   req.body = {
     ...body,
     name: body.name || businessName,
@@ -189,6 +190,9 @@ router.get("/dashboard-summary", async (req, res, next) => {
 async function createBusiness(req, res, next) {
   try {
     const { ownerEmail, ownerPassword: _ownerPassword, ownerTemporaryPassword: _providedOwnerTemporaryPassword, restaurantAdminEmail: requestedRestaurantAdminEmail, planCode, websiteEnabled, cuisineType, ...restaurantData } = req.body;
+    const slugValidation = validatePublicSlug(restaurantData.slug);
+    if (!slugValidation.ok) return res.status(400).json({ error: slugValidation.error });
+    restaurantData.slug = slugValidation.slug;
     const normalizedOwnerEmail = normalizeEmail(ownerEmail);
     const restaurantAdminEmail = normalizeEmail(requestedRestaurantAdminEmail || generatedAdminEmail(normalizedOwnerEmail, restaurantData.slug));
     const [existingSlug, existingOwner, existingAdmin] = await Promise.all([
@@ -362,6 +366,11 @@ async function updateBusiness(req, res, next) {
     delete data.customDomain;
     delete data.domainStatus;
     if (data.name && !data.businessName) data.businessName = data.name;
+    if (data.slug) {
+      const slugValidation = validatePublicSlug(data.slug);
+      if (!slugValidation.ok) return res.status(400).json({ error: slugValidation.error });
+      data.slug = slugValidation.slug;
+    }
     const existingSlug = data.slug ? await prisma.restaurant.findFirst({ where: { slug: data.slug, NOT: { id: restaurantId } }, select: { id: true } }) : null;
     if (existingSlug) return res.status(409).json({ error: `Slug "${data.slug}" is already used by another tenant.` });
 

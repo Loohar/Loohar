@@ -46,6 +46,15 @@ function belongsToTenant(record = {}, restaurantId) {
   return !record?.restaurantId || record.restaurantId === restaurantId;
 }
 
+function isPublicHttpsUrl(value = "") {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function sanitizePublicBundle(bundle, requestId) {
   if (!bundle?.restaurant?.id) return bundle;
   const restaurantId = bundle.restaurant.id;
@@ -64,12 +73,12 @@ function sanitizePublicBundle(bundle, requestId) {
       })
     }));
   const gallery = (bundle.gallery || []).filter((image) => {
-    const ok = belongsToTenant(image, restaurantId);
+    const ok = belongsToTenant(image, restaurantId) && image.published !== false;
     if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: image.restaurantId, recordType: "RestaurantGalleryImage", recordId: image.id });
     return ok;
   });
   const socialLinks = (bundle.socialLinks || []).filter((link) => {
-    const ok = belongsToTenant(link, restaurantId);
+    const ok = belongsToTenant(link, restaurantId) && link.enabled !== false && isPublicHttpsUrl(link.url);
     if (!ok) logIntegrityViolation({ requestId, resolvedTenantId: restaurantId, relatedRecordTenantId: link.restaurantId, recordType: "RestaurantSocialLink", recordId: link.id });
     return ok;
   });
@@ -203,11 +212,6 @@ function buildJsonLd(bundle, req) {
       longitude: restaurant.longitude
     } : undefined,
     openingHoursSpecification: openingHoursSpecifications(restaurant.storeHoursJson || {}),
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: "4.8",
-      reviewCount: "128"
-    },
     hasMenu: {
       "@type": "Menu",
       name: `${restaurantName(restaurant)} menu`,
@@ -279,7 +283,7 @@ function buildPublicSiteResponse(bundle, req) {
       loyalty: `${domainInfo.canonicalUrl}/loyalty`,
       catering: `${domainInfo.canonicalUrl}/catering`,
       careers: `${domainInfo.canonicalUrl}/careers`,
-      preview: `/sites/${bundle.restaurant.slug}`
+      preview: `/${bundle.restaurant.slug}`
     }
   };
 }
@@ -486,7 +490,7 @@ async function discoverRestaurants(req, res, next) {
         businessType: restaurant.businessType,
         cuisine: website.cuisineType || restaurant.businessType,
         logoUrl: website.logoUrl || restaurant.logoUrl,
-        heroImageUrl: website.heroImageUrl || bundle.gallery?.[0]?.imageUrl,
+        heroImageUrl: website.heroImageUrl || null,
         address,
         city: restaurant.city,
         state: restaurant.state,
@@ -496,8 +500,6 @@ async function discoverRestaurants(req, res, next) {
         deliveryEnabled: restaurant.deliveryEnabled,
         deliveryRadiusMiles: restaurant.deliveryRadiusMiles || 5,
         distanceMiles: distance,
-        rating: 4.8,
-        reviewCount: 128,
         openStatus: "Hours vary",
         websiteUrl: publicUrlForRestaurant(restaurant),
         orderUrl: publicUrlForRestaurant(restaurant, "/order")
@@ -524,6 +526,7 @@ router.get("/discover", discoverRestaurants);
 router.get("/site-by-host", sendWebsiteBundleByHost);
 router.get("/site-by-host/sitemap.xml", sendSitemapByHost);
 router.get("/site-by-host/robots.txt", sendRobotsByHost);
+router.get("/restaurants/:slug", sendWebsiteBundle);
 router.get("/restaurants/:slug/website", sendWebsiteBundle);
 router.get("/restaurants/:slug/site", sendSiteBundle);
 router.get("/restaurants/:slug/menu", sendMenu);
@@ -531,6 +534,25 @@ router.get("/restaurants/:slug/menu/:itemId", sendMenuItem);
 router.get("/restaurants/:slug/gallery", sendGallery);
 router.get("/restaurants/:slug/loyalty", sendLoyalty);
 router.get("/restaurants/:slug/order-config", sendOrderConfig);
+router.get("/restaurants/:slug/sitemap.xml", async (req, res, next) => {
+  try {
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
+    if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("Restaurant website not found");
+    res.type("application/xml").send(sitemapXml(domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl));
+  } catch (error) {
+    next(error);
+  }
+});
+router.get("/restaurants/:slug/robots.txt", async (req, res, next) => {
+  try {
+    const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
+    if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).type("text/plain").send("User-agent: *\nDisallow: /\n");
+    const baseUrl = domainInfoForRestaurant(bundle.restaurant, bundle.domain).canonicalUrl;
+    res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/sites/:slug", sendWebsiteBundle);
 router.get("/sites/:slug/site", sendSiteBundle);
