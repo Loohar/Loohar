@@ -9,23 +9,66 @@ import { normalizeEmail } from "../../utils/authSecurity.js";
 import { assertStripePlatformConfigured, stripeForm, stripeRequest } from "../paymentProviders/stripeRest.js";
 
 const PLAN_PRICE_ENV = {
-  STARTER: "STRIPE_PLATFORM_PRICE_STARTER",
-  PROFESSIONAL: "STRIPE_PLATFORM_PRICE_PROFESSIONAL",
-  ENTERPRISE: "STRIPE_PLATFORM_PRICE_ENTERPRISE"
+  STARTER: {
+    MONTHLY: "STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID",
+    ANNUAL: "STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID",
+    LEGACY: "STRIPE_PLATFORM_PRICE_STARTER"
+  },
+  PROFESSIONAL: {
+    MONTHLY: "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID",
+    ANNUAL: "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID",
+    LEGACY: "STRIPE_PLATFORM_PRICE_PROFESSIONAL"
+  },
+  ENTERPRISE: {
+    MONTHLY: "STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID",
+    ANNUAL: "STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID",
+    LEGACY: "STRIPE_PLATFORM_PRICE_ENTERPRISE"
+  }
 };
 
 const PLAN_PRICES = {
-  STARTER: Number(process.env.PLATFORM_PLAN_STARTER_CENTS || 9900),
-  PROFESSIONAL: Number(process.env.PLATFORM_PLAN_PROFESSIONAL_CENTS || 19900),
-  ENTERPRISE: Number(process.env.PLATFORM_PLAN_ENTERPRISE_CENTS || 39900)
+  STARTER: {
+    MONTHLY: Number(process.env.PLATFORM_PLAN_STARTER_CENTS || process.env.PLATFORM_PLAN_STARTER_MONTHLY_CENTS || 9900),
+    ANNUAL: Number(process.env.PLATFORM_PLAN_STARTER_ANNUAL_CENTS || 99000)
+  },
+  PROFESSIONAL: {
+    MONTHLY: Number(process.env.PLATFORM_PLAN_PROFESSIONAL_CENTS || process.env.PLATFORM_PLAN_PROFESSIONAL_MONTHLY_CENTS || 19900),
+    ANNUAL: Number(process.env.PLATFORM_PLAN_PROFESSIONAL_ANNUAL_CENTS || 199000)
+  },
+  ENTERPRISE: {
+    MONTHLY: Number(process.env.PLATFORM_PLAN_ENTERPRISE_CENTS || process.env.PLATFORM_PLAN_ENTERPRISE_MONTHLY_CENTS || 39900),
+    ANNUAL: Number(process.env.PLATFORM_PLAN_ENTERPRISE_ANNUAL_CENTS || 399000)
+  }
+};
+
+const PLAN_FEATURES = {
+  STARTER: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding"],
+  PROFESSIONAL: ["Everything in Starter", "Delivery workflows", "Driver management", "Loyalty", "Coupons", "Delivery zones"],
+  ENTERPRISE: ["Everything in Professional", "Advanced analytics", "Multi-location foundation", "Priority support"]
 };
 
 function slugify(value = "") {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 }
 
-function planPriceId(planCode) {
-  return process.env[PLAN_PRICE_ENV[planCode]];
+function normalizePlanCode(planCode) {
+  return ["STARTER", "PROFESSIONAL", "ENTERPRISE"].includes(planCode) ? planCode : "STARTER";
+}
+
+function normalizeBillingInterval(value) {
+  return String(value || "MONTHLY").trim().toUpperCase() === "ANNUAL" ? "ANNUAL" : "MONTHLY";
+}
+
+function planPriceId(planCode, billingInterval = "MONTHLY") {
+  const code = normalizePlanCode(planCode);
+  const interval = normalizeBillingInterval(billingInterval);
+  const envs = PLAN_PRICE_ENV[code];
+  return process.env[envs[interval]] || (interval === "MONTHLY" ? process.env[envs.LEGACY] : "");
+}
+
+function sanitizeRegistrationPayload(body = {}) {
+  const { password, confirmPassword, ownerPassword, ownerTemporaryPassword, passwordHash, ...safeBody } = body;
+  return safeBody;
 }
 
 const defaultModules = ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"];
@@ -216,6 +259,15 @@ async function activatePaidRegistration({ pending, plan, stripeCustomerId, strip
       where: { stripeCheckoutSessionId, restaurantId: null },
       data: { restaurantId: createdRestaurant.id }
     });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: createdRestaurant.id,
+        action: "registration.provisioning.started",
+        entityType: "PendingRegistration",
+        entityId: pending.id,
+        metadataJson: { slug: pending.slug, planCode: pending.planCode }
+      }
+    });
     await tx.pendingRegistration.update({
       where: { id: pending.id },
       data: {
@@ -236,82 +288,180 @@ async function activatePaidRegistration({ pending, plan, stripeCustomerId, strip
         processedAt: new Date()
       }
     });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: createdRestaurant.id,
+        action: "registration.tenant.created",
+        entityType: "Restaurant",
+        entityId: createdRestaurant.id,
+        metadataJson: { pendingRegistrationId: pending.id, slug: pending.slug }
+      }
+    });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: createdRestaurant.id,
+        actorUserId: owner.id,
+        action: "registration.owner.assigned",
+        entityType: "User",
+        entityId: owner.id,
+        metadataJson: { pendingRegistrationId: pending.id, role: owner.role }
+      }
+    });
+    await tx.auditLog.create({
+      data: {
+        restaurantId: createdRestaurant.id,
+        action: "registration.completed",
+        entityType: "PendingRegistration",
+        entityId: pending.id,
+        metadataJson: { slug: pending.slug, restaurantId: createdRestaurant.id }
+      }
+    });
     return tx.restaurant.findUnique({
       where: { id: createdRestaurant.id },
       include: { users: true }
     });
   }, { timeout: 20_000 });
 
-  const setupUsers = (restaurant?.users || []).filter((user) => ["TENANT_OWNER", "RESTAURANT_ADMIN"].includes(user.role));
+  const setupUsers = (restaurant?.users || []).filter((user) => user.temporaryPassword && ["TENANT_OWNER", "RESTAURANT_ADMIN"].includes(user.role));
   await Promise.allSettled(setupUsers.map((user) => sendAccountSetupEmail({ user })));
   await recordAudit({ restaurantId: restaurant?.id, action: "business.created", entityType: "Business", entityId: restaurant?.id, metadata: { source: "platform_billing_webhook" } });
   return restaurant;
 }
 
 export async function ensurePlatformPlan(planCode) {
-  const code = ["STARTER", "PROFESSIONAL", "ENTERPRISE"].includes(planCode) ? planCode : "STARTER";
+  const code = normalizePlanCode(planCode);
   const name = code[0] + code.slice(1).toLowerCase();
   return prisma.platformPlan.upsert({
     where: { code },
     create: {
       code,
       name,
-      monthlyPriceCents: PLAN_PRICES[code],
-      stripePriceIdMonthly: planPriceId(code) || null,
-      featuresJson: { source: "loohar_default" }
+      monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
+      annualPriceCents: PLAN_PRICES[code].ANNUAL,
+      stripePriceIdMonthly: planPriceId(code, "MONTHLY") || null,
+      stripePriceIdAnnual: planPriceId(code, "ANNUAL") || null,
+      featuresJson: { source: "loohar_default", features: PLAN_FEATURES[code] }
     },
     update: {
-      monthlyPriceCents: PLAN_PRICES[code],
-      stripePriceIdMonthly: planPriceId(code) || null
+      monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
+      annualPriceCents: PLAN_PRICES[code].ANNUAL,
+      stripePriceIdMonthly: planPriceId(code, "MONTHLY") || null,
+      stripePriceIdAnnual: planPriceId(code, "ANNUAL") || null,
+      featuresJson: { source: "loohar_default", features: PLAN_FEATURES[code] }
     }
   });
 }
 
+export async function getPlatformPlans() {
+  const plans = await Promise.all(["STARTER", "PROFESSIONAL", "ENTERPRISE"].map((code) => ensurePlatformPlan(code)));
+  return {
+    plans: plans
+      .filter((plan) => plan.active)
+      .map((plan) => ({
+        code: plan.code,
+        displayName: plan.name,
+        description: `${plan.name} plan for restaurant-owned direct ordering.`,
+        monthlyPriceCents: plan.monthlyPriceCents,
+        annualPriceCents: plan.annualPriceCents,
+        features: PLAN_FEATURES[plan.code] || [],
+        trialDays: Number(process.env.PLATFORM_BILLING_TRIAL_DAYS || 0),
+        locationLimit: plan.code === "ENTERPRISE" ? null : 1,
+        staffLimit: plan.code === "STARTER" ? 5 : plan.code === "PROFESSIONAL" ? 25 : null,
+        active: plan.active,
+        monthlyCheckoutAvailable: Boolean(plan.stripePriceIdMonthly),
+        annualCheckoutAvailable: Boolean(plan.stripePriceIdAnnual),
+        checkoutAvailable: Boolean(plan.stripePriceIdMonthly || plan.stripePriceIdAnnual)
+      }))
+  };
+}
+
 export async function createPlatformCheckout({ body, user }) {
   assertStripePlatformConfigured();
-  const planCode = ["STARTER", "PROFESSIONAL", "ENTERPRISE"].includes(body.planCode || body.plan) ? (body.planCode || body.plan) : "STARTER";
-  const priceId = planPriceId(planCode);
+  const billingInterval = normalizeBillingInterval(body.billingInterval);
+  const requestedPlanCode = normalizePlanCode(body.planCode || body.plan);
+  let pending;
+  let planCode = requestedPlanCode;
+  if (body.registrationId) {
+    pending = await prisma.pendingRegistration.findUnique({ where: { id: body.registrationId } });
+    if (!pending) {
+      const error = new Error("Pending registration not found.");
+      error.status = 404;
+      throw error;
+    }
+    if (pending.restaurantId || ["TENANT_CREATED", "COMPLETED"].includes(pending.status)) {
+      const error = new Error("Registration has already been provisioned.");
+      error.status = 409;
+      throw error;
+    }
+    if (pending.expiresAt && pending.expiresAt < new Date()) {
+      await prisma.pendingRegistration.update({ where: { id: pending.id }, data: { status: "EXPIRED" } });
+      const error = new Error("This registration reservation has expired. Start again to reserve the slug.");
+      error.status = 410;
+      throw error;
+    }
+    planCode = normalizePlanCode(body.planCode || pending.planCode);
+  }
+  const priceId = planPriceId(planCode, billingInterval);
   if (!priceId) {
-    const error = new Error(`Missing Stripe platform price ID for ${planCode}. Set ${PLAN_PRICE_ENV[planCode]}.`);
+    const envName = PLAN_PRICE_ENV[planCode][billingInterval] || PLAN_PRICE_ENV[planCode].LEGACY;
+    const error = new Error(`Missing Stripe platform price ID for ${planCode} ${billingInterval}. Set ${envName}.`);
     error.status = 503;
     throw error;
   }
   await ensurePlatformPlan(planCode);
-  const slug = slugify(body.slug || body.businessName || body.publicBusinessName);
+  const safeBody = sanitizeRegistrationPayload(body);
+  const slug = pending?.slug || slugify(body.slug || body.businessName || body.publicBusinessName);
   const businessType = normalizeBusinessType(body.businessType);
-  const pending = await prisma.pendingRegistration.upsert({
-    where: { slug },
-    create: {
-      ownerEmail: body.ownerEmail || user?.email,
-      ownerName: body.ownerName || user?.name,
-      businessName: body.businessName || body.publicBusinessName,
-      publicBusinessName: body.publicBusinessName || body.businessName,
-      slug,
-      businessType,
-      planCode,
-      status: "STARTED",
-      registrationJson: body,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000)
-    },
-    update: {
-      ownerEmail: body.ownerEmail || user?.email,
-      ownerName: body.ownerName || user?.name,
-      businessName: body.businessName || body.publicBusinessName,
-      publicBusinessName: body.publicBusinessName || body.businessName,
-      businessType,
-      planCode,
-      status: "STARTED",
-      registrationJson: body,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000)
-    }
-  });
+  if (!pending) {
+    pending = await prisma.pendingRegistration.upsert({
+      where: { slug },
+      create: {
+        ownerEmail: body.ownerEmail || user?.email,
+        normalizedEmail: normalizeEmail(body.ownerEmail || user?.email),
+        ownerName: body.ownerName || user?.name,
+        businessName: body.businessName || body.publicBusinessName,
+        publicBusinessName: body.publicBusinessName || body.businessName,
+        slug,
+        businessType,
+        planCode,
+        billingInterval,
+        status: "STARTED",
+        registrationJson: { ...safeBody, billingInterval },
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      },
+      update: {
+        ownerEmail: body.ownerEmail || user?.email,
+        normalizedEmail: normalizeEmail(body.ownerEmail || user?.email),
+        ownerName: body.ownerName || user?.name,
+        businessName: body.businessName || body.publicBusinessName,
+        publicBusinessName: body.publicBusinessName || body.businessName,
+        businessType,
+        planCode,
+        billingInterval,
+        status: "STARTED",
+        registrationJson: { ...safeBody, billingInterval },
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000)
+      }
+    });
+  } else {
+    pending = await prisma.pendingRegistration.update({
+      where: { id: pending.id },
+      data: {
+        planCode,
+        billingInterval,
+        status: "PAYMENT_PENDING",
+        registrationJson: { ...(pending.registrationJson || {}), planCode, billingInterval }
+      }
+    });
+  }
   await prisma.slugReservation.upsert({
     where: { slug },
     create: { slug, ownerEmail: pending.ownerEmail, expiresAt: pending.expiresAt },
     update: { ownerEmail: pending.ownerEmail, expiresAt: pending.expiresAt }
   });
 
-  const successUrl = process.env.PLATFORM_BILLING_SUCCESS_URL || `${process.env.APP_URL || "https://loohar.com"}/register/success?session_id={CHECKOUT_SESSION_ID}`;
+  const successUrlTemplate = process.env.PLATFORM_BILLING_SUCCESS_URL || `${process.env.APP_URL || "https://loohar.com"}/register/status?registrationId={REGISTRATION_ID}&session_id={CHECKOUT_SESSION_ID}`;
+  const successUrl = successUrlTemplate.replaceAll("{REGISTRATION_ID}", pending.id);
   const cancelUrl = process.env.PLATFORM_BILLING_CANCEL_URL || `${process.env.APP_URL || "https://loohar.com"}/register?billing=cancelled`;
   const form = stripeForm({
     mode: "subscription",
@@ -324,7 +474,8 @@ export async function createPlatformCheckout({ body, user }) {
     "metadata[domain]": "PLATFORM_BILLING",
     "metadata[pendingRegistrationId]": pending.id,
     "metadata[slug]": pending.slug,
-    "metadata[planCode]": planCode
+    "metadata[planCode]": planCode,
+    "metadata[billingInterval]": billingInterval
   });
   const session = await stripeRequest({ secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY, path: "/checkout/sessions", body: form });
   const updated = await prisma.pendingRegistration.update({
@@ -332,7 +483,8 @@ export async function createPlatformCheckout({ body, user }) {
     data: {
       status: "CHECKOUT_CREATED",
       stripeCheckoutSessionId: session.id,
-      stripeCustomerId: typeof session.customer === "string" ? session.customer : null
+      stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
+      billingInterval
     }
   });
   return { checkoutUrl: session.url, sessionId: session.id, pendingRegistration: updated };
@@ -435,6 +587,12 @@ export async function handleStripePlatformWebhook(payload = {}) {
         where: { id: pending.id },
         data: { status: pending.restaurantId ? pending.status : "PAYMENT_VERIFIED", stripeCustomerId }
       });
+      await recordAudit({
+        action: "registration.payment.confirmed",
+        entityType: "PendingRegistration",
+        entityId: pending.id,
+        metadata: { checkoutSessionId: object.id, planCode: pending.planCode }
+      }).catch(() => {});
       const restaurant = await activatePaidRegistration({
         pending: paidPending,
         plan,
