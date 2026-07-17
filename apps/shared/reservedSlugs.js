@@ -25,6 +25,7 @@ export const RESERVED_PLATFORM_SLUGS = [
   "pricing",
   "privacy",
   "public",
+  "register",
   "restaurant",
   "restaurants",
   "reset-password",

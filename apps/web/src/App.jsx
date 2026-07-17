@@ -1538,6 +1538,146 @@ function Redirecting({ to }) {
   );
 }
 
+const fallbackRegistrationPlans = [
+  {
+    code: "STARTER",
+    displayName: "Starter",
+    description: "Launch a branded ordering website with pickup.",
+    monthlyPriceCents: 9900,
+    annualPriceCents: 99000,
+    features: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding"],
+    trialDays: 0,
+    locationLimit: 1,
+    staffLimit: 5,
+    active: true,
+    checkoutAvailable: false
+  },
+  {
+    code: "PROFESSIONAL",
+    displayName: "Professional",
+    description: "Add delivery, driver workflows, loyalty, and coupons.",
+    monthlyPriceCents: 19900,
+    annualPriceCents: 199000,
+    features: ["Everything in Starter", "Delivery workflows", "Driver management", "Loyalty", "Coupons", "Delivery zones"],
+    trialDays: 0,
+    locationLimit: 1,
+    staffLimit: 25,
+    active: true,
+    checkoutAvailable: false
+  },
+  {
+    code: "ENTERPRISE",
+    displayName: "Enterprise",
+    description: "Advanced operations for growing restaurant groups.",
+    monthlyPriceCents: 39900,
+    annualPriceCents: 399000,
+    features: ["Everything in Professional", "Advanced analytics", "Multi-location foundation", "Priority support"],
+    trialDays: 0,
+    locationLimit: null,
+    staffLimit: null,
+    active: true,
+    checkoutAvailable: false
+  }
+];
+
+const registrationInitialForm = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  password: "",
+  confirmPassword: "",
+  termsAccepted: false,
+  privacyAccepted: false,
+  businessName: "",
+  publicBusinessName: "",
+  businessType: "RESTAURANT",
+  cuisine: "",
+  businessEmail: "",
+  businessPhone: "",
+  address: "",
+  city: "",
+  state: "",
+  zip: "",
+  country: "US",
+  timezone: "America/Denver",
+  preferredSlug: "",
+  planCode: "STARTER",
+  billingInterval: "MONTHLY"
+};
+
+const registrationSteps = [
+  { id: "account", label: "Owner account" },
+  { id: "business", label: "Restaurant" },
+  { id: "plan", label: "Plan" },
+  { id: "checkout", label: "Checkout" }
+];
+
+function slugFromName(value = "") {
+  return String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
+}
+
+function normalizePlanLabel(code = "") {
+  return readable(String(code || "").toLowerCase().replace("professional", "professional"));
+}
+
+function planPrice(plan, interval = "MONTHLY") {
+  return interval === "ANNUAL" ? plan?.annualPriceCents || plan?.monthlyPriceCents || 0 : plan?.monthlyPriceCents || 0;
+}
+
+function planCheckoutAvailable(plan, interval = "MONTHLY") {
+  if (!plan) return false;
+  if (interval === "ANNUAL") return Boolean(plan.annualCheckoutAvailable ?? plan.checkoutAvailable);
+  return Boolean(plan.monthlyCheckoutAvailable ?? plan.checkoutAvailable);
+}
+
+function validateRegistrationStep(form, stepId) {
+  const errors = {};
+  if (stepId === "account") {
+    [["firstName", "First name"], ["lastName", "Last name"], ["email", "Email"], ["phone", "Phone"], ["password", "Password"], ["confirmPassword", "Confirm password"]].forEach(([field, label]) => {
+      if (!String(form[field] || "").trim()) errors[field] = `${label} is required.`;
+    });
+    if (form.email && !emailPattern.test(form.email)) errors.email = "Enter a valid email.";
+    const issues = passwordIssues(form.password || "");
+    if (issues.length) errors.password = `Password needs: ${issues.join(", ")}.`;
+    if (form.password !== form.confirmPassword) errors.confirmPassword = "Passwords must match.";
+    if (!form.termsAccepted) errors.termsAccepted = "Accept the Terms of Service.";
+    if (!form.privacyAccepted) errors.privacyAccepted = "Accept the Privacy Policy.";
+  }
+  if (stepId === "business") {
+    [["businessName", "Legal business name"], ["publicBusinessName", "Public restaurant name"], ["cuisine", "Cuisine"], ["businessEmail", "Business email"], ["businessPhone", "Business phone"], ["address", "Address"], ["city", "City"], ["state", "State"], ["zip", "ZIP"], ["country", "Country"], ["timezone", "Time zone"], ["preferredSlug", "Preferred slug"]].forEach(([field, label]) => {
+      if (!String(form[field] || "").trim()) errors[field] = `${label} is required.`;
+    });
+    if (form.businessEmail && !emailPattern.test(form.businessEmail)) errors.businessEmail = "Enter a valid business email.";
+    const slugValidation = validatePublicSlug(form.preferredSlug || "");
+    if (!slugValidation.ok) errors.preferredSlug = slugValidation.error;
+  }
+  if (stepId === "plan") {
+    if (!planCodes.includes(form.planCode)) errors.planCode = "Choose a Loohar plan.";
+    if (!["MONTHLY", "ANNUAL"].includes(form.billingInterval)) errors.billingInterval = "Choose monthly or annual billing.";
+  }
+  return errors;
+}
+
+function RegistrationShell({ children }) {
+  return (
+    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
+      <header className="border-b border-line bg-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
+          <BrandMark />
+          <nav className="flex flex-wrap gap-2">
+            <a className="nav-tab" href="/">Home</a>
+            <a className="nav-tab" href="/pricing">Pricing</a>
+            <a className="nav-tab" href="/register">Register</a>
+            <a className="nav-tab" href="/login">Sign In</a>
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto max-w-7xl px-4 py-8">{children}</main>
+    </div>
+  );
+}
+
 function PublicHome({ user, onLogout }) {
   const benefits = [
     { icon: Store, title: "Restaurant website", detail: "Launch a branded ordering website for each restaurant tenant." },
@@ -1554,8 +1694,9 @@ function PublicHome({ user, onLogout }) {
           <BrandMark />
           <nav className="flex flex-wrap gap-2">
             {user ? <a className="nav-tab active" href={dashboardPathFor(user)}>Dashboard</a> : null}
-            <a className="nav-tab" href="/admin/login">Admin Login</a>
-            <a className="nav-tab" href="/restaurant/login">Restaurant Owner Login</a>
+            <a className="nav-tab" href="/pricing">View Pricing</a>
+            <a className="nav-tab" href="/register">Register Your Restaurant</a>
+            <a className="nav-tab" href="/login">Sign In</a>
             {user ? <button className="nav-tab" onClick={onLogout}>Logout</button> : null}
           </nav>
         </div>
@@ -1570,8 +1711,8 @@ function PublicHome({ user, onLogout }) {
             <h1 className="mt-4 max-w-4xl text-5xl font-black leading-tight md:text-7xl">{appName}</h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-white/85">Restaurant websites, direct ordering, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <a className="button-primary bg-mint hover:bg-emerald-700" href="/admin/login"><LogIn size={18} />Admin Login</a>
-              <a className="button-muted border-white/30 bg-white/10 text-white hover:bg-white hover:text-ink" href="/restaurant/login"><ChefHat size={18} />Restaurant Owner Login</a>
+              <a className="button-primary bg-mint hover:bg-emerald-700" href="/register"><LogIn size={18} />Get Started</a>
+              <a className="button-muted border-white/30 bg-white/10 text-white hover:bg-white hover:text-ink" href="/pricing"><CreditCard size={18} />View Pricing</a>
             </div>
           </div>
         </section>
@@ -1592,6 +1733,405 @@ function PublicHome({ user, onLogout }) {
         </div>
       </footer>
     </div>
+  );
+}
+
+function PricingPage({ apiOnline }) {
+  const [plans, setPlans] = useState(fallbackRegistrationPlans);
+  const [billingInterval, setBillingInterval] = useState("MONTHLY");
+  const [loading, setLoading] = useState(apiOnline);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!apiOnline) {
+      setPlans(fallbackRegistrationPlans);
+      setLoading(false);
+      setError("Live checkout is temporarily unavailable. You can still review plans.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    api("/api/registration/plans", { skipAuth: true })
+      .then((payload) => setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans))
+      .catch((planError) => {
+        setPlans(fallbackRegistrationPlans);
+        setError(planError.message);
+      })
+      .finally(() => setLoading(false));
+  }, [apiOnline]);
+
+  return (
+    <RegistrationShell>
+      <section className="panel">
+        <p className="text-xs font-bold uppercase tracking-wide text-mint">Loohar pricing</p>
+        <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-4xl font-black text-ink">Restaurant-owned ordering starts here.</h1>
+            <p className="mt-3 max-w-2xl text-slate-500">Choose a SaaS plan for your restaurant website, pickup, delivery, loyalty, and operations. Checkout uses Loohar’s Stripe Billing account and stays separate from customer order payments.</p>
+          </div>
+          <div className="flex rounded-md border border-line bg-white p-1">
+            {["MONTHLY", "ANNUAL"].map((interval) => <button className={`seg ${billingInterval === interval ? "active" : ""}`} key={interval} type="button" onClick={() => setBillingInterval(interval)}>{readable(interval)}</button>)}
+          </div>
+        </div>
+        {loading ? <p className="mt-4 text-sm text-slate-500">Loading live plan settings...</p> : null}
+        <InlineError message={error} />
+      </section>
+      <section className="mt-5 grid gap-4 md:grid-cols-3">
+        {plans.map((plan) => (
+          <div className="panel flex flex-col" key={plan.code}>
+            <StatusPill tone={plan.checkoutAvailable ? "good" : "warn"}>{plan.checkoutAvailable ? "Checkout ready" : "Checkout temporarily unavailable"}</StatusPill>
+            <h2 className="mt-4 text-2xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
+            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{plan.description}</p>
+            <p className="mt-5 text-4xl font-black text-ink">{money(planPrice(plan, billingInterval))}<span className="text-base font-semibold text-slate-500">/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
+            {plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
+            <div className="mt-5 space-y-3">
+              {(plan.features || []).map((feature) => <p className="flex items-start gap-2 text-sm text-slate-600" key={feature}><CheckCircle2 className="mt-0.5 text-mint" size={16} />{feature}</p>)}
+            </div>
+            <a className={`mt-6 justify-center ${plan.checkoutAvailable ? "button-primary" : "button-muted"}`} href={`/register?plan=${encodeURIComponent(plan.code)}&billingInterval=${billingInterval}`}>
+              {plan.checkoutAvailable ? "Select plan" : "Start setup"}
+            </a>
+          </div>
+        ))}
+      </section>
+    </RegistrationShell>
+  );
+}
+
+function RegistrationPage({ apiOnline }) {
+  const query = new window.URLSearchParams(window.location.search);
+  const initialPlan = planCodes.includes(query.get("plan")) ? query.get("plan") : "STARTER";
+  const initialInterval = query.get("billingInterval") === "ANNUAL" ? "ANNUAL" : "MONTHLY";
+  const [plans, setPlans] = useState(fallbackRegistrationPlans);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [form, setForm] = useState({ ...registrationInitialForm, planCode: initialPlan, billingInterval: initialInterval });
+  const [errors, setErrors] = useState({});
+  const [slugStatus, setSlugStatus] = useState(null);
+  const [registration, setRegistration] = useState(null);
+  const [loading, setLoading] = useState(apiOnline);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState(query.get("billing") === "cancelled" ? "Checkout was cancelled. You can review details and try again before the reservation expires." : "");
+  const [error, setError] = useState("");
+  const currentStep = registrationSteps[stepIndex]?.id || "account";
+  const selectedPlan = plans.find((plan) => plan.code === form.planCode) || plans[0] || fallbackRegistrationPlans[0];
+  const currentErrors = validateRegistrationStep(form, currentStep);
+  const checkoutReady = apiOnline && planCheckoutAvailable(selectedPlan, form.billingInterval);
+
+  useEffect(() => {
+    if (!apiOnline) {
+      setPlans(fallbackRegistrationPlans);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    api("/api/registration/plans", { skipAuth: true })
+      .then((payload) => setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans))
+      .catch((planError) => setError(planError.message))
+      .finally(() => setLoading(false));
+  }, [apiOnline]);
+
+  function updateField(field, value) {
+    setErrors((existing) => ({ ...existing, [field]: "" }));
+    setForm((existing) => {
+      const next = { ...existing, [field]: value };
+      if (field === "publicBusinessName" && !existing.preferredSlug) next.preferredSlug = slugFromName(value);
+      if (field === "preferredSlug") next.preferredSlug = slugFromName(value);
+      return next;
+    });
+  }
+
+  async function checkSlug() {
+    const slugValidation = validatePublicSlug(form.preferredSlug || "");
+    if (!slugValidation.ok) {
+      setSlugStatus({ available: false, reason: slugValidation.error });
+      return;
+    }
+    if (!apiOnline) {
+      setSlugStatus({ available: false, reason: "Live API is required to reserve a restaurant URL." });
+      return;
+    }
+    setSlugStatus({ checking: true, reason: "Checking availability..." });
+    try {
+      const payload = await api(`/api/registration/slug/${encodeURIComponent(form.preferredSlug)}?email=${encodeURIComponent(form.email || "")}`, { skipAuth: true });
+      setSlugStatus(payload);
+    } catch (slugError) {
+      setSlugStatus({ available: false, reason: slugError.message });
+    }
+  }
+
+  function continueStep() {
+    const nextErrors = validateRegistrationStep(form, currentStep);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+    if (currentStep === "business" && slugStatus?.available === false) return;
+    setStepIndex((index) => Math.min(index + 1, registrationSteps.length - 1));
+  }
+
+  async function submitRegistration() {
+    const combinedErrors = registrationSteps.reduce((acc, step) => ({ ...acc, ...validateRegistrationStep(form, step.id) }), {});
+    setErrors(combinedErrors);
+    setError("");
+    if (Object.keys(combinedErrors).length) return;
+    if (!checkoutReady) {
+      setError(apiOnline ? "Secure checkout is temporarily unavailable until Stripe Price IDs are configured." : "Live API is required to start checkout.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const started = registration?.id ? { registration } : await api("/api/registration/start", { method: "POST", skipAuth: true, body: form });
+      const activeRegistration = started.registration;
+      setRegistration(activeRegistration);
+      const checkout = await api("/api/registration/checkout", {
+        method: "POST",
+        skipAuth: true,
+        body: { registrationId: activeRegistration.id, planCode: form.planCode, billingInterval: form.billingInterval }
+      });
+      window.location.assign(checkout.checkoutUrl);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function Input({ field, label, type = "text", autoComplete = "", onBlur }) {
+    return (
+      <label className="text-sm font-semibold text-slate-600">
+        {label}
+        <input className="input mt-1" type={type} autoComplete={autoComplete} value={form[field]} onBlur={onBlur} onChange={(event) => updateField(field, event.target.value)} />
+        <FieldError message={errors[field]} />
+      </label>
+    );
+  }
+
+  return (
+    <RegistrationShell>
+      <section className="panel">
+        <p className="text-xs font-bold uppercase tracking-wide text-mint">Self-service setup</p>
+        <h1 className="mt-2 text-4xl font-black text-ink">Register your restaurant on Loohar.</h1>
+        <p className="mt-3 max-w-3xl text-slate-500">Create the owner account, reserve your restaurant URL, choose a SaaS plan, and continue through secure Stripe-hosted checkout. Your tenant is created only after Loohar receives a verified Stripe webhook.</p>
+        <div className="mt-5 grid gap-2 md:grid-cols-4">
+          {registrationSteps.map((step, index) => <button className={`seg justify-center ${index === stepIndex ? "active" : ""}`} key={step.id} type="button" onClick={() => setStepIndex(index)}>{index + 1}. {step.label}</button>)}
+        </div>
+        {loading ? <p className="mt-4 text-sm text-slate-500">Loading plan settings...</p> : null}
+        {message ? <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">{message}</div> : null}
+        <InlineError message={error} />
+      </section>
+
+      <section className="panel mt-5">
+        {currentStep === "account" ? (
+          <div>
+            <SectionHeader eyebrow="Step 1" title="Owner account" icon={UserCog} />
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input field="firstName" label="First name" autoComplete="given-name" />
+              <Input field="lastName" label="Last name" autoComplete="family-name" />
+              <Input field="email" label="Email" type="email" autoComplete="username" />
+              <Input field="phone" label="Phone" type="tel" autoComplete="tel" />
+              <Input field="password" label="Password" type="password" autoComplete="new-password" />
+              <Input field="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" />
+            </div>
+            <div className="mt-4 grid gap-2">
+              <label className="flex items-start gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.termsAccepted} onChange={(event) => updateField("termsAccepted", event.target.checked)} />I accept the Loohar Terms of Service.</label>
+              <FieldError message={errors.termsAccepted} />
+              <label className="flex items-start gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.privacyAccepted} onChange={(event) => updateField("privacyAccepted", event.target.checked)} />I accept the Loohar Privacy Policy.</label>
+              <FieldError message={errors.privacyAccepted} />
+            </div>
+          </div>
+        ) : null}
+
+        {currentStep === "business" ? (
+          <div>
+            <SectionHeader eyebrow="Step 2" title="Restaurant information" icon={Store} />
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input field="businessName" label="Legal business name" autoComplete="organization" />
+              <Input field="publicBusinessName" label="Public restaurant name" autoComplete="organization" />
+              <label className="text-sm font-semibold text-slate-600">Business type<select className="input mt-1" value={form.businessType} onChange={(event) => updateField("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></label>
+              <Input field="cuisine" label="Cuisine" />
+              <Input field="businessEmail" label="Business email" type="email" autoComplete="email" />
+              <Input field="businessPhone" label="Business phone" type="tel" autoComplete="tel" />
+              <Input field="address" label="Address" autoComplete="street-address" />
+              <Input field="city" label="City" autoComplete="address-level2" />
+              <Input field="state" label="State" autoComplete="address-level1" />
+              <Input field="zip" label="ZIP" autoComplete="postal-code" />
+              <Input field="country" label="Country" autoComplete="country-name" />
+              <Input field="timezone" label="Time zone" />
+              <label className="text-sm font-semibold text-slate-600 md:col-span-2">
+                Preferred restaurant URL
+                <div className="mt-1 grid gap-2 md:grid-cols-[1fr_auto]">
+                  <input className="input" value={form.preferredSlug} onBlur={checkSlug} onChange={(event) => updateField("preferredSlug", event.target.value)} />
+                  <button className="button-muted justify-center" type="button" onClick={checkSlug}>Check URL</button>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Your public URL will be https://{tenantRootDomain}/{form.preferredSlug || "your-restaurant"}</p>
+                <FieldError message={errors.preferredSlug} />
+                {slugStatus ? <p className={`mt-1 text-sm font-semibold ${slugStatus.available ? "text-emerald-700" : "text-rose-700"}`}>{slugStatus.checking ? slugStatus.reason : slugStatus.available ? "This restaurant URL is available." : slugStatus.reason}</p> : null}
+              </label>
+            </div>
+          </div>
+        ) : null}
+
+        {currentStep === "plan" ? (
+          <div>
+            <SectionHeader eyebrow="Step 3" title="Choose plan" icon={CreditCard} />
+            <div className="mb-4 flex w-fit rounded-md border border-line bg-white p-1">
+              {["MONTHLY", "ANNUAL"].map((interval) => <button className={`seg ${form.billingInterval === interval ? "active" : ""}`} key={interval} type="button" onClick={() => updateField("billingInterval", interval)}>{readable(interval)}</button>)}
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              {plans.map((plan) => {
+                const selected = form.planCode === plan.code;
+                return (
+                  <button className={`panel text-left ${selected ? "ring-2 ring-mint" : ""}`} key={plan.code} type="button" onClick={() => updateField("planCode", plan.code)}>
+                    <StatusPill tone={plan.checkoutAvailable ? "good" : "warn"}>{plan.checkoutAvailable ? "Checkout ready" : "Needs Stripe setup"}</StatusPill>
+                    <h3 className="mt-4 text-xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h3>
+                    <p className="mt-2 text-sm text-slate-500">{plan.description}</p>
+                    <p className="mt-4 text-2xl font-black text-ink">{money(planPrice(plan, form.billingInterval))}<span className="text-sm font-semibold text-slate-500">/{form.billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {currentStep === "checkout" ? (
+          <div>
+            <SectionHeader eyebrow="Step 4" title="Secure checkout" icon={Shield} />
+            <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+              <div>
+                <p className="text-sm leading-6 text-slate-500">Review your registration and continue to Stripe-hosted subscription checkout. Loohar provisions your restaurant tenant only after the payment webhook is verified by the API.</p>
+                <div className="mt-4 grid gap-2 text-sm">
+                  <div className="summary-line"><span>Restaurant</span><strong>{form.publicBusinessName || form.businessName || "Restaurant"}</strong></div>
+                  <div className="summary-line"><span>Owner</span><strong>{form.firstName} {form.lastName}</strong></div>
+                  <div className="summary-line"><span>Public URL</span><strong>/{form.preferredSlug || "restaurant"}</strong></div>
+                  <div className="summary-line"><span>Plan</span><strong>{selectedPlan?.displayName || form.planCode} - {readable(form.billingInterval)}</strong></div>
+                </div>
+              </div>
+              <div className="rounded-md border border-line bg-slate-50 p-4">
+                <p className="text-sm font-bold uppercase text-slate-500">Due now</p>
+                <p className="mt-2 text-3xl font-black text-ink">{money(planPrice(selectedPlan, form.billingInterval))}</p>
+                <p className="mt-2 text-sm text-slate-500">Plan price is resolved by the backend. The browser never submits an amount or Stripe Price ID.</p>
+                {!checkoutReady ? <p className="mt-3 text-sm font-semibold text-amber-800">Checkout is temporarily unavailable until live Stripe Price IDs are configured.</p> : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
+          <button className="button-muted" type="button" disabled={stepIndex === 0} onClick={() => setStepIndex((index) => Math.max(index - 1, 0))}>Back</button>
+          {currentStep === "checkout"
+            ? <button className="button-primary" type="button" disabled={submitting || !checkoutReady} onClick={submitRegistration}>{submitting ? "Opening checkout..." : "Start secure checkout"}</button>
+            : <button className="button-primary" type="button" onClick={continueStep}>Continue</button>}
+        </div>
+        {Object.keys(currentErrors).length ? <p className="mt-3 text-sm text-slate-500">Missing or invalid fields: {Object.keys(currentErrors).map(readable).join(", ")}</p> : null}
+      </section>
+    </RegistrationShell>
+  );
+}
+
+function RegistrationStatusPage({ apiOnline }) {
+  const query = new window.URLSearchParams(window.location.search);
+  const registrationId = query.get("registrationId") || "";
+  const sessionId = query.get("session_id") || "";
+  const [payload, setPayload] = useState(null);
+  const [error, setError] = useState("");
+  const registration = payload?.registration;
+  const complete = Boolean(registration?.steps?.complete);
+  const failed = ["FAILED", "EXPIRED", "CANCELED", "CANCELLED"].includes(registration?.status);
+
+  useEffect(() => {
+    if (!apiOnline) {
+      setError("Live API is required to check registration status.");
+      return undefined;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    async function loadStatus() {
+      attempts += 1;
+      const params = new window.URLSearchParams();
+      if (registrationId) params.set("registrationId", registrationId);
+      if (sessionId) params.set("session_id", sessionId);
+      const endpoint = registrationId ? `/api/registration/${encodeURIComponent(registrationId)}/status?${params.toString()}` : `/api/registration/status?${params.toString()}`;
+      try {
+        const nextPayload = await api(endpoint, { skipAuth: true, cache: "no-store" });
+        if (!cancelled) {
+          setPayload(nextPayload);
+          setError("");
+          const nextStatus = nextPayload.registration?.status;
+          if (nextPayload.registration?.steps?.complete || ["FAILED", "EXPIRED", "CANCELED", "CANCELLED"].includes(nextStatus)) {
+            window.clearInterval(timer);
+          }
+        }
+      } catch (statusError) {
+        if (!cancelled) setError(statusError.message);
+      }
+    }
+    const timer = window.setInterval(() => {
+      if (attempts >= 30) {
+        window.clearInterval(timer);
+        return;
+      }
+      loadStatus();
+    }, 4000);
+    loadStatus();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [apiOnline, registrationId, sessionId]);
+
+  const steps = [
+    ["paymentConfirmed", "Payment confirmed"],
+    ["creatingAccount", "Creating account"],
+    ["creatingRestaurant", "Creating restaurant"],
+    ["assigningOwner", "Assigning owner"],
+    ["onboardingReady", "Preparing onboarding"]
+  ];
+
+  return (
+    <RegistrationShell>
+      <section className="panel mx-auto max-w-3xl">
+        <p className="text-xs font-bold uppercase tracking-wide text-mint">Registration status</p>
+        <h1 className="mt-2 text-3xl font-black text-ink">{complete ? "Your restaurant workspace is ready." : failed ? "Registration needs attention." : "We are preparing your Loohar workspace."}</h1>
+        <p className="mt-3 text-slate-500">This page checks backend provisioning. Access is created only after the verified Stripe webhook completes tenant setup.</p>
+        <InlineError message={error} />
+        {!registration && !error ? <AppLoadingState title="Checking registration" detail="Waiting for payment and provisioning status." /> : null}
+        {registration ? (
+          <div className="mt-5 space-y-3">
+            <div className="summary-line"><span>Restaurant</span><strong>{registration.restaurantName}</strong></div>
+            <div className="summary-line"><span>Status</span><strong>{registration.status}</strong></div>
+            <div className="summary-line"><span>Plan</span><strong>{registration.planCode} - {readable(registration.billingInterval)}</strong></div>
+            {steps.map(([key, label]) => <div className="flex items-center gap-3 rounded-md border border-line bg-white p-3" key={key}><CheckCircle2 className={registration.steps?.[key] ? "text-mint" : "text-slate-300"} size={20} /><span className="font-semibold text-slate-700">{label}</span></div>)}
+            {complete ? (
+              <div className="mt-5 flex flex-wrap gap-2">
+                <a className="button-primary" href="/restaurant/login">Sign in to continue setup</a>
+                <a className="button-muted" href={registration.onboardingUrl || "/restaurant/login"}>Open onboarding</a>
+                <a className="button-muted" href={registration.publicUrl}>View public URL</a>
+              </div>
+            ) : null}
+            {failed ? <a className="button-primary mt-4" href="/register">Restart registration</a> : null}
+          </div>
+        ) : null}
+      </section>
+    </RegistrationShell>
+  );
+}
+
+function RegistrationResultPage({ type }) {
+  const details = {
+    success: ["Registration received", "We are waiting for verified payment confirmation and tenant provisioning. Use the status page from your checkout redirect to track setup."],
+    cancelled: ["Checkout cancelled", "No tenant access was activated. You can restart registration or choose a different plan before your reservation expires."],
+    failed: ["Checkout failed", "No tenant access was activated. Try checkout again or contact support if payment was taken."]
+  };
+  const [title, detail] = details[type] || details.failed;
+  return (
+    <RegistrationShell>
+      <section className="panel mx-auto max-w-2xl text-center">
+        <Shield className="mx-auto text-mint" size={36} />
+        <h1 className="mt-3 text-3xl font-black text-ink">{title}</h1>
+        <p className="mt-3 text-slate-500">{detail}</p>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <a className="button-primary" href="/register">Continue registration</a>
+          <a className="button-muted" href="/pricing">View pricing</a>
+        </div>
+      </section>
+    </RegistrationShell>
   );
 }
 
@@ -6075,6 +6615,8 @@ export default function App() {
   const isForgotPasswordRoute = initialPath === "/forgot-password";
   const resetPasswordMatch = initialPath.match(/^\/reset-password\/([^/]+)\/?$/);
   const appOrderMatch = initialPath.match(/^\/app\/order\/([^/]+)\/?$/);
+  const isPricingRoute = initialPath === "/pricing";
+  const isRegisterRoute = initialPath === "/register" || initialPath.startsWith("/register/");
   const isDriverHost = window.location.hostname.startsWith("driver.");
   const tenantHost = tenantHostRouteInfo();
   const isDriverRoute = initialPath === "/driver" || initialPath.startsWith("/driver/") || (isDriverHost && /^\/order\/[^/]+\/?$/.test(initialPath));
@@ -6085,7 +6627,7 @@ export default function App() {
   const isRestaurantOnboardingRoute = isRestaurantOnboardingPath(initialPath);
   const isCustomerRoute = initialPath === "/customer" || initialPath.startsWith("/customer/");
   const isSiteAdminRoute = /^\/sites\/[^/]+\/admin\/?$/.test(initialPath);
-  const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/");
+  const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/") && !initialPath.startsWith("/register") && initialPath !== "/pricing";
   const isPathPublicSiteRoute = isPathBasedPublicRestaurantPath(initialPath);
   const isSiteRoute = ((initialPath === "/sites" || initialPath.startsWith("/sites/")) && !isSiteAdminRoute) || isTenantHostPublicPath || isPathPublicSiteRoute;
   const orderRouteSlug = initialPath.startsWith("/order/") ? initialPath.split("/")[2] : null;
@@ -6253,6 +6795,19 @@ export default function App() {
   if (appOrderMatch) {
     if (apiMode === "CHECKING") return <PublicSiteSkeleton premium />;
     return <CustomerOrderTrackingPage apiOnline={apiOnline} orderId={decodeURIComponent(appOrderMatch[1])} />;
+  }
+
+  if (isPricingRoute) {
+    return <PricingPage apiOnline={apiOnline} />;
+  }
+
+  if (isRegisterRoute) {
+    if (initialPath === "/register/status") return <RegistrationStatusPage apiOnline={apiOnline} />;
+    if (initialPath === "/register/success" && new window.URLSearchParams(window.location.search).get("session_id")) return <RegistrationStatusPage apiOnline={apiOnline} />;
+    if (initialPath === "/register/success") return <RegistrationResultPage type="success" />;
+    if (initialPath === "/register/cancelled") return <RegistrationResultPage type="cancelled" />;
+    if (initialPath === "/register/failed") return <RegistrationResultPage type="failed" />;
+    return <RegistrationPage apiOnline={apiOnline} />;
   }
 
   if (isLoginRoute) {
