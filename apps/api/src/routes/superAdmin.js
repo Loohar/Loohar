@@ -9,7 +9,7 @@ import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { defaultTenantHost, domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
-import { normalizeEmail } from "../utils/authSecurity.js";
+import { maskEmail, normalizeEmail } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
 import { validatePublicSlug } from "../../../shared/reservedSlugs.js";
@@ -684,6 +684,50 @@ router.patch("/tenants/:businessId/website", updateAdminWebsite);
 router.get("/tenants/:businessId/domain", getAdminDomain);
 router.patch("/tenants/:businessId/domain", updateAdminDomain);
 router.post("/tenants/:businessId/domain/verify", verifyAdminDomain);
+
+router.get("/registrations", async (req, res, next) => {
+  try {
+    const registrations = await prisma.pendingRegistration.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200
+    });
+    const sessionIds = registrations.map((registration) => registration.stripeCheckoutSessionId).filter(Boolean);
+    const restaurantIds = registrations.map((registration) => registration.restaurantId).filter(Boolean);
+    const subscriptions = await prisma.platformSubscription.findMany({
+      where: { stripeCheckoutSessionId: { in: sessionIds } },
+      select: { id: true, status: true, stripeCheckoutSessionId: true, createdAt: true, updatedAt: true }
+    });
+    const restaurants = await prisma.restaurant.findMany({
+      where: { id: { in: restaurantIds } },
+      select: { id: true, slug: true, name: true, businessName: true, status: true }
+    });
+    const subscriptionBySession = new Map(subscriptions.map((subscription) => [subscription.stripeCheckoutSessionId, subscription]));
+    const restaurantById = new Map(restaurants.map((restaurant) => [restaurant.id, restaurant]));
+    res.json({
+      registrations: registrations.map((registration) => {
+        const subscription = subscriptionBySession.get(registration.stripeCheckoutSessionId);
+        return {
+          id: registration.id,
+          ownerEmail: maskEmail(registration.ownerEmail),
+          restaurantName: registration.publicBusinessName || registration.businessName,
+          requestedSlug: registration.slug,
+          selectedPlan: registration.planCode,
+          billingInterval: registration.billingInterval || "MONTHLY",
+          registrationStatus: registration.status,
+          subscriptionStatus: subscription?.status || "NONE",
+          createdAt: registration.createdAt,
+          expiresAt: registration.expiresAt,
+          completedAt: registration.completedAt,
+          provisioningResult: registration.restaurantId ? "TENANT_CREATED" : registration.status,
+          restaurant: restaurantById.get(registration.restaurantId) || null,
+          actions: ["view_registration", "view_billing_event", "resend_welcome_email", "cancel_expired_registration"]
+        };
+      })
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get("/audit-logs", async (req, res, next) => {
   try {
