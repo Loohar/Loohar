@@ -3,8 +3,8 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
-import { createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, normalizeTipInput, trackingExpiresAt } from "../services/orderWorkflowService.js";
-import { assertStripeConfigured, createCheckoutSession } from "../services/paymentService.js";
+import { findOrderForTracking, limitedTrackingOrder } from "../services/orderWorkflowService.js";
+import { createOrderPayment } from "../modules/orderPayments/orderPaymentService.js";
 
 const router = Router();
 
@@ -93,108 +93,7 @@ export async function attachRestaurantIdBySlug(req, res, next) {
 
 export async function createOrder(req, res, next) {
   try {
-    const restaurant = await prisma.restaurant.findUnique({ where: { id: req.body.restaurantId } });
-    if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Restaurant unavailable" });
-    if (!["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType)) {
-      return res.status(400).json({ error: "Online ordering is not enabled for this business type yet" });
-    }
-
-    const menuItems = await prisma.menuItem.findMany({
-      where: { restaurantId: restaurant.id, id: { in: req.body.items.map((item) => item.menuItemId) }, available: true }
-    });
-    const menuById = new Map(menuItems.map((item) => [item.id, item]));
-    const missingItems = req.body.items.filter((item) => !menuById.has(item.menuItemId));
-    if (missingItems.length > 0) return res.status(400).json({ error: "One or more menu items are unavailable" });
-    const subtotalCents = req.body.items.reduce((total, item) => {
-      const menuItem = menuById.get(item.menuItemId);
-      if (!menuItem) return total;
-      const optionsTotal = item.options.reduce((sum, option) => sum + option.priceCents, 0);
-      return total + (menuItem.priceCents + optionsTotal) * item.quantity;
-    }, 0);
-
-    let discountCents = 0;
-    let coupon = null;
-    if (req.body.couponCode) {
-      const now = new Date();
-      coupon = await prisma.coupon.findFirst({
-        where: {
-          restaurantId: restaurant.id,
-          code: req.body.couponCode.trim().toUpperCase(),
-          active: true,
-          OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-          AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] }]
-        }
-      });
-      if (!coupon) return res.status(400).json({ error: "Coupon is not valid" });
-      if (coupon.usageLimit && coupon.redeemedCount >= coupon.usageLimit) return res.status(400).json({ error: "Coupon usage limit reached" });
-      if (coupon.minimumOrderAmountCents && subtotalCents < coupon.minimumOrderAmountCents) return res.status(400).json({ error: "Order does not meet coupon minimum" });
-      if (coupon.percentOff) discountCents += Math.round(subtotalCents * (coupon.percentOff / 100));
-      if (coupon.amountOffCents) discountCents += coupon.amountOffCents;
-    }
-    const deliveryFeeCents = req.body.type === "DELIVERY" ? restaurant.deliveryFeeCents : 0;
-    const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");
-    const effectiveDeliveryFeeCents = freeDelivery ? 0 : deliveryFeeCents;
-    const taxCents = Math.round(subtotalCents * 0.0825);
-    const tipBreakdown = normalizeTipInput({ body: req.body, orderType: req.body.type, subtotalCents });
-    const totalCents = Math.max(0, subtotalCents - discountCents) + effectiveDeliveryFeeCents + taxCents + tipBreakdown.tipCents;
-    const orderNumber = `${Date.now().toString().slice(-6)}`;
-    assertStripeConfigured();
-
-    const initialTrackingToken = createTrackingToken();
-    const order = await prisma.order.create({
-      data: {
-        restaurantId: restaurant.id,
-        orderNumber,
-        type: req.body.type,
-        deliveryAddress: req.body.deliveryAddress,
-        notes: req.body.notes,
-        subtotalCents,
-        discountCents,
-        couponCode: coupon?.code || null,
-        deliveryFeeCents: effectiveDeliveryFeeCents,
-        taxCents,
-        ...tipBreakdown,
-        trackingTokenHash: hashToken(initialTrackingToken),
-        trackingTokenExpiresAt: trackingExpiresAt(),
-        totalCents,
-        customer: {
-          connectOrCreate: {
-            where: { restaurantId_email: { restaurantId: restaurant.id, email: req.body.customer.email } },
-            create: { ...req.body.customer, restaurantId: restaurant.id, defaultAddress: req.body.deliveryAddress }
-          }
-        },
-        items: {
-          create: req.body.items.map((item) => {
-            const menuItem = menuById.get(item.menuItemId);
-            return {
-              menuItemId: item.menuItemId,
-              name: menuItem.name,
-              quantity: item.quantity,
-              unitPriceCents: menuItem.priceCents,
-              optionsJson: item.options
-            };
-          })
-        },
-        statusHistory: { create: { status: "PENDING", note: "Order placed by customer" } }
-      },
-      include: { items: true, customer: true, restaurant: { include: { domains: true } }, statusHistory: true }
-    });
-
-    try {
-      const checkout = await createCheckoutSession({ order });
-      const { checkoutUrl, publishableKey, ...paymentData } = checkout;
-      const payment = await prisma.payment.create({ data: { orderId: order.id, ...paymentData } });
-      res.status(201).json({ order, payment, checkoutUrl, publishableKey, tracking: { token: initialTrackingToken, ...customerTrackingUrls(order, initialTrackingToken) } });
-    } catch (paymentError) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: "CANCELLED",
-          statusHistory: { create: { status: "CANCELLED", note: "Stripe checkout could not be initialized" } }
-        }
-      });
-      throw paymentError;
-    }
+    res.status(201).json(await createOrderPayment({ body: req.body }));
   } catch (error) {
     next(error);
   }

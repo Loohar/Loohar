@@ -1608,6 +1608,9 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const [uploading, setUploading] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [merchantAccount, setMerchantAccount] = useState(null);
+  const [platformSubscription, setPlatformSubscription] = useState(null);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
 
   const restaurant = payload?.restaurant || {};
   const website = payload?.website || {};
@@ -1723,6 +1726,52 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     }
   }
 
+  async function loadPaymentSetup() {
+    if (!apiOnline || !token || activeStep !== "payments") return;
+    setPaymentsLoading(true);
+    setError("");
+    try {
+      const [subscriptionPayload, merchantPayload] = await Promise.all([
+        api("/api/platform-billing/subscription", { token }).catch((subscriptionError) => ({ error: subscriptionError.message })),
+        api("/api/order-payments/merchant-account", { token }).catch((merchantError) => ({ error: merchantError.message }))
+      ]);
+      if (!subscriptionPayload.error) setPlatformSubscription(subscriptionPayload.subscription || null);
+      if (!merchantPayload.error) setMerchantAccount(merchantPayload.merchantAccount || null);
+      if (subscriptionPayload.error || merchantPayload.error) {
+        setError([subscriptionPayload.error, merchantPayload.error].filter(Boolean).join(" "));
+      }
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }
+
+  async function openPlatformBillingPortal() {
+    setSaving("billing-portal");
+    setError("");
+    try {
+      const payload = await api("/api/platform-billing/portal", { method: "POST", token });
+      if (payload.portalUrl) window.location.href = payload.portalUrl;
+    } catch (portalError) {
+      setError(portalError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function startMerchantOnboarding() {
+    setSaving("merchant-onboarding");
+    setError("");
+    try {
+      const payload = await api("/api/order-payments/merchant-account/onboarding-link", { method: "POST", token });
+      if (payload.merchantAccount) setMerchantAccount(payload.merchantAccount);
+      if (payload.onboardingUrl) window.location.href = payload.onboardingUrl;
+    } catch (connectError) {
+      setError(connectError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
   useEffect(() => {
     resolveRouteRestaurant().catch((resolveError) => setError(resolveError.message));
   }, [apiOnline, token, user?.restaurantId, user?.role, initialSlug]);
@@ -1730,6 +1779,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   useEffect(() => {
     loadOnboarding();
   }, [apiOnline, token, restaurantKey]);
+
+  useEffect(() => {
+    loadPaymentSetup();
+  }, [apiOnline, token, activeStep]);
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -2124,7 +2177,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
               <button className="button-muted" type="button" onClick={previousStep} disabled={currentStepIndex === 0}>Back</button>
               <button className="button-muted" type="button" onClick={nextStep} disabled={currentStepIndex === onboardingSteps.length - 1}>Next</button>
               {optionalOnboardingSteps.has(activeStep) ? <button className="button-muted" type="button" onClick={() => skipStep(activeStep)} disabled={Boolean(saving)}>{saving === `skip:${activeStep}` ? "Skipping..." : "Skip for now"}</button> : null}
-              {activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
+              {activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "payments" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
             </div>
           </div>
 
@@ -2280,11 +2333,40 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           ) : null}
 
           {activeStep === "payments" ? (
-            <div className="mt-5 grid gap-4">
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Stripe Connect is not marked connected yet. The public website can publish, but paid online ordering remains blocked until payments are connected.</div>
-              <Field label="Payment provider"><TextInput field="paymentProvider" /></Field>
-              <Field label="Payment status"><select className="input" value={draft.paymentStatus || "NOT_CONNECTED"} onChange={(event) => updateDraft("paymentStatus", event.target.value)}><option value="NOT_CONNECTED">Not connected</option><option value="CONNECTED">Connected</option></select></Field>
-              <button className="button-primary w-fit" type="button" onClick={() => saveStep("payments")}>Save payment status</button>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <div className="rounded-md border border-line bg-white p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-slate-500">Loohar subscription</p>
+                    <h3 className="mt-1 text-xl font-black text-ink">SaaS billing</h3>
+                    <p className="mt-2 text-sm text-slate-500">This is what the restaurant pays Loohar for software access. It is separate from customer order money.</p>
+                  </div>
+                  <StatusPill tone={platformSubscription?.status === "ACTIVE" ? "good" : platformSubscription ? "warn" : "neutral"}>{platformSubscription?.status || "Not found"}</StatusPill>
+                </div>
+                <div className="mt-4 grid gap-2 text-sm text-slate-600">
+                  <div className="summary-line"><span>Plan</span><strong>{readable(platformSubscription?.plan?.code || restaurant.plan || "Starter")}</strong></div>
+                  <div className="summary-line"><span>Current period</span><strong>{platformSubscription?.currentPeriodEnd ? new Date(platformSubscription.currentPeriodEnd).toLocaleDateString() : "Provider managed"}</strong></div>
+                </div>
+                <button className="button-muted mt-4 w-full justify-center" type="button" onClick={openPlatformBillingPortal} disabled={paymentsLoading || saving === "billing-portal"}>{saving === "billing-portal" ? "Opening..." : "Manage Loohar billing"}</button>
+              </div>
+              <div className="rounded-md border border-line bg-white p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-slate-500">Customer order payments</p>
+                    <h3 className="mt-1 text-xl font-black text-ink">Restaurant merchant account</h3>
+                    <p className="mt-2 text-sm text-slate-500">Customers pay the restaurant through Stripe Connect. Loohar does not collect bank details, SSN, or card data.</p>
+                  </div>
+                  <StatusPill tone={merchantAccount?.status === "ENABLED" ? "good" : merchantAccount?.status === "RESTRICTED" || merchantAccount?.status === "DISABLED" ? "bad" : "warn"}>{readable(merchantAccount?.status || "NOT_STARTED")}</StatusPill>
+                </div>
+                <div className="mt-4 grid gap-2 text-sm text-slate-600">
+                  <div className="summary-line"><span>Charges</span><strong>{merchantAccount?.stripeChargesEnabled ? "Enabled" : "Not enabled"}</strong></div>
+                  <div className="summary-line"><span>Payouts</span><strong>{merchantAccount?.stripePayoutsEnabled ? "Enabled" : "Not enabled"}</strong></div>
+                </div>
+                <button className="button-primary mt-4 w-full justify-center" type="button" onClick={startMerchantOnboarding} disabled={paymentsLoading || saving === "merchant-onboarding"}>{saving === "merchant-onboarding" ? "Opening..." : merchantAccount?.status === "ENABLED" ? "Update Stripe Connect" : "Start Stripe Connect onboarding"}</button>
+              </div>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 md:col-span-2">
+                Paid online ordering stays blocked until the restaurant merchant account is enabled. Platform subscription revenue and restaurant order volume are tracked in separate records.
+              </div>
             </div>
           ) : null}
 
@@ -5067,7 +5149,16 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [customer, setCustomer] = useState({ name: "Maya Chen", email: "customer@demo.local", phone: "555-0166", deliveryAddress: "2425 Market St, Denver, CO" });
   const [orderStatus, setOrderStatus] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState(null);
-  const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [quote, setQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [paymentClientSecret, setPaymentClientSecret] = useState("");
+  const [paymentPublicKey, setPaymentPublicKey] = useState("");
+  const [paymentElementReady, setPaymentElementReady] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const stripeRef = useRef(null);
+  const stripeElementsRef = useRef(null);
+  const stripeElementMountRef = useRef(null);
   const [couponCode, setCouponCode] = useState("");
   const [restaurantTipChoice, setRestaurantTipChoice] = useState("10");
   const [driverTipChoice, setDriverTipChoice] = useState("15");
@@ -5092,7 +5183,69 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const driverTip = serviceType === "DELIVERY" ? tipFromChoice(driverTipChoice, customDriverTip) : 0;
   const tip = restaurantTip + driverTip;
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const orderTotal = subtotal + delivery + tax + tip;
+  const orderTotal = quote?.totalCents ?? subtotal + delivery + tax + tip;
+  const displaySubtotal = quote?.subtotalCents ?? subtotal;
+  const displayDiscount = quote?.discountCents || 0;
+  const displayDelivery = quote?.deliveryFeeCents ?? delivery;
+  const displayTax = quote?.taxCents ?? tax;
+  const displayRestaurantTip = quote?.restaurantTipCents ?? restaurantTip;
+  const displayDriverTip = quote?.driverTipCents ?? driverTip;
+  const displayServiceFee = quote?.serviceFeeCents || 0;
+
+  function orderPaymentBody(includeCustomer = false) {
+    return {
+      restaurantId: restaurant.id,
+      customer: includeCustomer ? { name: customer.name, email: customer.email, phone: customer.phone } : undefined,
+      type: serviceType,
+      deliveryAddress: serviceType === "DELIVERY" ? customer.deliveryAddress : undefined,
+      tipCents: tip,
+      restaurantTipCents: restaurantTip,
+      driverTipCents: driverTip,
+      customTipCents: (restaurantTipChoice === "CUSTOM" ? restaurantTip : 0) + (driverTipChoice === "CUSTOM" ? driverTip : 0),
+      tipPercentage: restaurantTipChoice !== "CUSTOM" ? Number(restaurantTipChoice) : undefined,
+      tipType: restaurantTipChoice === "CUSTOM" || driverTipChoice === "CUSTOM" ? "CUSTOM" : tip > 0 ? "PERCENTAGE" : "NONE",
+      couponCode: couponCode || undefined,
+      items: cart.map((item) => ({ menuItemId: item.id, quantity: item.quantity, options: item.selectedModifiers || [] }))
+    };
+  }
+
+  async function loadQuote() {
+    if (!apiOnline || !orderingEnabled || cart.length === 0 || !restaurant.id) {
+      setQuote(null);
+      setQuoteError("");
+      return;
+    }
+    setQuoteLoading(true);
+    setQuoteError("");
+    try {
+      const payload = await api("/api/order-payments/quote", { method: "POST", body: orderPaymentBody(false) });
+      setQuote(payload.quote || null);
+    } catch (quoteLoadError) {
+      setQuote(null);
+      setQuoteError(quoteLoadError.message);
+    } finally {
+      setQuoteLoading(false);
+    }
+  }
+
+  function loadStripeJs() {
+    if (window.Stripe) return Promise.resolve(window.Stripe);
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector("script[data-loohar-stripe-js]");
+      if (existing) {
+        existing.addEventListener("load", () => resolve(window.Stripe), { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://js.stripe.com/v3/";
+      script.async = true;
+      script.dataset.looharStripeJs = "true";
+      script.onload = () => resolve(window.Stripe);
+      script.onerror = () => reject(new Error("Stripe.js could not be loaded."));
+      document.head.appendChild(script);
+    });
+  }
 
   async function loadMenu(targetSlug = slug) {
     if (!targetSlug) {
@@ -5104,7 +5257,8 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setRestaurant(demoWebsiteBundle(targetSlug).restaurant);
       setOrderingEnabled(true);
       setStorefrontPlaceholder(null);
-      setCheckoutUrl("");
+      setPaymentClientSecret("");
+      setPaymentPublicKey("");
       return;
     }
     setError("");
@@ -5115,7 +5269,8 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setOrderingEnabled(payload.orderingEnabled ?? isOrderingBusiness(payload.restaurant?.businessType));
       setStorefrontPlaceholder(payload.moduleNotice || payload.placeholder || null);
       setCart([]);
-      setCheckoutUrl("");
+      setPaymentClientSecret("");
+      setPaymentPublicKey("");
     } catch (loadError) {
       setError(loadError.message);
     }
@@ -5145,6 +5300,42 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   useEffect(() => {
     loadHistory();
   }, [apiOnline, token, user?.role]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadQuote();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [apiOnline, orderingEnabled, restaurant.id, serviceType, couponCode, restaurantTip, driverTip, cart]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function mountStripePaymentElement() {
+      setPaymentElementReady(false);
+      stripeRef.current = null;
+      stripeElementsRef.current = null;
+      if (stripeElementMountRef.current) stripeElementMountRef.current.innerHTML = "";
+      if (!paymentClientSecret || !paymentPublicKey) return;
+      try {
+        const Stripe = await loadStripeJs();
+        if (cancelled || !Stripe || !stripeElementMountRef.current) return;
+        const stripe = Stripe(paymentPublicKey);
+        const elements = stripe.elements({ clientSecret: paymentClientSecret });
+        const paymentElement = elements.create("payment", { layout: "tabs" });
+        paymentElement.mount(stripeElementMountRef.current);
+        stripeRef.current = stripe;
+        stripeElementsRef.current = elements;
+        setPaymentElementReady(true);
+      } catch (stripeError) {
+        if (!cancelled) setError(stripeError.message);
+      }
+    }
+    mountStripePaymentElement();
+    return () => {
+      cancelled = true;
+      if (stripeElementMountRef.current) stripeElementMountRef.current.innerHTML = "";
+    };
+  }, [paymentClientSecret, paymentPublicKey]);
 
   function addItem(item) {
     if ((item.optionGroups || []).length > 0) {
@@ -5217,34 +5408,50 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     if (!apiOnline) {
       setOrderStatus({ id: "offline-order", orderNumber: "DEMO", status: "PENDING", totalCents: orderTotal, restaurantTipCents: restaurantTip, driverTipCents: driverTip, statusHistory: [{ status: "PENDING" }] });
       setPaymentStatus({ status: "PENDING", provider: "offline_demo" });
-      setCheckoutUrl("");
+      setPaymentClientSecret("");
+      setPaymentPublicKey("");
       return;
     }
+    if (!customer.name || !customer.email) return setError("Enter your name and email before checkout.");
+    if (serviceType === "DELIVERY" && !customer.deliveryAddress) return setError("Enter a delivery address before checkout.");
     try {
-      const payload = await api("/api/customer/orders", {
+      setPaymentClientSecret("");
+      setPaymentPublicKey("");
+      const payload = await api("/api/order-payments/create", {
         method: "POST",
-        body: {
-          restaurantId: restaurant.id,
-          customer: { name: customer.name, email: customer.email, phone: customer.phone },
-          type: serviceType,
-          deliveryAddress: serviceType === "DELIVERY" ? customer.deliveryAddress : undefined,
-          tipCents: tip,
-          restaurantTipCents: restaurantTip,
-          driverTipCents: driverTip,
-          customTipCents: (restaurantTipChoice === "CUSTOM" ? restaurantTip : 0) + (driverTipChoice === "CUSTOM" ? driverTip : 0),
-          tipPercentage: restaurantTipChoice !== "CUSTOM" ? Number(restaurantTipChoice) : undefined,
-          tipType: restaurantTipChoice === "CUSTOM" || driverTipChoice === "CUSTOM" ? "CUSTOM" : tip > 0 ? "PERCENTAGE" : "NONE",
-          couponCode: couponCode || undefined,
-          items: cart.map((item) => ({ menuItemId: item.id, quantity: item.quantity, options: item.selectedModifiers || [] }))
-        }
+        body: orderPaymentBody(true)
       });
       setOrderStatus({ ...payload.order, tracking: payload.tracking });
       setPaymentStatus(payload.payment);
-      setCheckoutUrl(payload.checkoutUrl || "");
-      setCart([]);
+      setPaymentPublicKey(payload.publishableKey || "");
+      setPaymentClientSecret(payload.clientSecret || "");
       await loadHistory();
     } catch (orderError) {
       setError(orderError.message);
+    }
+  }
+
+  async function confirmRestaurantPayment() {
+    if (!stripeRef.current || !stripeElementsRef.current || !orderStatus?.id) return setError("Secure payment form is still loading.");
+    setPaying(true);
+    setError("");
+    try {
+      const returnUrl = orderStatus?.tracking?.webUrl || `${window.location.origin}/app/order/${encodeURIComponent(orderStatus.id)}`;
+      const result = await stripeRef.current.confirmPayment({
+        elements: stripeElementsRef.current,
+        confirmParams: { return_url: returnUrl },
+        redirect: "if_required"
+      });
+      if (result.error) throw new Error(result.error.message || "Payment could not be completed.");
+      setPaymentStatus((current) => ({ ...(current || {}), status: result.paymentIntent?.status === "succeeded" ? "PAID" : (result.paymentIntent?.status || current?.status || "PROCESSING").toUpperCase() }));
+      if (result.paymentIntent?.status === "succeeded") {
+        setCart([]);
+        await refreshStatus(orderStatus.id);
+      }
+    } catch (paymentError) {
+      setError(paymentError.message);
+    } finally {
+      setPaying(false);
     }
   }
 
@@ -5375,15 +5582,28 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
             </div>
           ) : null}
           <div className="mt-5 border-t border-line pt-4 text-sm text-slate-600">
-            <div className="summary-line"><span>Subtotal</span><strong>{money(subtotal)}</strong></div>
-            {orderStatus?.discountCents ? <div className="summary-line"><span>Discount</span><strong>-{money(orderStatus.discountCents)}</strong></div> : null}
-            <div className="summary-line"><span>Delivery</span><strong>{money(delivery)}</strong></div>
-            <div className="summary-line"><span>Tax</span><strong>{money(tax)}</strong></div>
-            <div className="summary-line"><span>Restaurant tip</span><strong>{money(restaurantTip)}</strong></div>
-            {serviceType === "DELIVERY" ? <div className="summary-line"><span>Driver tip</span><strong>{money(driverTip)}</strong></div> : null}
+            {quoteLoading ? <p className="mb-2 text-xs font-bold uppercase text-slate-400">Updating live quote...</p> : null}
+            {quoteError ? <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs font-bold text-amber-800">{quoteError}</p> : null}
+            <div className="summary-line"><span>Subtotal</span><strong>{money(displaySubtotal)}</strong></div>
+            {displayDiscount ? <div className="summary-line"><span>Discount</span><strong>-{money(displayDiscount)}</strong></div> : null}
+            <div className="summary-line"><span>Delivery fee</span><strong>{money(displayDelivery)}</strong></div>
+            <div className="summary-line"><span>Estimated tax</span><strong>{money(displayTax)}</strong></div>
+            {displayServiceFee ? <div className="summary-line"><span>Service fee</span><strong>{money(displayServiceFee)}</strong></div> : null}
+            <div className="summary-line"><span>Restaurant tip</span><strong>{money(displayRestaurantTip)}</strong></div>
+            {serviceType === "DELIVERY" ? <div className="summary-line"><span>Driver tip</span><strong>{money(displayDriverTip)}</strong></div> : null}
             <div className="summary-line total"><span>Total</span><strong>{money(orderTotal)}</strong></div>
           </div>
-          <button className="button-primary mt-5 w-full justify-center" disabled={!orderingEnabled || cart.length === 0} onClick={placeOrder}><CreditCard size={18} />Continue to secure payment</button>
+          <button className="button-primary mt-5 w-full justify-center" disabled={!orderingEnabled || cart.length === 0 || quoteLoading || Boolean(quoteError)} onClick={placeOrder}><CreditCard size={18} />Continue to secure payment</button>
+          {paymentClientSecret ? (
+            <div className="mt-5 rounded-md border border-line bg-white p-3">
+              <p className="mb-3 text-sm font-black text-ink">Secure restaurant payment</p>
+              <div ref={stripeElementMountRef} className="min-h-24" />
+              <button className="button-primary mt-4 w-full justify-center" type="button" onClick={confirmRestaurantPayment} disabled={!paymentElementReady || paying}>
+                <CreditCard size={18} />{paying ? "Processing..." : `Pay ${money(orderStatus?.totalCents || orderTotal)}`}
+              </button>
+              <p className="mt-2 text-xs text-slate-500">Payment is processed by the restaurant's connected merchant account. Loohar platform billing is separate.</p>
+            </div>
+          ) : null}
           <div className="mt-5 rounded-md bg-slate-50 p-3 text-sm text-slate-600">
             <div className="flex items-center justify-between gap-2">
               <p className="font-semibold text-ink">Order tracking</p>
@@ -5391,8 +5611,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
             </div>
             {orderStatus ? <p className="mt-2">#{orderStatus.orderNumber} is {orderStatus.status}. Payment {paymentStatus?.status || "PENDING"}. Total {money(orderStatus.totalCents)}</p> : <p className="mt-1">Orders are created as pending payment and are confirmed after secure checkout succeeds.</p>}
             {orderStatus?.tracking?.webUrl ? <a className="button-muted mt-3 w-full justify-center" href={orderStatus.tracking.webUrl}>Track order</a> : null}
-            {checkoutUrl && paymentStatus?.status !== "PAID" ? <a className="button-primary mt-3 w-full justify-center" href={checkoutUrl} target="_blank" rel="noreferrer"><CreditCard size={16} />Continue to Stripe Checkout</a> : null}
-            {paymentStatus?.provider === "stripe" && paymentStatus.status !== "PAID" ? <p className="mt-2 text-xs text-slate-500">Complete payment in Stripe, then refresh order tracking.</p> : null}
+            {paymentStatus?.provider === "STRIPE_CONNECT" && paymentStatus.status !== "PAID" ? <p className="mt-2 text-xs text-slate-500">Complete the secure payment form above, then refresh order tracking if needed.</p> : null}
           </div>
           {history.length > 0 ? (
             <div className="mt-5">

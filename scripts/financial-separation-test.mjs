@@ -1,0 +1,131 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const root = process.cwd();
+const mode = process.argv[2] || "financial-separation";
+const failures = [];
+
+function read(filePath) {
+  const absolutePath = join(root, filePath);
+  if (!existsSync(absolutePath)) {
+    failures.push(`Missing required file: ${filePath}`);
+    return "";
+  }
+  return readFileSync(absolutePath, "utf8");
+}
+
+function assertCheck(condition, message) {
+  if (condition) {
+    console.log(`PASS ${message}`);
+    return;
+  }
+  failures.push(message);
+  console.error(`FAIL ${message}`);
+}
+
+function includesAll(content, values) {
+  return values.every((value) => content.includes(value));
+}
+
+const schema = read("apps/api/prisma/schema.prisma");
+const server = read("apps/api/src/server.js");
+const platformService = read("apps/api/src/modules/platformBilling/platformBillingService.js");
+const platformRoutes = read("apps/api/src/routes/platformBilling.js");
+const orderService = read("apps/api/src/modules/orderPayments/orderPaymentService.js");
+const quoteService = read("apps/api/src/modules/orderPayments/quoteService.js");
+const orderRoutes = read("apps/api/src/routes/orderPayments.js");
+const webhooks = read("apps/api/src/routes/webhooks.js");
+const apiEnv = read("apps/api/.env.example");
+const webEnv = read("apps/web/.env.example");
+const app = read("apps/web/src/App.jsx");
+
+const groups = {
+  registration: () => {
+    assertCheck(schema.includes("model PendingRegistration") && schema.includes("model SlugReservation"), "Registration stores pending registration and slug reservation records");
+    assertCheck(platformService.includes("createPlatformCheckout") && platformService.includes("activatePaidRegistration"), "Platform checkout activates tenants from backend webhook logic");
+    assertCheck(platformService.includes("checkout.session.completed") && platformService.includes("TENANT_CREATED"), "Registration tenant creation is driven by Stripe checkout completion");
+    assertCheck(!app.includes("TENANT_CREATED") && !app.includes("PAYMENT_VERIFIED"), "Frontend does not activate paid registrations directly");
+  },
+  "platform-billing": () => {
+    assertCheck(includesAll(schema, ["model PlatformPlan", "model PlatformSubscription", "model PlatformInvoice", "model PlatformBillingEvent"]), "Platform billing models are separate from restaurant order payments");
+    assertCheck(includesAll(platformRoutes, ['"/checkout"', '"/portal"', '"/change-plan"', '"/cancel"', '"/subscription"', '"/invoices"']), "Platform billing routes exist");
+    assertCheck(platformService.includes('mode: "subscription"') && platformService.includes('path: "/checkout/sessions"'), "Platform billing uses Stripe subscription Checkout Sessions");
+    assertCheck(!platformService.includes("transfer_data[destination]") && !platformService.includes("RestaurantOrderPayment"), "Platform billing service does not create restaurant order payments or destination charges");
+  },
+  "order-payments": () => {
+    assertCheck(includesAll(schema, ["model RestaurantMerchantAccount", "model RestaurantOrderPayment", "model RestaurantPaymentEvent", "model RestaurantRefund"]), "Restaurant order payment models are present");
+    assertCheck(includesAll(orderRoutes, ['"/quote"', '"/create"', '"/confirm"', '"/refund"', '"/:orderId/status"', '"/:orderId/receipt"', '"/merchant-account/onboarding-link"']), "Restaurant order payment routes exist");
+    assertCheck(orderService.includes("transfer_data[destination]") && orderService.includes("application_fee_amount"), "Restaurant order payments use Stripe Connect destination charges with platform fee");
+    assertCheck(!orderService.includes('path: "/checkout/sessions"') && !orderService.includes('mode: "subscription"'), "Restaurant order payments do not use Stripe Billing Checkout Sessions");
+  },
+  "stripe-billing": () => {
+    assertCheck(apiEnv.includes("STRIPE_PLATFORM_SECRET_KEY") && apiEnv.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Platform Stripe secret and webhook env vars are split");
+    assertCheck(apiEnv.includes("STRIPE_PLATFORM_PRICE_STARTER") && apiEnv.includes("STRIPE_PLATFORM_PRICE_PROFESSIONAL") && apiEnv.includes("STRIPE_PLATFORM_PRICE_ENTERPRISE"), "Platform plan price IDs are explicit");
+    assertCheck(webhooks.includes("STRIPE_PLATFORM_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-platform"), "Stripe platform webhook has its own route and secret");
+  },
+  "stripe-connect": () => {
+    assertCheck(apiEnv.includes("STRIPE_CONNECT_SECRET_KEY") && apiEnv.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && apiEnv.includes("STRIPE_CONNECT_CLIENT_ID"), "Stripe Connect env vars are split");
+    assertCheck(webEnv.includes("VITE_STRIPE_CONNECT_PUBLIC_KEY"), "Frontend exposes only the Stripe Connect publishable key");
+    assertCheck(webhooks.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-connect"), "Stripe Connect webhook has its own route and secret");
+    assertCheck(orderService.includes('type: "express"') && orderService.includes("account_links"), "Merchant onboarding uses provider-hosted Stripe Express account links");
+  },
+  "authorize-net-platform": () => {
+    assertCheck(apiEnv.includes("AUTHORIZE_NET_PLATFORM_ENABLED=false"), "Authorize.Net platform billing is disabled by default");
+    assertCheck(server.includes("/api/webhooks/authorize-net-platform") && webhooks.includes("authorizeNetPlatformWebhookRouter"), "Authorize.Net platform webhook route exists behind a disabled gate");
+  },
+  "authorize-net-orders": () => {
+    assertCheck(apiEnv.includes("AUTHORIZE_NET_ORDERS_ENABLED=false"), "Authorize.Net order payments are disabled by default");
+    assertCheck(server.includes("/api/webhooks/authorize-net-orders") && webhooks.includes("authorizeNetOrdersWebhookRouter"), "Authorize.Net order webhook route exists behind a disabled gate");
+  },
+  tax: () => {
+    assertCheck(schema.includes("model TaxConfiguration") && schema.includes("model OrderTaxSnapshot"), "Tax configuration and per-order tax snapshots exist");
+    assertCheck(includesAll(quoteService, ["taxableAmountCents", "taxRateBps", "taxCents"]), "Order quote service calculates tax server-side");
+    assertCheck(apiEnv.includes("TAX_PROVIDER") && apiEnv.includes("DEFAULT_TAX_RATE_BPS"), "Tax env foundation exists");
+  },
+  tips: () => {
+    assertCheck(includesAll(schema, ["restaurantTipCents", "driverTipCents", "DriverEarningLedger"]), "Restaurant tips, driver tips, and driver earning ledger are modeled");
+    assertCheck(includesAll(quoteService, ["restaurantTipCents", "driverTipCents", "normalizeTipInput"]), "Order quote service separates restaurant and driver tips");
+    assertCheck(app.includes("Restaurant tip") && app.includes("Driver tip"), "Customer checkout presents separate restaurant and driver tip controls");
+  },
+  refunds: () => {
+    assertCheck(schema.includes("model RestaurantRefund") && schema.includes("enum RefundStatus"), "Restaurant refunds have dedicated records and statuses");
+    assertCheck(orderService.includes('path: "/refunds"') && orderRoutes.includes('"/refund"'), "Refund route and Stripe refund call exist");
+    assertCheck(orderService.includes("requested_by_customer") && orderService.includes("refundNote"), "Refund reasons are provider-safe while retaining operator notes");
+  },
+  reconciliation: () => {
+    assertCheck(includesAll(schema, ["model RestaurantPayout", "model RestaurantPaymentDispute", "model RestaurantPaymentEvent"]), "Payout, dispute, and payment event records are modeled");
+    assertCheck(includesAll(orderService, ["PAYOUT", "DISPUTE", "MERCHANT_ACCOUNT", "RESTAURANT_ORDER_PAYMENT"]), "Restaurant payment events are domain-classified");
+    assertCheck(schema.includes("platformFeeCents") && schema.includes("restaurantNetCents"), "Restaurant payment rows preserve platform fee and restaurant net amounts");
+  },
+  "financial-separation": () => {
+    groups.registration();
+    groups["platform-billing"]();
+    groups["order-payments"]();
+    groups["stripe-billing"]();
+    groups["stripe-connect"]();
+    groups["authorize-net-platform"]();
+    groups["authorize-net-orders"]();
+    groups.tax();
+    groups.tips();
+    groups.refunds();
+    groups.reconciliation();
+    assertCheck(app.includes("/api/order-payments/quote") && app.includes("/api/order-payments/create"), "Customer checkout calls the restaurant order payment API");
+    assertCheck(app.includes("/api/platform-billing/subscription") && app.includes("/api/platform-billing/portal"), "Restaurant settings surface Loohar subscription billing separately");
+    assertCheck(server.includes("/api/platform-billing") && server.includes("/api/order-payments"), "API mounts platform billing and restaurant order payment modules separately");
+  }
+};
+
+if (!groups[mode]) {
+  console.error(`Unknown financial separation test mode: ${mode}`);
+  console.error(`Available modes: ${Object.keys(groups).join(", ")}`);
+  process.exit(1);
+}
+
+groups[mode]();
+
+if (failures.length) {
+  console.error(`${mode} failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}.`);
+  process.exit(1);
+}
+
+console.log(`${mode} passed.`);

@@ -95,6 +95,85 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum PlatformBillingStatus {
+  INCOMPLETE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum PendingRegistrationStatus {
+  STARTED
+  CHECKOUT_CREATED
+  PAYMENT_VERIFIED
+  TENANT_CREATED
+  EXPIRED
+  CANCELED
+}
+
+enum MerchantOnboardingStatus {
+  NOT_STARTED
+  DETAILS_SUBMITTED
+  ACTION_REQUIRED
+  PENDING_VERIFICATION
+  ENABLED
+  RESTRICTED
+  DISABLED
+}
+
+enum OrderPaymentStatus {
+  REQUIRES_PAYMENT_METHOD
+  REQUIRES_CONFIRMATION
+  PROCESSING
+  AUTHORIZED
+  PAID
+  FAILED
+  CANCELED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentProvider {
+  STRIPE_CONNECT
+  AUTHORIZE_NET
+  MANUAL
+}
+
+enum FinancialEventDomain {
+  PLATFORM_BILLING
+  RESTAURANT_ORDER_PAYMENT
+  MERCHANT_ACCOUNT
+  PAYOUT
+  DISPUTE
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum DisputeStatus {
+  WARNING_NEEDS_RESPONSE
+  WARNING_UNDER_REVIEW
+  WARNING_CLOSED
+  NEEDS_RESPONSE
+  UNDER_REVIEW
+  WON
+  LOST
+}
+
+enum PayoutStatus {
+  PENDING
+  IN_TRANSIT
+  PAID
+  FAILED
+  CANCELED
+}
+
 enum SubscriptionPlanCode {
   STARTER
   PROFESSIONAL
@@ -243,6 +322,16 @@ model Restaurant {
   galleryImages       RestaurantGalleryImage[]
   socialLinks         RestaurantSocialLink[]
   subscriptions       TenantSubscription[]
+  platformSubscriptions PlatformSubscription[]
+  merchantAccounts    RestaurantMerchantAccount[]
+  orderPayments       RestaurantOrderPayment[]
+  paymentEvents       RestaurantPaymentEvent[]
+  refunds             RestaurantRefund[]
+  disputes            RestaurantPaymentDispute[]
+  payouts             RestaurantPayout[]
+  taxConfigurations   TaxConfiguration[]
+  deliveryFeeRules    DeliveryFeeRule[]
+  driverEarningLedger DriverEarningLedger[]
   printerSettings     RestaurantPrinterSettings?
   notificationSettings RestaurantNotificationSettings?
   deliveryZones       DeliveryZone[]
@@ -300,6 +389,7 @@ model Driver {
   restaurant         Restaurant @relation(fields: [restaurantId], references: [id])
   user               User       @relation(fields: [userId], references: [id])
   deliveries         Delivery[]
+  earningLedger      DriverEarningLedger[]
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 
@@ -412,6 +502,9 @@ model Order {
   statusHistory    OrderStatusHistory[]
   delivery         Delivery?
   payment          Payment?
+  restaurantOrderPayment RestaurantOrderPayment?
+  taxSnapshot      OrderTaxSnapshot?
+  driverEarningLedger DriverEarningLedger[]
   loyaltyPoints    LoyaltyPoint[]
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
@@ -724,6 +817,126 @@ model SubscriptionPlan {
   subscriptions     TenantSubscription[]
 }
 
+model PlatformPlan {
+  id                   String                 @id @default(cuid())
+  code                 SubscriptionPlanCode   @unique
+  name                 String
+  monthlyPriceCents    Int
+  annualPriceCents     Int?
+  trialDays            Int                    @default(14)
+  stripePriceIdMonthly String?
+  stripePriceIdAnnual  String?
+  authorizeNetPlanId   String?
+  featuresJson         Json?
+  active               Boolean                @default(true)
+  subscriptions        PlatformSubscription[]
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+}
+
+model PlatformSubscription {
+  id                       String                @id @default(cuid())
+  restaurantId             String?
+  planId                   String
+  status                   PlatformBillingStatus @default(INCOMPLETE)
+  provider                 String                @default("stripe_platform")
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?
+  stripeCheckoutSessionId  String?
+  authorizeNetCustomerId   String?
+  authorizeNetSubscriptionId String?
+  currentPeriodStart       DateTime?
+  currentPeriodEnd         DateTime?
+  trialEndsAt              DateTime?
+  cancelAtPeriodEnd        Boolean               @default(false)
+  canceledAt               DateTime?
+  metadataJson             Json?
+  restaurant               Restaurant?           @relation(fields: [restaurantId], references: [id])
+  plan                     PlatformPlan          @relation(fields: [planId], references: [id])
+  invoices                 PlatformInvoice[]
+  events                   PlatformBillingEvent[]
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+
+  @@index([restaurantId])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionId])
+}
+
+model PlatformInvoice {
+  id                    String               @id @default(cuid())
+  subscriptionId        String
+  provider              String               @default("stripe_platform")
+  providerInvoiceId     String?
+  status                String               @default("draft")
+  subtotalCents         Int                  @default(0)
+  taxCents              Int                  @default(0)
+  totalCents            Int
+  amountPaidCents       Int                  @default(0)
+  currency              String               @default("usd")
+  hostedInvoiceUrl      String?
+  invoicePdfUrl         String?
+  paidAt                DateTime?
+  dueAt                 DateTime?
+  subscription          PlatformSubscription @relation(fields: [subscriptionId], references: [id])
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([subscriptionId])
+  @@index([providerInvoiceId])
+}
+
+model PlatformBillingEvent {
+  id             String                 @id @default(cuid())
+  subscriptionId String?
+  eventDomain    FinancialEventDomain   @default(PLATFORM_BILLING)
+  provider       String                 @default("stripe_platform")
+  providerEventId String?               @unique
+  eventType      String
+  payloadJson    Json?
+  processedAt    DateTime?
+  subscription   PlatformSubscription?  @relation(fields: [subscriptionId], references: [id])
+  createdAt      DateTime               @default(now())
+
+  @@index([subscriptionId])
+  @@index([eventDomain])
+}
+
+model PendingRegistration {
+  id                       String                    @id @default(cuid())
+  ownerEmail               String
+  ownerName                String?
+  businessName             String
+  publicBusinessName       String?
+  slug                     String
+  businessType             BusinessType              @default(RESTAURANT)
+  planCode                 SubscriptionPlanCode      @default(STARTER)
+  status                   PendingRegistrationStatus @default(STARTED)
+  stripeCheckoutSessionId  String?
+  stripeCustomerId         String?
+  provider                 String                    @default("stripe_platform")
+  restaurantId             String?
+  registrationJson         Json?
+  expiresAt                DateTime?
+  completedAt              DateTime?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+
+  @@unique([slug])
+  @@index([ownerEmail])
+  @@index([stripeCheckoutSessionId])
+}
+
+model SlugReservation {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  ownerEmail  String?
+  restaurantId String?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
 model TenantSubscription {
   id                 String           @id @default(cuid())
   restaurantId       String
@@ -736,6 +949,215 @@ model TenantSubscription {
   stripeSubscriptionId String?
   restaurant         Restaurant       @relation(fields: [restaurantId], references: [id])
   plan               SubscriptionPlan @relation(fields: [planId], references: [id])
+}
+
+model RestaurantMerchantAccount {
+  id                         String                   @id @default(cuid())
+  restaurantId               String
+  provider                   PaymentProvider          @default(STRIPE_CONNECT)
+  status                     MerchantOnboardingStatus @default(NOT_STARTED)
+  stripeAccountId            String?
+  stripeChargesEnabled       Boolean                  @default(false)
+  stripePayoutsEnabled       Boolean                  @default(false)
+  stripeDetailsSubmitted     Boolean                  @default(false)
+  authorizeNetMerchantId     String?
+  defaultCurrency            String                   @default("usd")
+  requirementsJson           Json?
+  disabledReason             String?
+  onboardingUrlExpiresAt     DateTime?
+  enabledAt                  DateTime?
+  restaurant                 Restaurant               @relation(fields: [restaurantId], references: [id])
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+
+  @@unique([restaurantId, provider])
+  @@index([stripeAccountId])
+}
+
+model RestaurantOrderPayment {
+  id                         String             @id @default(cuid())
+  restaurantId               String
+  orderId                    String             @unique
+  provider                   PaymentProvider    @default(STRIPE_CONNECT)
+  status                     OrderPaymentStatus @default(REQUIRES_PAYMENT_METHOD)
+  currency                   String             @default("usd")
+  subtotalCents              Int
+  discountCents              Int                @default(0)
+  taxableAmountCents         Int                @default(0)
+  taxCents                   Int                @default(0)
+  deliveryFeeCents           Int                @default(0)
+  serviceFeeCents            Int                @default(0)
+  restaurantTipCents         Int                @default(0)
+  driverTipCents             Int                @default(0)
+  totalCents                 Int
+  platformFeeCents           Int                @default(0)
+  restaurantGrossCents       Int
+  restaurantNetCents         Int
+  providerPaymentIntentId    String?
+  providerChargeId           String?
+  providerCustomerId         String?
+  providerClientSecret       String?
+  failureReason              String?
+  authorizedAt               DateTime?
+  paidAt                     DateTime?
+  refundedAt                 DateTime?
+  quoteJson                  Json?
+  restaurant                 Restaurant         @relation(fields: [restaurantId], references: [id])
+  order                      Order              @relation(fields: [orderId], references: [id])
+  refunds                    RestaurantRefund[]
+  events                     RestaurantPaymentEvent[]
+  disputes                   RestaurantPaymentDispute[]
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+
+  @@index([restaurantId])
+  @@index([providerPaymentIntentId])
+}
+
+model RestaurantPaymentEvent {
+  id                String                @id @default(cuid())
+  restaurantId      String?
+  paymentId         String?
+  eventDomain       FinancialEventDomain  @default(RESTAURANT_ORDER_PAYMENT)
+  provider          String
+  providerEventId   String?               @unique
+  eventType         String
+  payloadJson       Json?
+  processedAt       DateTime?
+  restaurant        Restaurant?           @relation(fields: [restaurantId], references: [id])
+  payment           RestaurantOrderPayment? @relation(fields: [paymentId], references: [id])
+  createdAt         DateTime              @default(now())
+
+  @@index([restaurantId])
+  @@index([paymentId])
+  @@index([eventDomain])
+}
+
+model RestaurantRefund {
+  id                    String                  @id @default(cuid())
+  restaurantId          String
+  orderPaymentId        String
+  provider              PaymentProvider         @default(STRIPE_CONNECT)
+  providerRefundId      String?
+  status                RefundStatus            @default(PENDING)
+  amountCents           Int
+  reason                String?
+  requestedByUserId     String?
+  processedAt           DateTime?
+  restaurant            Restaurant              @relation(fields: [restaurantId], references: [id])
+  orderPayment          RestaurantOrderPayment  @relation(fields: [orderPaymentId], references: [id])
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([restaurantId])
+  @@index([orderPaymentId])
+  @@index([providerRefundId])
+}
+
+model RestaurantPaymentDispute {
+  id                    String                 @id @default(cuid())
+  restaurantId          String
+  orderPaymentId        String?
+  provider              PaymentProvider        @default(STRIPE_CONNECT)
+  providerDisputeId     String?                @unique
+  status                DisputeStatus          @default(NEEDS_RESPONSE)
+  amountCents           Int
+  currency              String                 @default("usd")
+  reason                String?
+  evidenceDueAt         DateTime?
+  restaurant            Restaurant             @relation(fields: [restaurantId], references: [id])
+  orderPayment          RestaurantOrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@index([restaurantId])
+  @@index([orderPaymentId])
+}
+
+model RestaurantPayout {
+  id                String          @id @default(cuid())
+  restaurantId      String
+  provider          PaymentProvider @default(STRIPE_CONNECT)
+  providerPayoutId  String?         @unique
+  status            PayoutStatus    @default(PENDING)
+  amountCents       Int
+  currency          String          @default("usd")
+  arrivalDate       DateTime?
+  paidAt            DateTime?
+  failureReason     String?
+  restaurant        Restaurant      @relation(fields: [restaurantId], references: [id])
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([restaurantId])
+}
+
+model OrderTaxSnapshot {
+  id                 String   @id @default(cuid())
+  orderId            String   @unique
+  restaurantId       String
+  provider           String   @default("manual")
+  taxableAmountCents Int
+  taxRateBps         Int      @default(825)
+  taxCents           Int
+  jurisdictionJson   Json?
+  createdAt          DateTime @default(now())
+  order              Order    @relation(fields: [orderId], references: [id])
+}
+
+model DriverEarningLedger {
+  id                String     @id @default(cuid())
+  restaurantId      String
+  driverId          String?
+  orderId           String?
+  deliveryId        String?
+  baseEarningsCents Int        @default(0)
+  tipCents          Int        @default(0)
+  adjustmentCents   Int        @default(0)
+  totalCents        Int
+  currency          String     @default("usd")
+  status            String     @default("EARNED")
+  note              String?
+  restaurant        Restaurant @relation(fields: [restaurantId], references: [id])
+  driver            Driver?    @relation(fields: [driverId], references: [id])
+  order             Order?     @relation(fields: [orderId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([restaurantId])
+  @@index([driverId])
+  @@index([orderId])
+}
+
+model DeliveryFeeRule {
+  id                String     @id @default(cuid())
+  restaurantId      String
+  name              String
+  orderType         OrderType  @default(DELIVERY)
+  radiusMiles       Float?
+  deliveryFeeCents  Int        @default(0)
+  minimumOrderCents Int        @default(0)
+  active            Boolean    @default(true)
+  restaurant        Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@unique([restaurantId, name])
+}
+
+model TaxConfiguration {
+  id             String     @id @default(cuid())
+  restaurantId   String
+  provider       String     @default("manual")
+  taxRateBps     Int        @default(825)
+  taxInclusive   Boolean    @default(false)
+  enabled        Boolean    @default(true)
+  nexusJson      Json?
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([restaurantId, provider])
 }
 
 model AuditLog {
