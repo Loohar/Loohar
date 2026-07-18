@@ -8,15 +8,19 @@ const router = Router();
 
 const checkoutSchema = z.object({
   body: z.object({
-    ownerEmail: z.string().email(),
+    registrationId: z.string().optional(),
+    ownerEmail: z.string().email().optional(),
     ownerName: z.string().optional(),
-    businessName: z.string().min(2),
+    businessName: z.string().min(2).optional(),
     publicBusinessName: z.string().optional(),
     slug: z.string().optional(),
     businessType: z.string().default("RESTAURANT"),
     planCode: z.enum(["STARTER", "PROFESSIONAL", "ENTERPRISE"]).optional(),
-    plan: z.enum(["STARTER", "PROFESSIONAL", "ENTERPRISE"]).optional()
-  }).passthrough()
+    plan: z.enum(["STARTER", "PROFESSIONAL", "ENTERPRISE"]).optional(),
+    billingInterval: z.enum(["MONTHLY", "ANNUAL"]).optional()
+  }).passthrough().refine((body) => body.registrationId || (body.ownerEmail && body.businessName), {
+    message: "registrationId or ownerEmail and businessName are required."
+  })
 });
 
 const changePlanSchema = z.object({

@@ -106,11 +106,17 @@ enum PlatformBillingStatus {
 
 enum PendingRegistrationStatus {
   STARTED
+  EMAIL_VERIFICATION_PENDING
+  PAYMENT_PENDING
+  PAYMENT_PROCESSING
   CHECKOUT_CREATED
   PAYMENT_VERIFIED
   TENANT_CREATED
+  COMPLETED
+  FAILED
   EXPIRED
   CANCELED
+  CANCELLED
 }
 
 enum MerchantOnboardingStatus {
@@ -905,12 +911,14 @@ model PlatformBillingEvent {
 model PendingRegistration {
   id                       String                    @id @default(cuid())
   ownerEmail               String
+  normalizedEmail          String?
   ownerName                String?
   businessName             String
   publicBusinessName       String?
   slug                     String
   businessType             BusinessType              @default(RESTAURANT)
   planCode                 SubscriptionPlanCode      @default(STARTER)
+  billingInterval          String                    @default("MONTHLY")
   status                   PendingRegistrationStatus @default(STARTED)
   stripeCheckoutSessionId  String?
   stripeCustomerId         String?
@@ -924,6 +932,7 @@ model PendingRegistration {
 
   @@unique([slug])
   @@index([ownerEmail])
+  @@index([normalizedEmail])
   @@index([stripeCheckoutSessionId])
 }
 

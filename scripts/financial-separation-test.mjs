@@ -31,6 +31,8 @@ const schema = read("apps/api/prisma/schema.prisma");
 const server = read("apps/api/src/server.js");
 const platformService = read("apps/api/src/modules/platformBilling/platformBillingService.js");
 const platformRoutes = read("apps/api/src/routes/platformBilling.js");
+const registrationRoutes = read("apps/api/src/routes/registration.js");
+const registrationService = read("apps/api/src/modules/registration/registrationService.js");
 const orderService = read("apps/api/src/modules/orderPayments/orderPaymentService.js");
 const quoteService = read("apps/api/src/modules/orderPayments/quoteService.js");
 const orderRoutes = read("apps/api/src/routes/orderPayments.js");
@@ -42,9 +44,31 @@ const app = read("apps/web/src/App.jsx");
 const groups = {
   registration: () => {
     assertCheck(schema.includes("model PendingRegistration") && schema.includes("model SlugReservation"), "Registration stores pending registration and slug reservation records");
+    assertCheck(server.includes("/api/registration") && includesAll(registrationRoutes, ['"/plans"', '"/slug/:slug"', '"/start"', '"/checkout"', '"/status"', '"/:registrationId/status"']), "Self-service registration API routes are mounted");
+    assertCheck(includesAll(registrationService, ["passwordHash", "SlugReservation", "validatePublicSlug", "normalizeEmail"]), "Registration hashes passwords, reserves slugs, and normalizes email");
+    assertCheck(registrationService.includes("safeRegistrationJson") && !registrationService.includes("registrationJson: body"), "Registration persists only sanitized registration metadata");
     assertCheck(platformService.includes("createPlatformCheckout") && platformService.includes("activatePaidRegistration"), "Platform checkout activates tenants from backend webhook logic");
     assertCheck(platformService.includes("checkout.session.completed") && platformService.includes("TENANT_CREATED"), "Registration tenant creation is driven by Stripe checkout completion");
-    assertCheck(!app.includes("TENANT_CREATED") && !app.includes("PAYMENT_VERIFIED"), "Frontend does not activate paid registrations directly");
+    assertCheck(app.includes("/api/registration/start") && app.includes("/api/registration/checkout") && app.includes("/api/registration/plans"), "Frontend uses the public registration API");
+    assertCheck(!app.includes("stripePriceId") && !app.includes("priceId") && !app.includes("STRIPE_PLATFORM"), "Frontend registration never submits Stripe Price IDs");
+    assertCheck(!app.includes("activatePaidRegistration") && !app.includes("/tenant-created") && !app.includes("/payment-verified"), "Frontend does not activate paid registrations directly");
+  },
+  "slug-reservation": () => {
+    assertCheck(schema.includes("model SlugReservation") && schema.includes("slug        String    @unique"), "Slug reservations are modeled with a unique slug");
+    assertCheck(schema.includes("model PendingRegistration") && schema.includes("@@unique([slug])"), "Pending registrations enforce one active slug record");
+    assertCheck(registrationRoutes.includes('"/slug/:slug"'), "Registration exposes a slug availability route");
+    assertCheck(includesAll(registrationService, ["validatePublicSlug", "prisma.slugReservation.findUnique", "prisma.pendingRegistration.findUnique", "prisma.restaurant.findUnique"]), "Slug checks compare reservations, pending registrations, and tenants");
+    assertCheck(includesAll(registrationService, ["expiresAt", "terminalStatuses", "That slug is temporarily reserved during another checkout."]), "Slug reservation checks honor expiration and terminal states");
+    assertCheck(includesAll(registrationService, ["tx.slugReservation.upsert", "registration.slug.reserved", "registration.cancelled"]), "Registration reserves and releases slugs through audited writes");
+  },
+  "registration-security": () => {
+    assertCheck(includesAll(registrationService, ["normalizeEmail(body.email)", "bcrypt.hash(body.password, 12)", "passwordHash"]), "Registration normalizes email and hashes passwords");
+    assertCheck(!registrationService.includes("password: body.password") && !registrationService.includes("registrationJson: body"), "Registration does not persist plaintext password or raw request body");
+    assertCheck(includesAll(registrationService, ["safeRegistrationJson", "maskEmail", "forcePasswordChange: false", "temporaryPassword: false"]), "Registration returns sanitized metadata and avoids temporary-password state");
+    assertCheck(includesAll(registrationRoutes, ["validate(registrationSchema)", "validate(checkoutSchema)", "validate(cancelSchema)"]), "Registration routes validate mutating requests");
+    assertCheck(includesAll(registrationRoutes, ["strongPasswordSchema", "termsAccepted: z.literal(true)", "privacyAccepted: z.literal(true)"]), "Registration account validation requires strong password policy and user agreements");
+    assertCheck(!app.includes("localStorage.setItem(\"password") && !app.includes("sessionStorage.setItem(\"password") && !app.includes("passwordHash"), "Frontend does not store registration password or hash");
+    assertCheck(!app.includes("STRIPE_PLATFORM_SECRET") && !app.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Frontend contains no platform Stripe secrets");
   },
   "platform-billing": () => {
     assertCheck(includesAll(schema, ["model PlatformPlan", "model PlatformSubscription", "model PlatformInvoice", "model PlatformBillingEvent"]), "Platform billing models are separate from restaurant order payments");
@@ -60,7 +84,8 @@ const groups = {
   },
   "stripe-billing": () => {
     assertCheck(apiEnv.includes("STRIPE_PLATFORM_SECRET_KEY") && apiEnv.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Platform Stripe secret and webhook env vars are split");
-    assertCheck(apiEnv.includes("STRIPE_PLATFORM_PRICE_STARTER") && apiEnv.includes("STRIPE_PLATFORM_PRICE_PROFESSIONAL") && apiEnv.includes("STRIPE_PLATFORM_PRICE_ENTERPRISE"), "Platform plan price IDs are explicit");
+    assertCheck(includesAll(apiEnv, ["STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID"]), "Platform monthly and annual Stripe Price IDs are explicit");
+    assertCheck(apiEnv.includes("STRIPE_PLATFORM_PRICE_STARTER") && apiEnv.includes("STRIPE_PLATFORM_PRICE_PROFESSIONAL") && apiEnv.includes("STRIPE_PLATFORM_PRICE_ENTERPRISE"), "Legacy platform price ID env vars remain documented");
     assertCheck(webhooks.includes("STRIPE_PLATFORM_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-platform"), "Stripe platform webhook has its own route and secret");
   },
   "stripe-connect": () => {
@@ -74,8 +99,14 @@ const groups = {
     assertCheck(server.includes("/api/webhooks/authorize-net-platform") && webhooks.includes("authorizeNetPlatformWebhookRouter"), "Authorize.Net platform webhook route exists behind a disabled gate");
   },
   "authorize-net-orders": () => {
-    assertCheck(apiEnv.includes("AUTHORIZE_NET_ORDERS_ENABLED=false"), "Authorize.Net order payments are disabled by default");
+    assertCheck(apiEnv.includes("AUTHORIZE_NET_ORDERS_ENABLED=false") && apiEnv.includes("AUTHORIZE_NET_ORDER_PAYMENTS_ENABLED=false"), "Authorize.Net order payments are disabled by default");
     assertCheck(server.includes("/api/webhooks/authorize-net-orders") && webhooks.includes("authorizeNetOrdersWebhookRouter"), "Authorize.Net order webhook route exists behind a disabled gate");
+  },
+  "tenant-provisioning": () => {
+    assertCheck(platformService.includes("checkout.session.completed") && platformService.includes("activatePaidRegistration"), "Tenant provisioning starts from verified Stripe platform webhook processing");
+    assertCheck(includesAll(platformService, ["restaurant.create", "websiteSettings", "domains", "categories", "restaurantStaff.upsert", "registration.completed"]), "Provisioning creates tenant, website/domain settings, starter categories, memberships, and audit records");
+    assertCheck(platformService.includes("restaurantId: createdRestaurant.id") && platformService.includes("stripeCheckoutSessionId"), "Provisioning attaches the platform subscription to the created tenant");
+    assertCheck(registrationService.includes("status: \"INVITED\"") && registrationService.includes("forcePasswordChange: false") && registrationService.includes("temporaryPassword: false"), "Self-service owner account remains unpaid and not temporary until webhook provisioning");
   },
   tax: () => {
     assertCheck(schema.includes("model TaxConfiguration") && schema.includes("model OrderTaxSnapshot"), "Tax configuration and per-order tax snapshots exist");
@@ -105,6 +136,7 @@ const groups = {
     groups["stripe-connect"]();
     groups["authorize-net-platform"]();
     groups["authorize-net-orders"]();
+    groups["tenant-provisioning"]();
     groups.tax();
     groups.tips();
     groups.refunds();
