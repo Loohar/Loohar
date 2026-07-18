@@ -30,6 +30,8 @@
     "test:tenant-isolation": "node scripts/tenant-isolation-test.mjs",
     "test:onboarding": "node scripts/onboarding-test.mjs",
     "test:registration": "node scripts/financial-separation-test.mjs registration",
+    "test:registration-ui": "node scripts/registration-ui-test.mjs",
+    "test:registration-e2e": "node scripts/registration-e2e-test.mjs",
     "test:slug-reservation": "node scripts/financial-separation-test.mjs slug-reservation",
     "test:tenant-provisioning": "node scripts/financial-separation-test.mjs tenant-provisioning",
     "test:registration-security": "node scripts/financial-separation-test.mjs registration-security",

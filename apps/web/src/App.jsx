@@ -342,8 +342,8 @@ function tenantCreatePayload(form) {
   };
 }
 
-function FieldError({ message }) {
-  return message ? <p className="field-error">{message}</p> : null;
+function FieldError({ message, id }) {
+  return message ? <p className="field-error" id={id}>{message}</p> : null;
 }
 
 function money(cents = 0) {
@@ -1613,6 +1613,13 @@ const registrationSteps = [
   { id: "checkout", label: "Checkout" }
 ];
 
+const registrationStepFields = {
+  account: ["firstName", "lastName", "email", "phone", "password", "confirmPassword", "termsAccepted", "privacyAccepted"],
+  business: ["businessName", "publicBusinessName", "businessType", "cuisine", "businessEmail", "businessPhone", "address", "city", "state", "zip", "country", "timezone", "preferredSlug"],
+  plan: ["planCode", "billingInterval"],
+  checkout: []
+};
+
 function slugFromName(value = "") {
   return String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
 }
@@ -1657,6 +1664,35 @@ function validateRegistrationStep(form, stepId) {
     if (!["MONTHLY", "ANNUAL"].includes(form.billingInterval)) errors.billingInterval = "Choose monthly or annual billing.";
   }
   return errors;
+}
+
+function registrationVisibleErrors(errors, stepId) {
+  const fields = registrationStepFields[stepId] || [];
+  return fields.map((field) => errors[field]).filter(Boolean);
+}
+
+function RegistrationInput({ form, errors, field, label, type = "text", autoComplete = "", onBlur, onFieldChange }) {
+  const inputId = `registration-${field}`;
+  const errorId = `${inputId}-error`;
+  const error = errors[field];
+  return (
+    <label className="text-sm font-semibold text-slate-600" htmlFor={inputId}>
+      {label}
+      <input
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={Boolean(error)}
+        autoComplete={autoComplete}
+        className="input mt-1"
+        id={inputId}
+        name={field}
+        onBlur={onBlur}
+        onChange={(event) => onFieldChange(field, event.target.value)}
+        type={type}
+        value={form[field] ?? ""}
+      />
+      <FieldError id={errorId} message={error} />
+    </label>
+  );
 }
 
 function RegistrationShell({ children }) {
@@ -1813,7 +1849,7 @@ function RegistrationPage({ apiOnline }) {
   const [error, setError] = useState("");
   const currentStep = registrationSteps[stepIndex]?.id || "account";
   const selectedPlan = plans.find((plan) => plan.code === form.planCode) || plans[0] || fallbackRegistrationPlans[0];
-  const currentErrors = validateRegistrationStep(form, currentStep);
+  const visibleErrors = registrationVisibleErrors(errors, currentStep);
   const checkoutReady = apiOnline && planCheckoutAvailable(selectedPlan, form.billingInterval);
 
   useEffect(() => {
@@ -1858,19 +1894,28 @@ function RegistrationPage({ apiOnline }) {
     }
   }
 
-  function continueStep() {
+  function continueStep(event) {
+    event?.preventDefault();
     const nextErrors = validateRegistrationStep(form, currentStep);
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length) return;
-    if (currentStep === "business" && slugStatus?.available === false) return;
+    const nextStepErrors = { ...nextErrors };
+    if (currentStep === "business" && slugStatus?.available === false) {
+      nextStepErrors.preferredSlug = slugStatus.reason || "Choose an available restaurant URL.";
+    }
+    setErrors(nextStepErrors);
+    if (Object.keys(nextStepErrors).length) return;
     setStepIndex((index) => Math.min(index + 1, registrationSteps.length - 1));
   }
 
-  async function submitRegistration() {
+  async function submitRegistration(event) {
+    event?.preventDefault();
     const combinedErrors = registrationSteps.reduce((acc, step) => ({ ...acc, ...validateRegistrationStep(form, step.id) }), {});
     setErrors(combinedErrors);
     setError("");
-    if (Object.keys(combinedErrors).length) return;
+    if (Object.keys(combinedErrors).length) {
+      const firstInvalidStepIndex = registrationSteps.findIndex((step) => registrationVisibleErrors(combinedErrors, step.id).length);
+      if (firstInvalidStepIndex >= 0) setStepIndex(firstInvalidStepIndex);
+      return;
+    }
     if (!checkoutReady) {
       setError(apiOnline ? "Secure checkout is temporarily unavailable until Stripe Price IDs are configured." : "Live API is required to start checkout.");
       return;
@@ -1893,15 +1938,7 @@ function RegistrationPage({ apiOnline }) {
     }
   }
 
-  function Input({ field, label, type = "text", autoComplete = "", onBlur }) {
-    return (
-      <label className="text-sm font-semibold text-slate-600">
-        {label}
-        <input className="input mt-1" type={type} autoComplete={autoComplete} value={form[field]} onBlur={onBlur} onChange={(event) => updateField(field, event.target.value)} />
-        <FieldError message={errors[field]} />
-      </label>
-    );
-  }
+  const registrationInputProps = { form, errors, onFieldChange: updateField };
 
   return (
     <RegistrationShell>
@@ -1917,23 +1954,23 @@ function RegistrationPage({ apiOnline }) {
         <InlineError message={error} />
       </section>
 
-      <section className="panel mt-5">
+      <form className="panel mt-5" noValidate onSubmit={currentStep === "checkout" ? submitRegistration : continueStep}>
         {currentStep === "account" ? (
           <div>
             <SectionHeader eyebrow="Step 1" title="Owner account" icon={UserCog} />
             <div className="grid gap-3 md:grid-cols-2">
-              <Input field="firstName" label="First name" autoComplete="given-name" />
-              <Input field="lastName" label="Last name" autoComplete="family-name" />
-              <Input field="email" label="Email" type="email" autoComplete="username" />
-              <Input field="phone" label="Phone" type="tel" autoComplete="tel" />
-              <Input field="password" label="Password" type="password" autoComplete="new-password" />
-              <Input field="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" />
+              <RegistrationInput {...registrationInputProps} field="firstName" label="First name" autoComplete="given-name" />
+              <RegistrationInput {...registrationInputProps} field="lastName" label="Last name" autoComplete="family-name" />
+              <RegistrationInput {...registrationInputProps} field="email" label="Email" type="email" autoComplete="email" />
+              <RegistrationInput {...registrationInputProps} field="phone" label="Phone" type="tel" autoComplete="tel" />
+              <RegistrationInput {...registrationInputProps} field="password" label="Password" type="password" autoComplete="new-password" />
+              <RegistrationInput {...registrationInputProps} field="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" />
             </div>
             <div className="mt-4 grid gap-2">
-              <label className="flex items-start gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.termsAccepted} onChange={(event) => updateField("termsAccepted", event.target.checked)} />I accept the Loohar Terms of Service.</label>
-              <FieldError message={errors.termsAccepted} />
-              <label className="flex items-start gap-2 text-sm text-slate-600"><input type="checkbox" checked={form.privacyAccepted} onChange={(event) => updateField("privacyAccepted", event.target.checked)} />I accept the Loohar Privacy Policy.</label>
-              <FieldError message={errors.privacyAccepted} />
+              <label className="flex items-start gap-2 text-sm text-slate-600" htmlFor="registration-termsAccepted"><input aria-describedby={errors.termsAccepted ? "registration-termsAccepted-error" : undefined} aria-invalid={Boolean(errors.termsAccepted)} checked={form.termsAccepted} id="registration-termsAccepted" name="termsAccepted" onChange={(event) => updateField("termsAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Terms of Service.</label>
+              <FieldError id="registration-termsAccepted-error" message={errors.termsAccepted} />
+              <label className="flex items-start gap-2 text-sm text-slate-600" htmlFor="registration-privacyAccepted"><input aria-describedby={errors.privacyAccepted ? "registration-privacyAccepted-error" : undefined} aria-invalid={Boolean(errors.privacyAccepted)} checked={form.privacyAccepted} id="registration-privacyAccepted" name="privacyAccepted" onChange={(event) => updateField("privacyAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Privacy Policy.</label>
+              <FieldError id="registration-privacyAccepted-error" message={errors.privacyAccepted} />
             </div>
           </div>
         ) : null}
@@ -1942,26 +1979,26 @@ function RegistrationPage({ apiOnline }) {
           <div>
             <SectionHeader eyebrow="Step 2" title="Restaurant information" icon={Store} />
             <div className="grid gap-3 md:grid-cols-2">
-              <Input field="businessName" label="Legal business name" autoComplete="organization" />
-              <Input field="publicBusinessName" label="Public restaurant name" autoComplete="organization" />
-              <label className="text-sm font-semibold text-slate-600">Business type<select className="input mt-1" value={form.businessType} onChange={(event) => updateField("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></label>
-              <Input field="cuisine" label="Cuisine" />
-              <Input field="businessEmail" label="Business email" type="email" autoComplete="email" />
-              <Input field="businessPhone" label="Business phone" type="tel" autoComplete="tel" />
-              <Input field="address" label="Address" autoComplete="street-address" />
-              <Input field="city" label="City" autoComplete="address-level2" />
-              <Input field="state" label="State" autoComplete="address-level1" />
-              <Input field="zip" label="ZIP" autoComplete="postal-code" />
-              <Input field="country" label="Country" autoComplete="country-name" />
-              <Input field="timezone" label="Time zone" />
-              <label className="text-sm font-semibold text-slate-600 md:col-span-2">
+              <RegistrationInput {...registrationInputProps} field="businessName" label="Legal business name" autoComplete="organization" />
+              <RegistrationInput {...registrationInputProps} field="publicBusinessName" label="Public restaurant name" autoComplete="organization" />
+              <label className="text-sm font-semibold text-slate-600" htmlFor="registration-businessType">Business type<select className="input mt-1" id="registration-businessType" name="businessType" value={form.businessType} onChange={(event) => updateField("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></label>
+              <RegistrationInput {...registrationInputProps} field="cuisine" label="Cuisine" />
+              <RegistrationInput {...registrationInputProps} field="businessEmail" label="Business email" type="email" autoComplete="email" />
+              <RegistrationInput {...registrationInputProps} field="businessPhone" label="Business phone" type="tel" autoComplete="tel" />
+              <RegistrationInput {...registrationInputProps} field="address" label="Address" autoComplete="street-address" />
+              <RegistrationInput {...registrationInputProps} field="city" label="City" autoComplete="address-level2" />
+              <RegistrationInput {...registrationInputProps} field="state" label="State" autoComplete="address-level1" />
+              <RegistrationInput {...registrationInputProps} field="zip" label="ZIP" autoComplete="postal-code" />
+              <RegistrationInput {...registrationInputProps} field="country" label="Country" autoComplete="country-name" />
+              <RegistrationInput {...registrationInputProps} field="timezone" label="Time zone" />
+              <label className="text-sm font-semibold text-slate-600 md:col-span-2" htmlFor="registration-preferredSlug">
                 Preferred restaurant URL
                 <div className="mt-1 grid gap-2 md:grid-cols-[1fr_auto]">
-                  <input className="input" value={form.preferredSlug} onBlur={checkSlug} onChange={(event) => updateField("preferredSlug", event.target.value)} />
+                  <input aria-describedby={errors.preferredSlug ? "registration-preferredSlug-error" : undefined} aria-invalid={Boolean(errors.preferredSlug)} className="input" id="registration-preferredSlug" name="preferredSlug" value={form.preferredSlug} onBlur={checkSlug} onChange={(event) => updateField("preferredSlug", event.target.value)} />
                   <button className="button-muted justify-center" type="button" onClick={checkSlug}>Check URL</button>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">Your public URL will be https://{tenantRootDomain}/{form.preferredSlug || "your-restaurant"}</p>
-                <FieldError message={errors.preferredSlug} />
+                <FieldError id="registration-preferredSlug-error" message={errors.preferredSlug} />
                 {slugStatus ? <p className={`mt-1 text-sm font-semibold ${slugStatus.available ? "text-emerald-700" : "text-rose-700"}`}>{slugStatus.checking ? slugStatus.reason : slugStatus.available ? "This restaurant URL is available." : slugStatus.reason}</p> : null}
               </label>
             </div>
@@ -2016,11 +2053,18 @@ function RegistrationPage({ apiOnline }) {
         <div className="mt-6 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
           <button className="button-muted" type="button" disabled={stepIndex === 0} onClick={() => setStepIndex((index) => Math.max(index - 1, 0))}>Back</button>
           {currentStep === "checkout"
-            ? <button className="button-primary" type="button" disabled={submitting || !checkoutReady} onClick={submitRegistration}>{submitting ? "Opening checkout..." : "Start secure checkout"}</button>
-            : <button className="button-primary" type="button" onClick={continueStep}>Continue</button>}
+            ? <button className="button-primary" type="submit" disabled={submitting || !checkoutReady}>{submitting ? "Opening checkout..." : "Start secure checkout"}</button>
+            : <button className="button-primary" type="submit">Continue</button>}
         </div>
-        {Object.keys(currentErrors).length ? <p className="mt-3 text-sm text-slate-500">Missing or invalid fields: {Object.keys(currentErrors).map(readable).join(", ")}</p> : null}
-      </section>
+        {visibleErrors.length ? (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+            <p className="font-bold">Please fix these fields:</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {visibleErrors.map((validationMessage) => <li key={validationMessage}>{validationMessage}</li>)}
+            </ul>
+          </div>
+        ) : null}
+      </form>
     </RegistrationShell>
   );
 }
