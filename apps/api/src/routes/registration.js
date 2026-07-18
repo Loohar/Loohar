@@ -50,6 +50,12 @@ const checkoutSchema = z.object({
   })
 });
 
+const cancelSchema = z.object({
+  params: z.object({
+    registrationId: z.string().min(6)
+  })
+});
+
 router.get("/plans", async (req, res, next) => {
   try {
     res.json(await listRegistrationPlans());
@@ -98,7 +104,7 @@ router.get("/:registrationId/status", async (req, res, next) => {
   }
 });
 
-router.post("/:registrationId/cancel", async (req, res, next) => {
+router.post("/:registrationId/cancel", registrationLimiter, validate(cancelSchema), async (req, res, next) => {
   try {
     res.json(await cancelRegistration({ registrationId: req.params.registrationId }));
   } catch (error) {
