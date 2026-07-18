@@ -31,10 +31,13 @@ const allDependencies = {
 };
 const browserAutomationInstalled = ["@playwright/test", "playwright", "puppeteer", "cypress"].some((name) => Boolean(allDependencies[name]));
 const registrationPage = sliceBetween(app, "function RegistrationPage(", "\nfunction RegistrationStatusPage");
+const slugInputValue = sliceBetween(app, "function slugInputValue(", "\n\nfunction normalizePlanLabel");
 
 assertCheck(!browserAutomationInstalled, "Browser automation is not installed, so this gate remains dependency-free");
 assertCheck(registrationPage.includes("const [form, setForm] = useState({ ...registrationInitialForm"), "Registration owns a local editable draft");
 assertCheck(registrationPage.includes("setForm((existing) => {") && registrationPage.includes("const next = { ...existing, [field]: value };"), "Input changes preserve existing draft fields");
+assertCheck(registrationPage.includes("slugManuallyEdited") && registrationPage.includes('field === "publicBusinessName" && !slugManuallyEdited'), "Public restaurant name keeps generating the full slug until manual slug edit");
+assertCheck(slugInputValue.includes('replace(/^-+/, "")') && !slugInputValue.includes("|-+"), "Manual slug typing preserves in-progress trailing hyphens");
 assertCheck(!/setForm\(\s*registration\b/.test(registrationPage) && !/setForm\(\s*server/i.test(registrationPage), "Server registration responses do not overwrite the active draft while typing");
 assertCheck(!/setStepIndex\([^)]*\)\s*;\s*setLoading\(true\)/.test(registrationPage), "Step navigation does not trigger the plan loading state");
 assertCheck(registrationPage.includes("event?.preventDefault();"), "Step and checkout submissions prevent native page reloads");

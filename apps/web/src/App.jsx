@@ -1624,6 +1624,10 @@ function slugFromName(value = "") {
   return String(value || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63);
 }
 
+function slugInputValue(value = "") {
+  return String(value || "").toLowerCase().trimStart().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 63);
+}
+
 function normalizePlanLabel(code = "") {
   return readable(String(code || "").toLowerCase().replace("professional", "professional"));
 }
@@ -1842,6 +1846,7 @@ function RegistrationPage({ apiOnline }) {
   const [form, setForm] = useState({ ...registrationInitialForm, planCode: initialPlan, billingInterval: initialInterval });
   const [errors, setErrors] = useState({});
   const [slugStatus, setSlugStatus] = useState(null);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [registration, setRegistration] = useState(null);
   const [loading, setLoading] = useState(apiOnline);
   const [submitting, setSubmitting] = useState(false);
@@ -1867,10 +1872,11 @@ function RegistrationPage({ apiOnline }) {
 
   function updateField(field, value) {
     setErrors((existing) => ({ ...existing, [field]: "" }));
+    if (field === "preferredSlug") setSlugManuallyEdited(true);
     setForm((existing) => {
       const next = { ...existing, [field]: value };
-      if (field === "publicBusinessName" && !existing.preferredSlug) next.preferredSlug = slugFromName(value);
-      if (field === "preferredSlug") next.preferredSlug = slugFromName(value);
+      if (field === "publicBusinessName" && !slugManuallyEdited) next.preferredSlug = slugFromName(value);
+      if (field === "preferredSlug") next.preferredSlug = slugInputValue(value);
       return next;
     });
   }
