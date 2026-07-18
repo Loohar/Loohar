@@ -33,7 +33,8 @@ const browserAutomationInstalled = ["@playwright/test", "playwright", "puppeteer
 const registrationPage = sliceBetween(app, "function RegistrationPage(", "\nfunction RegistrationStatusPage");
 const slugInputValue = sliceBetween(app, "function slugInputValue(", "\n\nfunction normalizePlanLabel");
 
-assertCheck(!browserAutomationInstalled, "Browser automation is not installed, so this gate remains dependency-free");
+assertCheck(packageJson.scripts?.["test:registration-browsers"] === "node scripts/registration-browser-matrix.mjs", "Registration browser matrix has an explicit release-gate script");
+assertCheck(!browserAutomationInstalled || packageJson.scripts?.["test:registration-browsers"], "Browser automation dependencies are tied to a runnable registration matrix");
 assertCheck(registrationPage.includes("const [form, setForm] = useState({ ...registrationInitialForm"), "Registration owns a local editable draft");
 assertCheck(registrationPage.includes("setForm((existing) => {") && registrationPage.includes("const next = { ...existing, [field]: value };"), "Input changes preserve existing draft fields");
 assertCheck(registrationPage.includes("slugManuallyEdited") && registrationPage.includes('field === "publicBusinessName" && !slugManuallyEdited'), "Public restaurant name keeps generating the full slug until manual slug edit");
@@ -42,6 +43,10 @@ assertCheck(!/setForm\(\s*registration\b/.test(registrationPage) && !/setForm\(\
 assertCheck(!/setStepIndex\([^)]*\)\s*;\s*setLoading\(true\)/.test(registrationPage), "Step navigation does not trigger the plan loading state");
 assertCheck(registrationPage.includes("event?.preventDefault();"), "Step and checkout submissions prevent native page reloads");
 assertCheck(registrationPage.includes("registrationSteps.findIndex((step) => registrationVisibleErrors(combinedErrors, step.id).length)"), "Submit redirects users back to the first invalid step");
+assertCheck(registrationPage.includes("submittingRef.current") && registrationPage.includes("if (registrationIsComposing(event) || submittingRef.current) return;"), "Checkout submit is guarded against duplicate clicks");
+assertCheck(registrationPage.includes("AbortController") && registrationPage.includes("slugRequestRef.current.sequence === sequence"), "Slug checks abort stale requests and apply only the latest response");
+assertCheck(registrationPage.includes("slugStatus?.checking ? \"Checking...\"") && registrationPage.includes("disabled={slugStatus?.checking}"), "Slug URL check has a scoped loading state");
+assertCheck(registrationPage.includes("onCompositionStart") && registrationPage.includes("onCompositionEnd") && registrationPage.includes("composing ? value : slugInputValue(value)"), "Composition input preserves raw value until composition ends");
 assertCheck(!/console\.(log|debug|info|warn|error)\([^)]*(password|form|credentials)/i.test(registrationPage), "Registration does not log passwords, form drafts, or credentials");
 assertCheck(!/(localStorage|sessionStorage)\.(getItem|setItem|removeItem)\([^)]*(password|registration|form|draft)/i.test(registrationPage), "Registration drafts and passwords are not stored in browser storage");
 

@@ -1628,6 +1628,27 @@ function slugInputValue(value = "") {
   return String(value || "").toLowerCase().trimStart().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 63);
 }
 
+const registrationFieldSettings = {
+  firstName: { autoComplete: "given-name", inputMode: "text" },
+  lastName: { autoComplete: "family-name", inputMode: "text" },
+  email: { type: "email", autoComplete: "email", inputMode: "email", autoCapitalize: "none", spellCheck: false },
+  phone: { type: "tel", autoComplete: "tel", inputMode: "tel" },
+  password: { type: "password", autoComplete: "new-password", autoCapitalize: "none", spellCheck: false },
+  confirmPassword: { type: "password", autoComplete: "new-password", autoCapitalize: "none", spellCheck: false },
+  businessName: { autoComplete: "organization", inputMode: "text" },
+  publicBusinessName: { autoComplete: "organization", inputMode: "text" },
+  cuisine: { inputMode: "text" },
+  businessEmail: { type: "email", autoComplete: "email", inputMode: "email", autoCapitalize: "none", spellCheck: false },
+  businessPhone: { type: "tel", autoComplete: "tel", inputMode: "tel" },
+  address: { autoComplete: "street-address", inputMode: "text" },
+  city: { autoComplete: "address-level2", inputMode: "text" },
+  state: { autoComplete: "address-level1", inputMode: "text" },
+  zip: { type: "text", autoComplete: "postal-code", inputMode: "text" },
+  country: { autoComplete: "country-name", inputMode: "text" },
+  timezone: { inputMode: "text" },
+  preferredSlug: { type: "text", autoComplete: "off", inputMode: "url", autoCapitalize: "none", spellCheck: false }
+};
+
 function normalizePlanLabel(code = "") {
   return readable(String(code || "").toLowerCase().replace("professional", "professional"));
 }
@@ -1675,23 +1696,34 @@ function registrationVisibleErrors(errors, stepId) {
   return fields.map((field) => errors[field]).filter(Boolean);
 }
 
-function RegistrationInput({ form, errors, field, label, type = "text", autoComplete = "", onBlur, onFieldChange }) {
+function RegistrationInput({ form, errors, field, label, type, autoComplete, inputMode, autoCapitalize, spellCheck, onBlur, onFieldChange, onCompositionStart, onCompositionEnd }) {
   const inputId = `registration-${field}`;
   const errorId = `${inputId}-error`;
   const error = errors[field];
+  const settings = registrationFieldSettings[field] || {};
+  const resolvedType = type || settings.type || "text";
+  const resolvedAutoComplete = autoComplete ?? settings.autoComplete ?? "";
+  const resolvedInputMode = inputMode || settings.inputMode;
+  const resolvedAutoCapitalize = autoCapitalize || settings.autoCapitalize;
+  const resolvedSpellCheck = spellCheck ?? settings.spellCheck;
   return (
     <label className="text-sm font-semibold text-slate-600" htmlFor={inputId}>
       {label}
       <input
         aria-describedby={error ? errorId : undefined}
         aria-invalid={Boolean(error)}
-        autoComplete={autoComplete}
+        autoCapitalize={resolvedAutoCapitalize}
+        autoComplete={resolvedAutoComplete}
         className="input mt-1"
         id={inputId}
+        inputMode={resolvedInputMode}
         name={field}
         onBlur={onBlur}
-        onChange={(event) => onFieldChange(field, event.target.value)}
-        type={type}
+        onChange={(event) => onFieldChange(field, event.target.value, { isComposing: Boolean(event.nativeEvent?.isComposing) })}
+        onCompositionEnd={(event) => onCompositionEnd?.(field, event.target.value)}
+        onCompositionStart={() => onCompositionStart?.(field)}
+        spellCheck={resolvedSpellCheck}
+        type={resolvedType}
         value={form[field] ?? ""}
       />
       <FieldError id={errorId} message={error} />
@@ -1701,7 +1733,7 @@ function RegistrationInput({ form, errors, field, label, type = "text", autoComp
 
 function RegistrationShell({ children }) {
   return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
+    <div className="registration-shell min-h-screen bg-[#f7f8fb] text-slate-700">
       <header className="border-b border-line bg-white">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <BrandMark />
@@ -1713,7 +1745,7 @@ function RegistrationShell({ children }) {
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-8">{children}</main>
+      <main className="registration-shell-main mx-auto max-w-7xl px-4 py-8">{children}</main>
     </div>
   );
 }
@@ -1847,11 +1879,14 @@ function RegistrationPage({ apiOnline }) {
   const [errors, setErrors] = useState({});
   const [slugStatus, setSlugStatus] = useState(null);
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
+  const [composingFields, setComposingFields] = useState({});
   const [registration, setRegistration] = useState(null);
   const [loading, setLoading] = useState(apiOnline);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState(query.get("billing") === "cancelled" ? "Checkout was cancelled. You can review details and try again before the reservation expires." : "");
   const [error, setError] = useState("");
+  const slugRequestRef = useRef({ controller: null, sequence: 0 });
+  const submittingRef = useRef(false);
   const currentStep = registrationSteps[stepIndex]?.id || "account";
   const selectedPlan = plans.find((plan) => plan.code === form.planCode) || plans[0] || fallbackRegistrationPlans[0];
   const visibleErrors = registrationVisibleErrors(errors, currentStep);
@@ -1870,19 +1905,40 @@ function RegistrationPage({ apiOnline }) {
       .finally(() => setLoading(false));
   }, [apiOnline]);
 
-  function updateField(field, value) {
+  useEffect(() => () => slugRequestRef.current.controller?.abort(), []);
+
+  function registrationIsComposing(event) {
+    return Boolean(event?.nativeEvent?.isComposing || Object.values(composingFields).some(Boolean));
+  }
+
+  function updateField(field, value, options = {}) {
+    const composing = Boolean(options.isComposing ?? composingFields[field]);
     setErrors((existing) => ({ ...existing, [field]: "" }));
+    if (field === "preferredSlug" || field === "publicBusinessName") setSlugStatus(null);
     if (field === "preferredSlug") setSlugManuallyEdited(true);
     setForm((existing) => {
       const next = { ...existing, [field]: value };
-      if (field === "publicBusinessName" && !slugManuallyEdited) next.preferredSlug = slugFromName(value);
-      if (field === "preferredSlug") next.preferredSlug = slugInputValue(value);
+      if (field === "publicBusinessName" && !slugManuallyEdited && !composing) next.preferredSlug = slugFromName(value);
+      if (field === "preferredSlug") next.preferredSlug = composing ? value : slugInputValue(value);
       return next;
     });
   }
 
+  function handleCompositionStart(field) {
+    setComposingFields((current) => ({ ...current, [field]: true }));
+  }
+
+  function handleCompositionEnd(field, value) {
+    setComposingFields((current) => ({ ...current, [field]: false }));
+    updateField(field, value, { isComposing: false });
+  }
+
   async function checkSlug() {
-    const slugValidation = validatePublicSlug(form.preferredSlug || "");
+    const normalizedSlug = slugFromName(form.preferredSlug || "");
+    if (normalizedSlug !== form.preferredSlug) {
+      setForm((existing) => ({ ...existing, preferredSlug: normalizedSlug }));
+    }
+    const slugValidation = validatePublicSlug(normalizedSlug);
     if (!slugValidation.ok) {
       setSlugStatus({ available: false, reason: slugValidation.error });
       return;
@@ -1891,17 +1947,23 @@ function RegistrationPage({ apiOnline }) {
       setSlugStatus({ available: false, reason: "Live API is required to reserve a restaurant URL." });
       return;
     }
-    setSlugStatus({ checking: true, reason: "Checking availability..." });
+    slugRequestRef.current.controller?.abort();
+    const controller = new window.AbortController();
+    const sequence = slugRequestRef.current.sequence + 1;
+    slugRequestRef.current = { controller, sequence };
+    setSlugStatus({ checking: true, reason: "Checking availability...", slug: normalizedSlug });
     try {
-      const payload = await api(`/api/registration/slug/${encodeURIComponent(form.preferredSlug)}?email=${encodeURIComponent(form.email || "")}`, { skipAuth: true });
-      setSlugStatus(payload);
+      const payload = await api(`/api/registration/slug/${encodeURIComponent(normalizedSlug)}?email=${encodeURIComponent(form.email || "")}`, { skipAuth: true, signal: controller.signal });
+      if (slugRequestRef.current.sequence === sequence) setSlugStatus({ ...payload, slug: normalizedSlug });
     } catch (slugError) {
-      setSlugStatus({ available: false, reason: slugError.message });
+      if (slugError.name === "AbortError") return;
+      if (slugRequestRef.current.sequence === sequence) setSlugStatus({ available: false, reason: slugError.message, slug: normalizedSlug });
     }
   }
 
   function continueStep(event) {
     event?.preventDefault();
+    if (registrationIsComposing(event)) return;
     const nextErrors = validateRegistrationStep(form, currentStep);
     const nextStepErrors = { ...nextErrors };
     if (currentStep === "business" && slugStatus?.available === false) {
@@ -1914,6 +1976,7 @@ function RegistrationPage({ apiOnline }) {
 
   async function submitRegistration(event) {
     event?.preventDefault();
+    if (registrationIsComposing(event) || submittingRef.current) return;
     const combinedErrors = registrationSteps.reduce((acc, step) => ({ ...acc, ...validateRegistrationStep(form, step.id) }), {});
     setErrors(combinedErrors);
     setError("");
@@ -1926,6 +1989,7 @@ function RegistrationPage({ apiOnline }) {
       setError(apiOnline ? "Secure checkout is temporarily unavailable until Stripe Price IDs are configured." : "Live API is required to start checkout.");
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const started = registration?.id ? { registration } : await api("/api/registration/start", { method: "POST", skipAuth: true, body: form });
@@ -1940,11 +2004,12 @@ function RegistrationPage({ apiOnline }) {
     } catch (submitError) {
       setError(submitError.message);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
 
-  const registrationInputProps = { form, errors, onFieldChange: updateField };
+  const registrationInputProps = { form, errors, onFieldChange: updateField, onCompositionStart: handleCompositionStart, onCompositionEnd: handleCompositionEnd };
 
   return (
     <RegistrationShell>
@@ -1953,9 +2018,22 @@ function RegistrationPage({ apiOnline }) {
         <h1 className="mt-2 text-4xl font-black text-ink">Register your restaurant on Loohar.</h1>
         <p className="mt-3 max-w-3xl text-slate-500">Create the owner account, reserve your restaurant URL, choose a SaaS plan, and continue through secure Stripe-hosted checkout. Your tenant is created only after Loohar receives a verified Stripe webhook.</p>
         <div className="mt-5 grid gap-2 md:grid-cols-4">
-          {registrationSteps.map((step, index) => <button className={`seg justify-center ${index === stepIndex ? "active" : ""}`} key={step.id} type="button" onClick={() => setStepIndex(index)}>{index + 1}. {step.label}</button>)}
+          {registrationSteps.map((step, index) => (
+            <button
+              aria-current={index === stepIndex ? "step" : undefined}
+              className={`seg justify-center ${index === stepIndex ? "active" : ""}`}
+              disabled={index > stepIndex}
+              key={step.id}
+              type="button"
+              onClick={() => {
+                if (index <= stepIndex) setStepIndex(index);
+              }}
+            >
+              {index + 1}. {step.label}
+            </button>
+          ))}
         </div>
-        {loading ? <p className="mt-4 text-sm text-slate-500">Loading plan settings...</p> : null}
+        {loading ? <p aria-live="polite" className="mt-4 text-sm text-slate-500">Loading plan settings...</p> : null}
         {message ? <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">{message}</div> : null}
         <InlineError message={error} />
       </section>
@@ -1973,9 +2051,9 @@ function RegistrationPage({ apiOnline }) {
               <RegistrationInput {...registrationInputProps} field="confirmPassword" label="Confirm password" type="password" autoComplete="new-password" />
             </div>
             <div className="mt-4 grid gap-2">
-              <label className="flex items-start gap-2 text-sm text-slate-600" htmlFor="registration-termsAccepted"><input aria-describedby={errors.termsAccepted ? "registration-termsAccepted-error" : undefined} aria-invalid={Boolean(errors.termsAccepted)} checked={form.termsAccepted} id="registration-termsAccepted" name="termsAccepted" onChange={(event) => updateField("termsAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Terms of Service.</label>
+              <label className="flex min-h-11 items-center gap-3 text-sm text-slate-600" htmlFor="registration-termsAccepted"><input aria-describedby={errors.termsAccepted ? "registration-termsAccepted-error" : undefined} aria-invalid={Boolean(errors.termsAccepted)} checked={form.termsAccepted} className="h-5 w-5" id="registration-termsAccepted" name="termsAccepted" onChange={(event) => updateField("termsAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Terms of Service.</label>
               <FieldError id="registration-termsAccepted-error" message={errors.termsAccepted} />
-              <label className="flex items-start gap-2 text-sm text-slate-600" htmlFor="registration-privacyAccepted"><input aria-describedby={errors.privacyAccepted ? "registration-privacyAccepted-error" : undefined} aria-invalid={Boolean(errors.privacyAccepted)} checked={form.privacyAccepted} id="registration-privacyAccepted" name="privacyAccepted" onChange={(event) => updateField("privacyAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Privacy Policy.</label>
+              <label className="flex min-h-11 items-center gap-3 text-sm text-slate-600" htmlFor="registration-privacyAccepted"><input aria-describedby={errors.privacyAccepted ? "registration-privacyAccepted-error" : undefined} aria-invalid={Boolean(errors.privacyAccepted)} checked={form.privacyAccepted} className="h-5 w-5" id="registration-privacyAccepted" name="privacyAccepted" onChange={(event) => updateField("privacyAccepted", event.target.checked)} type="checkbox" />I accept the Loohar Privacy Policy.</label>
               <FieldError id="registration-privacyAccepted-error" message={errors.privacyAccepted} />
             </div>
           </div>
@@ -2000,8 +2078,24 @@ function RegistrationPage({ apiOnline }) {
               <label className="text-sm font-semibold text-slate-600 md:col-span-2" htmlFor="registration-preferredSlug">
                 Preferred restaurant URL
                 <div className="mt-1 grid gap-2 md:grid-cols-[1fr_auto]">
-                  <input aria-describedby={errors.preferredSlug ? "registration-preferredSlug-error" : undefined} aria-invalid={Boolean(errors.preferredSlug)} className="input" id="registration-preferredSlug" name="preferredSlug" value={form.preferredSlug} onBlur={checkSlug} onChange={(event) => updateField("preferredSlug", event.target.value)} />
-                  <button className="button-muted justify-center" type="button" onClick={checkSlug}>Check URL</button>
+                  <input
+                    aria-describedby={errors.preferredSlug ? "registration-preferredSlug-error" : undefined}
+                    aria-invalid={Boolean(errors.preferredSlug)}
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    className="input"
+                    id="registration-preferredSlug"
+                    inputMode="url"
+                    name="preferredSlug"
+                    onBlur={checkSlug}
+                    onChange={(event) => updateField("preferredSlug", event.target.value, { isComposing: Boolean(event.nativeEvent?.isComposing) })}
+                    onCompositionEnd={(event) => handleCompositionEnd("preferredSlug", event.target.value)}
+                    onCompositionStart={() => handleCompositionStart("preferredSlug")}
+                    spellCheck={false}
+                    type="text"
+                    value={form.preferredSlug}
+                  />
+                  <button className="button-muted justify-center" disabled={slugStatus?.checking} type="button" onClick={checkSlug}>{slugStatus?.checking ? "Checking..." : "Check URL"}</button>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">Your public URL will be https://{tenantRootDomain}/{form.preferredSlug || "your-restaurant"}</p>
                 <FieldError id="registration-preferredSlug-error" message={errors.preferredSlug} />
@@ -2064,7 +2158,7 @@ function RegistrationPage({ apiOnline }) {
         </div>
         {visibleErrors.length ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
-            <p className="font-bold">Please fix these fields:</p>
+            <p className="font-bold">Please review the highlighted fields.</p>
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {visibleErrors.map((validationMessage) => <li key={validationMessage}>{validationMessage}</li>)}
             </ul>

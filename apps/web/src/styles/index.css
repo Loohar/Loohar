@@ -18,6 +18,15 @@ textarea {
 }
 
 @layer components {
+  .registration-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .registration-shell-main {
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  }
+
   .panel {
     @apply rounded-md border border-line bg-white p-4 shadow-soft;
   }
@@ -27,7 +36,7 @@ textarea {
   }
 
   .button-primary {
-    @apply inline-flex min-h-10 items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700;
+    @apply inline-flex min-h-11 items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700;
   }
 
   .button-primary:disabled,
@@ -36,7 +45,7 @@ textarea {
   }
 
   .button-muted {
-    @apply inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-bold text-slate-600 transition hover:border-slate-400 hover:text-ink;
+    @apply inline-flex min-h-11 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-bold text-slate-600 transition hover:border-slate-400 hover:text-ink;
   }
 
   .icon-button {
@@ -44,11 +53,11 @@ textarea {
   }
 
   .input {
-    @apply h-10 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none transition focus:border-mint focus:ring-2 focus:ring-mint/20;
+    @apply h-11 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none transition focus:border-mint focus:ring-2 focus:ring-mint/20;
   }
 
   .select {
-    @apply h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink outline-none transition focus:border-mint focus:ring-2 focus:ring-mint/20;
+    @apply h-11 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink outline-none transition focus:border-mint focus:ring-2 focus:ring-mint/20;
   }
 
   .form-grid {
@@ -110,7 +119,7 @@ textarea {
   }
 
   .seg {
-    @apply inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-mint hover:text-mint;
+    @apply inline-flex min-h-11 items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-mint hover:text-mint;
   }
 
   .seg.active {
