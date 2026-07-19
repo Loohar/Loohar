@@ -1,11 +1,14 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma.js";
+import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { featureGuard } from "../middleware/entitlements.js";
 import { getNavigationUrl, normalizeLocationUpdate } from "../services/mapsService.js";
 import { emitDeliveryUpdate } from "../services/realtimeService.js";
 
 const router = Router();
 router.use(requireAuth, requireRole("DRIVER"));
+router.use(featureGuard(FEATURE.DRIVER_MANAGEMENT));
 const deliveryStatuses = ["ACCEPTED", "ARRIVED_AT_RESTAURANT", "PICKED_UP", "ON_THE_WAY", "ARRIVED_AT_CUSTOMER", "DELIVERED", "ISSUE_REPORTED"];
 const statusTransitions = {
   ASSIGNED: ["ACCEPTED"],

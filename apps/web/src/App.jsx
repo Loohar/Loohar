@@ -60,6 +60,40 @@ const strongPasswordChecks = [
 const businessTypes = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"];
 const businessModules = ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"];
 const planCodes = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
+const featureLabels = {
+  CUSTOMER_CRM: "Customer CRM",
+  LOYALTY: "Loyalty program",
+  COUPONS: "Coupons and promotions",
+  ANALYTICS: "Analytics dashboard",
+  MENU_INSIGHTS: "Menu insights",
+  CUSTOM_DOMAIN: "Custom domains",
+  EMPLOYEE_MANAGEMENT: "Employee management",
+  DRIVER_MANAGEMENT: "Driver management",
+  KITCHEN_DISPLAY: "Kitchen Display System",
+  DELIVERY_ZONES: "Delivery zones",
+  INVENTORY: "Inventory foundation",
+  PRINTING: "Receipt and ticket printing",
+  NOTIFICATIONS: "SMS and email notifications",
+  REPORTS: "Advanced reports",
+  MULTI_LOCATION: "Multi-location"
+};
+const featureRequiredPlans = {
+  CUSTOMER_CRM: "PROFESSIONAL",
+  LOYALTY: "PROFESSIONAL",
+  COUPONS: "PROFESSIONAL",
+  EMPLOYEE_MANAGEMENT: "PROFESSIONAL",
+  DRIVER_MANAGEMENT: "PROFESSIONAL",
+  KITCHEN_DISPLAY: "PROFESSIONAL",
+  DELIVERY_ZONES: "PROFESSIONAL",
+  INVENTORY: "PROFESSIONAL",
+  PRINTING: "PROFESSIONAL",
+  NOTIFICATIONS: "PROFESSIONAL",
+  ANALYTICS: "ENTERPRISE",
+  MENU_INSIGHTS: "ENTERPRISE",
+  CUSTOM_DOMAIN: "ENTERPRISE",
+  REPORTS: "ENTERPRISE",
+  MULTI_LOCATION: "ENTERPRISE"
+};
 const photoImageAccept = "image/png,image/jpeg,image/jpg,image/webp";
 const logoImageAccept = `${photoImageAccept},image/svg+xml`;
 const imageAccept = logoImageAccept;
@@ -742,6 +776,25 @@ function EmptyState({ title, detail }) {
 
 function InlineError({ message }) {
   return message ? <div className="error-box">{message}</div> : null;
+}
+
+function UpgradeRequired({ feature, lock = {} }) {
+  const label = lock.featureLabel || featureLabels[feature] || readable(feature);
+  const requiredPlan = lock.requiredPlan || featureRequiredPlans[feature] || "PROFESSIONAL";
+  const currentPlan = lock.currentPlan || "STARTER";
+  const status = lock.subscriptionStatus;
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-bold text-amber-950">Upgrade Required</p>
+          <p className="mt-1">{label} is included in {readable(requiredPlan)} and above.</p>
+          <p className="mt-1 text-xs font-semibold text-amber-800">Current plan: {readable(currentPlan)}{status ? ` - ${readable(status)}` : ""}</p>
+        </div>
+        <a className="button-muted justify-center bg-white" href="/restaurant/onboarding#billing">View plans</a>
+      </div>
+    </div>
+  );
 }
 
 function dietaryBadges(item = {}) {
@@ -1663,6 +1716,43 @@ function planCheckoutAvailable(plan, interval = "MONTHLY") {
   return Boolean(plan.monthlyCheckoutAvailable ?? plan.checkoutAvailable);
 }
 
+const PLAN_CONFIG_STATUS = {
+  IDLE: "IDLE",
+  LOADING: "LOADING",
+  READY: "READY",
+  ERROR: "ERROR"
+};
+
+function planConfigPending(status) {
+  return status === PLAN_CONFIG_STATUS.IDLE || status === PLAN_CONFIG_STATUS.LOADING;
+}
+
+function checkoutStatusForPlan(plan, interval, planConfigStatus) {
+  if (planConfigPending(planConfigStatus)) return { tone: "neutral", label: "Checking checkout" };
+  if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) return { tone: "warn", label: "Checkout not confirmed" };
+  return planCheckoutAvailable(plan, interval)
+    ? { tone: "good", label: "Checkout ready" }
+    : { tone: "warn", label: "Checkout temporarily unavailable" };
+}
+
+function PlanCardSkeletons({ count = 3 }) {
+  return Array.from({ length: count }, (_, index) => (
+    <div aria-hidden="true" className="panel min-h-[22rem]" key={`plan-skeleton-${index}`}>
+      <div className="h-6 w-32 animate-pulse rounded-full bg-slate-100" />
+      <div className="mt-5 h-8 w-40 animate-pulse rounded bg-slate-200" />
+      <div className="mt-3 h-4 w-full animate-pulse rounded bg-slate-100" />
+      <div className="mt-2 h-4 w-4/5 animate-pulse rounded bg-slate-100" />
+      <div className="mt-7 h-10 w-44 animate-pulse rounded bg-slate-200" />
+      <div className="mt-6 space-y-3">
+        <div className="h-4 w-full animate-pulse rounded bg-slate-100" />
+        <div className="h-4 w-11/12 animate-pulse rounded bg-slate-100" />
+        <div className="h-4 w-4/5 animate-pulse rounded bg-slate-100" />
+      </div>
+      <div className="mt-8 h-11 w-full animate-pulse rounded-md bg-slate-100" />
+    </div>
+  ));
+}
+
 function validateRegistrationStep(form, stepId) {
   const errors = {};
   if (stepId === "account") {
@@ -1808,29 +1898,39 @@ function PublicHome({ user, onLogout }) {
   );
 }
 
-function PricingPage({ apiOnline }) {
+function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
   const [plans, setPlans] = useState(fallbackRegistrationPlans);
   const [billingInterval, setBillingInterval] = useState("MONTHLY");
-  const [loading, setLoading] = useState(apiOnline);
+  const [planConfigStatus, setPlanConfigStatus] = useState(PLAN_CONFIG_STATUS.IDLE);
+  const [planRequestKey, setPlanRequestKey] = useState(0);
   const [error, setError] = useState("");
+  const planConfigIsPending = planConfigPending(planConfigStatus);
 
   useEffect(() => {
-    if (!apiOnline) {
-      setPlans(fallbackRegistrationPlans);
-      setLoading(false);
-      setError("Live checkout is temporarily unavailable. You can still review plans.");
+    if (apiMode === "CHECKING") {
+      setPlanConfigStatus(PLAN_CONFIG_STATUS.IDLE);
+      setError("");
       return;
     }
-    setLoading(true);
+    if (!apiOnline) {
+      setPlans(fallbackRegistrationPlans);
+      setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
+      setError("Checkout availability could not be confirmed because the live API is offline.");
+      return;
+    }
+    setPlanConfigStatus(PLAN_CONFIG_STATUS.LOADING);
     setError("");
     api("/api/registration/plans", { skipAuth: true })
-      .then((payload) => setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans))
+      .then((payload) => {
+        setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans);
+        setPlanConfigStatus(PLAN_CONFIG_STATUS.READY);
+      })
       .catch((planError) => {
         setPlans(fallbackRegistrationPlans);
-        setError(planError.message);
-      })
-      .finally(() => setLoading(false));
-  }, [apiOnline]);
+        setError(planError.message || "Checkout availability could not be confirmed. Please try again.");
+        setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
+      });
+  }, [apiMode, apiOnline, planRequestKey]);
 
   return (
     <RegistrationShell>
@@ -1845,31 +1945,44 @@ function PricingPage({ apiOnline }) {
             {["MONTHLY", "ANNUAL"].map((interval) => <button className={`seg ${billingInterval === interval ? "active" : ""}`} key={interval} type="button" onClick={() => setBillingInterval(interval)}>{readable(interval)}</button>)}
           </div>
         </div>
-        {loading ? <p className="mt-4 text-sm text-slate-500">Loading live plan settings...</p> : null}
-        <InlineError message={error} />
+        {planConfigIsPending ? (
+          <div className="mt-4 min-h-14 rounded-md border border-line bg-slate-50 p-3 text-sm font-semibold text-slate-600" aria-live="polite">
+            Checking secure checkout availability...
+          </div>
+        ) : null}
+        {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
+          <div className="mt-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between" role="status">
+            <span className="font-semibold">{error || "Checkout availability could not be confirmed. Please try again."}</span>
+            <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
+          </div>
+        ) : null}
       </section>
       <section className="mt-5 grid gap-4 md:grid-cols-3">
-        {plans.map((plan) => (
-          <div className="panel flex flex-col" key={plan.code}>
-            <StatusPill tone={plan.checkoutAvailable ? "good" : "warn"}>{plan.checkoutAvailable ? "Checkout ready" : "Checkout temporarily unavailable"}</StatusPill>
-            <h2 className="mt-4 text-2xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
-            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{plan.description}</p>
-            <p className="mt-5 text-4xl font-black text-ink">{money(planPrice(plan, billingInterval))}<span className="text-base font-semibold text-slate-500">/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
-            {plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
-            <div className="mt-5 space-y-3">
-              {(plan.features || []).map((feature) => <p className="flex items-start gap-2 text-sm text-slate-600" key={feature}><CheckCircle2 className="mt-0.5 text-mint" size={16} />{feature}</p>)}
+        {planConfigIsPending ? <PlanCardSkeletons count={3} /> : plans.map((plan) => {
+          const checkoutStatus = checkoutStatusForPlan(plan, billingInterval, planConfigStatus);
+          const available = planConfigStatus === PLAN_CONFIG_STATUS.READY && planCheckoutAvailable(plan, billingInterval);
+          return (
+            <div className="panel flex flex-col" key={plan.code}>
+              <StatusPill tone={checkoutStatus.tone}>{checkoutStatus.label}</StatusPill>
+              <h2 className="mt-4 text-2xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
+              <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{plan.description}</p>
+              <p className="mt-5 text-4xl font-black text-ink">{money(planPrice(plan, billingInterval))}<span className="text-base font-semibold text-slate-500">/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
+              {plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
+              <div className="mt-5 space-y-3">
+                {(plan.features || []).map((feature) => <p className="flex items-start gap-2 text-sm text-slate-600" key={feature}><CheckCircle2 className="mt-0.5 text-mint" size={16} />{feature}</p>)}
+              </div>
+              <a className={`mt-6 justify-center ${available ? "button-primary" : "button-muted"}`} href={`/register?plan=${encodeURIComponent(plan.code)}&billingInterval=${billingInterval}`}>
+                {available ? "Select plan" : "Start setup"}
+              </a>
             </div>
-            <a className={`mt-6 justify-center ${plan.checkoutAvailable ? "button-primary" : "button-muted"}`} href={`/register?plan=${encodeURIComponent(plan.code)}&billingInterval=${billingInterval}`}>
-              {plan.checkoutAvailable ? "Select plan" : "Start setup"}
-            </a>
-          </div>
-        ))}
+          );
+        })}
       </section>
     </RegistrationShell>
   );
 }
 
-function RegistrationPage({ apiOnline }) {
+function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
   const query = new window.URLSearchParams(window.location.search);
   const initialPlan = planCodes.includes(query.get("plan")) ? query.get("plan") : "STARTER";
   const initialInterval = query.get("billingInterval") === "ANNUAL" ? "ANNUAL" : "MONTHLY";
@@ -1881,29 +1994,45 @@ function RegistrationPage({ apiOnline }) {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [composingFields, setComposingFields] = useState({});
   const [registration, setRegistration] = useState(null);
-  const [loading, setLoading] = useState(apiOnline);
+  const [planConfigStatus, setPlanConfigStatus] = useState(PLAN_CONFIG_STATUS.IDLE);
+  const [planRequestKey, setPlanRequestKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState(query.get("billing") === "cancelled" ? "Checkout was cancelled. You can review details and try again before the reservation expires." : "");
   const [error, setError] = useState("");
+  const [planError, setPlanError] = useState("");
   const slugRequestRef = useRef({ controller: null, sequence: 0 });
   const submittingRef = useRef(false);
   const currentStep = registrationSteps[stepIndex]?.id || "account";
   const selectedPlan = plans.find((plan) => plan.code === form.planCode) || plans[0] || fallbackRegistrationPlans[0];
   const visibleErrors = registrationVisibleErrors(errors, currentStep);
-  const checkoutReady = apiOnline && planCheckoutAvailable(selectedPlan, form.billingInterval);
+  const planConfigIsPending = planConfigPending(planConfigStatus);
+  const checkoutReady = apiOnline && planConfigStatus === PLAN_CONFIG_STATUS.READY && planCheckoutAvailable(selectedPlan, form.billingInterval);
 
   useEffect(() => {
-    if (!apiOnline) {
-      setPlans(fallbackRegistrationPlans);
-      setLoading(false);
+    if (apiMode === "CHECKING") {
+      setPlanConfigStatus(PLAN_CONFIG_STATUS.IDLE);
+      setPlanError("");
       return;
     }
-    setLoading(true);
+    if (!apiOnline) {
+      setPlans(fallbackRegistrationPlans);
+      setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
+      setPlanError("Checkout availability could not be confirmed because the live API is offline.");
+      return;
+    }
+    setPlanConfigStatus(PLAN_CONFIG_STATUS.LOADING);
+    setPlanError("");
     api("/api/registration/plans", { skipAuth: true })
-      .then((payload) => setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans))
-      .catch((planError) => setError(planError.message))
-      .finally(() => setLoading(false));
-  }, [apiOnline]);
+      .then((payload) => {
+        setPlans(payload.plans?.length ? payload.plans : fallbackRegistrationPlans);
+        setPlanConfigStatus(PLAN_CONFIG_STATUS.READY);
+      })
+      .catch((planLoadError) => {
+        setPlans(fallbackRegistrationPlans);
+        setPlanError(planLoadError.message || "Checkout availability could not be confirmed. Please try again.");
+        setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
+      });
+  }, [apiMode, apiOnline, planRequestKey]);
 
   useEffect(() => () => slugRequestRef.current.controller?.abort(), []);
 
@@ -1986,7 +2115,9 @@ function RegistrationPage({ apiOnline }) {
       return;
     }
     if (!checkoutReady) {
-      setError(apiOnline ? "Secure checkout is temporarily unavailable until Stripe Price IDs are configured." : "Live API is required to start checkout.");
+      if (planConfigIsPending) setError("Plan details are still loading. Please wait a moment.");
+      else if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) setError(planError || "Checkout availability could not be confirmed. Please retry plan details.");
+      else setError(apiOnline ? "Online subscription checkout is temporarily unavailable. Please contact Loohar support to finish setup." : "Live API is required to start checkout.");
       return;
     }
     submittingRef.current = true;
@@ -2033,7 +2164,6 @@ function RegistrationPage({ apiOnline }) {
             </button>
           ))}
         </div>
-        {loading ? <p aria-live="polite" className="mt-4 text-sm text-slate-500">Loading plan settings...</p> : null}
         {message ? <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-800">{message}</div> : null}
         <InlineError message={error} />
       </section>
@@ -2111,12 +2241,24 @@ function RegistrationPage({ apiOnline }) {
             <div className="mb-4 flex w-fit rounded-md border border-line bg-white p-1">
               {["MONTHLY", "ANNUAL"].map((interval) => <button className={`seg ${form.billingInterval === interval ? "active" : ""}`} key={interval} type="button" onClick={() => updateField("billingInterval", interval)}>{readable(interval)}</button>)}
             </div>
+            {planConfigIsPending ? (
+              <div className="mb-4 min-h-14 rounded-md border border-line bg-slate-50 p-3 text-sm font-semibold text-slate-600" aria-live="polite">
+                Checking secure checkout availability...
+              </div>
+            ) : null}
+            {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
+              <div className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between" role="status">
+                <span className="font-semibold">{planError || "Checkout availability could not be confirmed. Please try again."}</span>
+                <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
+              </div>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-3">
-              {plans.map((plan) => {
+              {planConfigIsPending ? <PlanCardSkeletons count={3} /> : plans.map((plan) => {
                 const selected = form.planCode === plan.code;
+                const checkoutStatus = checkoutStatusForPlan(plan, form.billingInterval, planConfigStatus);
                 return (
                   <button className={`panel text-left ${selected ? "ring-2 ring-mint" : ""}`} key={plan.code} type="button" onClick={() => updateField("planCode", plan.code)}>
-                    <StatusPill tone={plan.checkoutAvailable ? "good" : "warn"}>{plan.checkoutAvailable ? "Checkout ready" : "Needs Stripe setup"}</StatusPill>
+                    <StatusPill tone={checkoutStatus.tone}>{checkoutStatus.label}</StatusPill>
                     <h3 className="mt-4 text-xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h3>
                     <p className="mt-2 text-sm text-slate-500">{plan.description}</p>
                     <p className="mt-4 text-2xl font-black text-ink">{money(planPrice(plan, form.billingInterval))}<span className="text-sm font-semibold text-slate-500">/{form.billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
@@ -2144,7 +2286,14 @@ function RegistrationPage({ apiOnline }) {
                 <p className="text-sm font-bold uppercase text-slate-500">Due now</p>
                 <p className="mt-2 text-3xl font-black text-ink">{money(planPrice(selectedPlan, form.billingInterval))}</p>
                 <p className="mt-2 text-sm text-slate-500">Plan price is resolved by the backend. The browser never submits an amount or Stripe Price ID.</p>
-                {!checkoutReady ? <p className="mt-3 text-sm font-semibold text-amber-800">Checkout is temporarily unavailable until live Stripe Price IDs are configured.</p> : null}
+                {planConfigIsPending ? <p className="mt-3 text-sm font-semibold text-slate-600" aria-live="polite">Checking secure checkout availability...</p> : null}
+                {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
+                  <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-semibold">{planError || "Checkout availability could not be confirmed."}</p>
+                    <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
+                  </div>
+                ) : null}
+                {planConfigStatus === PLAN_CONFIG_STATUS.READY && !checkoutReady ? <p className="mt-3 text-sm font-semibold text-amber-800">Online subscription checkout is temporarily unavailable. Please contact Loohar support to finish setup.</p> : null}
               </div>
             </div>
           </div>
@@ -4140,6 +4289,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const [printerSettings, setPrinterSettings] = useState(demoPrinterSettings);
   const [notificationSettings, setNotificationSettings] = useState(demoNotificationSettings);
   const [operationsReport, setOperationsReport] = useState(demoOperationsReport);
+  const [featureLocks, setFeatureLocks] = useState({});
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
@@ -4271,32 +4421,58 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
     if (!apiOnline || !token || !restaurantId) return;
     setError("");
     try {
+      const lockedFeatures = {};
+      const optionalApi = async (feature, path, fallback) => {
+        try {
+          return await api(path, { token });
+        } catch (optionalError) {
+          const payload = optionalError.payload || {};
+          const isEntitlementError = optionalError.status === 403 && (
+            payload.upgradeRequired ||
+            String(payload.code || "").startsWith("FEATURE_") ||
+            String(payload.code || "").startsWith("SUBSCRIPTION_") ||
+            payload.code === "PLAN_NOT_INCLUDED"
+          );
+          if (!isEntitlementError) throw optionalError;
+          lockedFeatures[feature] = {
+            feature,
+            featureLabel: payload.featureLabel || featureLabels[feature],
+            currentPlan: payload.currentPlan,
+            requiredPlan: payload.requiredPlan || featureRequiredPlans[feature],
+            subscriptionStatus: payload.subscriptionStatus,
+            code: payload.code,
+            error: payload.error || optionalError.message
+          };
+          return fallback;
+        }
+      };
       const [dashboardPayload, profilePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload] = await Promise.all([
         api(`/api/restaurants/${restaurantId}/dashboard`, { token }),
         api(`/api/restaurants/${restaurantId}/profile`, { token }),
         api(`/api/restaurants/${restaurantId}/menu/categories`, { token }),
         api(`/api/restaurants/${restaurantId}/menu/items`, { token }),
         api(`/api/restaurants/${restaurantId}/orders`, { token }),
-        api(`/api/restaurants/${restaurantId}/drivers`, { token }),
-        api(`/api/restaurants/${restaurantId}/customers`, { token }),
-        api(`/api/restaurants/${restaurantId}/customers/summary`, { token }),
-        api(`/api/restaurants/${restaurantId}/loyalty`, { token }),
-        api(`/api/restaurants/${restaurantId}/promotions/analytics`, { token }),
-        api(`/api/restaurants/${restaurantId}/analytics`, { token }),
-        api(`/api/restaurants/${restaurantId}/menu/insights`, { token }),
-        api(`/api/restaurants/${restaurantId}/locations`, { token }),
+        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/drivers`, { drivers: [] }),
+        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers`, { customers: [] }),
+        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers/summary`, { totalCustomers: 0, newCustomersThisMonth: 0, repeatCustomerPercentage: 0, vipCustomerCount: 0 }),
+        optionalApi("LOYALTY", `/api/restaurants/${restaurantId}/loyalty`, { analytics: {}, rewards: [], topCustomers: [] }),
+        optionalApi("COUPONS", `/api/restaurants/${restaurantId}/promotions/analytics`, { activePromotions: [], redemptions: [], performance: {} }),
+        optionalApi("ANALYTICS", `/api/restaurants/${restaurantId}/analytics`, { metrics: {}, salesTrend: [], ordersTrend: [], customerGrowth: [], loyaltyGrowth: [] }),
+        optionalApi("MENU_INSIGHTS", `/api/restaurants/${restaurantId}/menu/insights`, { bestSellingItems: [], worstSellingItems: [], categoryPerformance: [] }),
+        optionalApi("MULTI_LOCATION", `/api/restaurants/${restaurantId}/locations`, { locations: [] }),
         api(`/api/restaurants/${restaurantId}/website`, { token }),
-        api(`/api/restaurants/${restaurantId}/domain`, { token }),
+        optionalApi("CUSTOM_DOMAIN", `/api/restaurants/${restaurantId}/domain`, { domain: demoDomain }),
         api(`/api/restaurants/${restaurantId}/gallery`, { token }),
         api(`/api/restaurants/${restaurantId}/social-links`, { token }),
-        api(`/api/restaurants/${restaurantId}/employees`, { token }),
-        api(`/api/restaurants/${restaurantId}/dispatch`, { token }),
-        api(`/api/restaurants/${restaurantId}/delivery-zones`, { token }),
-        api(`/api/restaurants/${restaurantId}/inventory`, { token }),
-        api(`/api/restaurants/${restaurantId}/printing`, { token }),
-        api(`/api/restaurants/${restaurantId}/notification-settings`, { token }),
-        api(`/api/restaurants/${restaurantId}/reports/operations`, { token })
+        optionalApi("EMPLOYEE_MANAGEMENT", `/api/restaurants/${restaurantId}/employees`, { employees: [] }),
+        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/dispatch`, { availableDrivers: [], busyDrivers: [], offlineDrivers: [], deliveries: [] }),
+        optionalApi("DELIVERY_ZONES", `/api/restaurants/${restaurantId}/delivery-zones`, { zones: [] }),
+        optionalApi("INVENTORY", `/api/restaurants/${restaurantId}/inventory`, { items: [] }),
+        optionalApi("PRINTING", `/api/restaurants/${restaurantId}/printing`, { settings: {} }),
+        optionalApi("NOTIFICATIONS", `/api/restaurants/${restaurantId}/notification-settings`, { settings: {} }),
+        optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations`, { sales: {}, items: {}, customers: {}, drivers: [] })
       ]);
+      setFeatureLocks(lockedFeatures);
       setStats(dashboardPayload);
       setProfile(profilePayload.restaurant || demoRestaurant);
       setCategories(categoriesPayload.categories || []);
@@ -5080,12 +5256,22 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   }
 
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
+  const lockFor = (feature) => featureLocks[feature];
+  const hasLock = (feature) => Boolean(lockFor(feature));
+  const entitlementSummary = profile.entitlements || {};
+  const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY") || (lockFor("PRINTING") ? { ...lockFor("PRINTING"), featureLabel: featureLabels.KITCHEN_DISPLAY, requiredPlan: featureRequiredPlans.KITCHEN_DISPLAY } : null);
 
   return (
     <div className="space-y-6">
       <SectionHeader eyebrow="Restaurant dashboard" title={apiOnline ? "Live restaurant operations" : "Demo Bistro operations"} icon={ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
       <InlineError message={error} />
       {toast ? <div className={`rounded-md border px-4 py-3 text-sm font-bold ${toast.tone === "bad" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{toast.message}</div> : null}
+      {entitlementSummary.planCode ? (
+        <div className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-slate-600">
+          Plan: <strong className="text-ink">{readable(entitlementSummary.planCode)}</strong>
+          {entitlementSummary.subscriptionStatus ? <> - Status: <strong className="text-ink">{readable(entitlementSummary.subscriptionStatus)}</strong></> : null}
+        </div>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-4">
         <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
         <Stat icon={ReceiptText} label="Today's sales" value={money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || orders.reduce((sum, order) => sum + order.totalCents, 0))} detail="Tips separated" />
@@ -5238,7 +5424,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
       <div className="grid gap-5 xl:grid-cols-2" id="customers">
         <div className="panel">
           <h3 className="panel-title">Customer CRM</h3>
-          <div className="mt-4 space-y-3">
+          {hasLock("CUSTOMER_CRM") ? <div className="mt-4"><UpgradeRequired feature="CUSTOMER_CRM" lock={lockFor("CUSTOMER_CRM")} /></div> : <div className="mt-4 space-y-3">
             {customers.length === 0 ? <EmptyState title="No customers yet" detail="Customer profiles appear after orders are placed." /> : customers.slice(0, 6).map((customerRow) => (
               <div className="menu-row" key={customerRow.id}>
                 <div>
@@ -5251,10 +5437,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
                 </div>
               </div>
             ))}
-          </div>
+          </div>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Loyalty program</h3>
+          {hasLock("LOYALTY") ? <div className="mt-4"><UpgradeRequired feature="LOYALTY" lock={lockFor("LOYALTY")} /></div> : <>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-md bg-slate-50 p-3"><p className="text-xs font-bold uppercase text-slate-500">Points issued</p><strong className="text-xl text-ink">{loyalty.analytics?.pointsIssued || 0}</strong></div>
             <div className="rounded-md bg-slate-50 p-3"><p className="text-xs font-bold uppercase text-slate-500">Redeemed</p><strong className="text-xl text-ink">{loyalty.analytics?.pointsRedeemed || 0}</strong></div>
@@ -5265,33 +5452,34 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <div className="summary-line" key={reward.id}><span>{reward.name}</span><strong>{reward.pointsRequired} pts</strong></div>
             ))}
           </div>
+          </>}
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-3">
         <div className="panel">
           <h3 className="panel-title">Promotions</h3>
-          <div className="mt-4 space-y-2">
+          {hasLock("COUPONS") ? <div className="mt-4"><UpgradeRequired feature="COUPONS" lock={lockFor("COUPONS")} /></div> : <div className="mt-4 space-y-2">
             {(promotions.activePromotions || []).length === 0 ? <EmptyState title="No active promotions" detail="Create coupons for fixed discounts, percentage discounts, free delivery, or BOGO campaigns." /> : promotions.activePromotions.map((coupon) => (
               <div className="summary-line" key={coupon.id}><span>{coupon.code}</span><strong>{coupon.redeemedCount || 0} used</strong></div>
             ))}
-          </div>
+          </div>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Restaurant analytics</h3>
-          <div className="mt-4 space-y-2 text-sm text-slate-600">
+          {hasLock("ANALYTICS") ? <div className="mt-4"><UpgradeRequired feature="ANALYTICS" lock={lockFor("ANALYTICS")} /></div> : <div className="mt-4 space-y-2 text-sm text-slate-600">
             <div className="summary-line"><span>Total orders</span><strong>{growthAnalytics.metrics?.totalOrders || orders.length}</strong></div>
             <div className="summary-line"><span>Delivery orders</span><strong>{growthAnalytics.metrics?.deliveryOrders || 0}</strong></div>
             <div className="summary-line"><span>Pickup orders</span><strong>{growthAnalytics.metrics?.pickupOrders || 0}</strong></div>
             <div className="summary-line"><span>Driver tips</span><strong>{money(growthAnalytics.metrics?.driverTipsCents)}</strong></div>
-          </div>
+          </div>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Menu insights</h3>
-          <div className="mt-4 space-y-2">
+          {hasLock("MENU_INSIGHTS") ? <div className="mt-4"><UpgradeRequired feature="MENU_INSIGHTS" lock={lockFor("MENU_INSIGHTS")} /></div> : <div className="mt-4 space-y-2">
             {(menuInsights.bestSellingItems || []).length === 0 ? <EmptyState title="No item insights yet" detail="Best sellers and weak performers appear after orders." /> : menuInsights.bestSellingItems.slice(0, 4).map((item) => (
               <div className="summary-line" key={item.id}><span>{item.name}</span><strong>{item.quantity} sold</strong></div>
             ))}
-          </div>
+          </div>}
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-2" id="website">
@@ -5383,6 +5571,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
         <div className="panel">
           <h3 className="panel-title">Domain Management</h3>
+          {hasLock("CUSTOM_DOMAIN") ? <div className="mt-4"><UpgradeRequired feature="CUSTOM_DOMAIN" lock={lockFor("CUSTOM_DOMAIN")} /></div> : <>
           <div className="mt-4 space-y-2 text-sm text-slate-600">
             <div className="summary-line"><span>Default Loohar subdomain</span><strong>{defaultTenantUrlFor(profile, domain)}</strong></div>
             <div className="summary-line"><span>Canonical URL</span><strong>{canonicalTenantUrlFor(profile, domain)}</strong></div>
@@ -5400,6 +5589,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <button className="button-muted" type="button" onClick={verifyDomain} disabled={savingAction === "domain:verify"}>{savingAction === "domain:verify" ? "Checking..." : "Verify Domain"}</button>
             <button className="button-muted" type="button" onClick={() => saveDomain({ ...domain, customDomain: "", canonicalDomain: domain.primaryDomain || `${domain.defaultSubdomain || profile.slug}.${tenantRootDomain}`, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" })} disabled={savingAction === "domain:save"}>Remove Custom Domain</button>
           </div>
+          </>}
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <div>
               <div className="flex items-center justify-between gap-2">
@@ -5466,19 +5656,20 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               <h3 className="panel-title">Kitchen Display System</h3>
               <p className="mt-2 text-sm text-slate-500">Touch-friendly order queue for kitchen staff, cashiers, and managers.</p>
             </div>
-            <a className="button-primary" href={`/kitchen/${profile.slug || restaurantId}`} target="_blank" rel="noreferrer"><ReceiptText size={16} />Open KDS</a>
+            {kitchenDisplayLock ? null : <a className="button-primary" href={`/kitchen/${profile.slug || restaurantId}`} target="_blank" rel="noreferrer"><ReceiptText size={16} />Open KDS</a>}
           </div>
-          <div className="mt-4 grid gap-3">
+          {kitchenDisplayLock ? <div className="mt-4"><UpgradeRequired feature="KITCHEN_DISPLAY" lock={kitchenDisplayLock} /></div> : <div className="mt-4 grid gap-3">
             {orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length === 0 ? <EmptyState title="No active kitchen orders" detail="New pickup and delivery orders will appear here." /> : orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).slice(0, 4).map((order) => (
               <div className="summary-line rounded-md border border-line px-3 py-2" key={order.id}>
                 <span>#{order.orderNumber} - {order.customer?.name || "Customer"}</span>
                 <StatusPill tone={order.status === "READY" ? "warn" : "neutral"}>{kdsStatusFor(order.status)}</StatusPill>
               </div>
             ))}
-          </div>
+          </div>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Receipt and ticket printing</h3>
+          {hasLock("PRINTING") ? <div className="mt-4"><UpgradeRequired feature="PRINTING" lock={lockFor("PRINTING")} /></div> : <>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             <input className="input" placeholder="Kitchen printer" value={printerSettings.kitchenPrinterName || ""} onChange={(event) => setPrinterSettings({ ...printerSettings, kitchenPrinterName: event.target.value })} />
             <input className="input" placeholder="Front counter printer" value={printerSettings.frontCounterPrinterName || ""} onChange={(event) => setPrinterSettings({ ...printerSettings, frontCounterPrinterName: event.target.value })} />
@@ -5494,11 +5685,13 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             {orders[0] ? <button className="button-muted" onClick={() => printOrderTicket(orders[0], "receipt")}>Print Customer Receipt</button> : null}
           </div>
           <p className="mt-3 text-xs font-semibold text-slate-500">Provider: {printerSettings.provider || "browser_print"}. Star Micronics, Epson, and thermal printer integrations are ready as provider targets.</p>
+          </>}
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="panel" id="drivers">
           <h3 className="panel-title">Employees</h3>
+          {hasLock("EMPLOYEE_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="EMPLOYEE_MANAGEMENT" lock={lockFor("EMPLOYEE_MANAGEMENT")} /></div> : <>
           <form className="mt-4 form-grid" onSubmit={createEmployee}>
             <input className="input" placeholder="Name" value={employeeForm.name} onChange={(event) => setEmployeeForm({ ...employeeForm, name: event.target.value })} />
             <input className="input" placeholder="Email" value={employeeForm.email} onChange={(event) => setEmployeeForm({ ...employeeForm, email: event.target.value })} />
@@ -5523,9 +5716,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
               </div>
             ))}
           </div>
+          </>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Driver Dispatch Center</h3>
+          {hasLock("DRIVER_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="DRIVER_MANAGEMENT" lock={lockFor("DRIVER_MANAGEMENT")} /></div> : <>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <Stat icon={Truck} label="Available" value={dispatch.availableDrivers?.length || 0} detail="Ready to assign" />
             <Stat icon={Activity} label="Busy" value={dispatch.busyDrivers?.length || 0} detail="On delivery" />
@@ -5550,11 +5745,13 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>
           <p className="mt-3 text-xs font-semibold text-slate-500">Driver SMS and push notifications are routed through provider-ready notification services.</p>
+          </>}
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-3">
         <div className="panel">
           <h3 className="panel-title">Delivery Zones</h3>
+          {hasLock("DELIVERY_ZONES") ? <div className="mt-4"><UpgradeRequired feature="DELIVERY_ZONES" lock={lockFor("DELIVERY_ZONES")} /></div> : <>
           <form className="mt-4 grid gap-2" onSubmit={createDeliveryZone}>
             <input className="input" placeholder="Zone name" value={zoneForm.name} onChange={(event) => setZoneForm({ ...zoneForm, name: event.target.value })} />
             <div className="grid gap-2 sm:grid-cols-3">
@@ -5573,9 +5770,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>
           <p className="mt-3 text-xs font-semibold text-slate-500">Map drawing integration is reserved for a later provider pass.</p>
+          </>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Inventory Foundation</h3>
+          {hasLock("INVENTORY") ? <div className="mt-4"><UpgradeRequired feature="INVENTORY" lock={lockFor("INVENTORY")} /></div> : <>
           <form className="mt-4 grid gap-2" onSubmit={createInventoryItem}>
             <input className="input" placeholder="Ingredient" value={inventoryForm.name} onChange={(event) => setInventoryForm({ ...inventoryForm, name: event.target.value })} />
             <div className="grid gap-2 sm:grid-cols-3">
@@ -5594,9 +5793,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>
           <p className="mt-3 text-xs font-semibold text-slate-500">Automatic depletion from orders is a future inventory phase.</p>
+          </>}
         </div>
         <div className="panel">
           <h3 className="panel-title">Notifications</h3>
+          {hasLock("NOTIFICATIONS") ? <div className="mt-4"><UpgradeRequired feature="NOTIFICATIONS" lock={lockFor("NOTIFICATIONS")} /></div> : <>
           <div className="mt-4 grid gap-2">
             {[
               ["smsEnabled", "SMS enabled"],
@@ -5618,6 +5819,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>
           <button className="button-primary mt-4" onClick={() => saveNotificationSettings()}><Activity size={16} />Save Notifications</button>
           <p className="mt-3 text-xs font-semibold text-slate-500">Twilio-ready SMS and provider-based email are wired through backend abstractions.</p>
+          </>}
         </div>
       </div>
       <div className="panel" id="reports">
@@ -5628,6 +5830,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>
           <button className="button-muted" onClick={loadRestaurant}><RefreshCw size={16} />Refresh Reports</button>
         </div>
+        {hasLock("REPORTS") ? <div className="mt-4"><UpgradeRequired feature="REPORTS" lock={lockFor("REPORTS")} /></div> : <>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
           <Stat icon={CreditCard} label="Daily sales" value={money(operationsReport.sales?.dailySalesCents)} detail="Today" />
           <Stat icon={ReceiptText} label="Weekly sales" value={money(operationsReport.sales?.weeklySalesCents)} detail="This week" />
@@ -5651,6 +5854,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <div className="mt-2 space-y-2">{(operationsReport.drivers || []).length === 0 ? <p className="text-sm text-slate-500">No driver history yet.</p> : operationsReport.drivers.slice(0, 5).map((driver) => <div className="summary-line rounded-md bg-slate-50 px-3" key={driver.driverId || driver.name}><span>{driver.name}</span><strong>{driver.deliveries} - {money(driver.tipsCents)} tips</strong></div>)}</div>
           </div>
         </div>
+        </>}
       </div>
       <div className="grid gap-5 xl:grid-cols-2" id="settings">
         <div className="panel">
@@ -5660,7 +5864,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
         <div className="panel">
           <h3 className="panel-title">Multi-location foundation</h3>
-          <p className="mt-2 text-sm text-slate-500">{locations.length} configured location records. Future support will separate menus, drivers, and reporting by location.</p>
+          {hasLock("MULTI_LOCATION") ? <div className="mt-4"><UpgradeRequired feature="MULTI_LOCATION" lock={lockFor("MULTI_LOCATION")} /></div> : <p className="mt-2 text-sm text-slate-500">{locations.length} configured location records. Future support will separate menus, drivers, and reporting by location.</p>}
         </div>
       </div>
     </div>
@@ -6942,7 +7146,7 @@ export default function App() {
   }
 
   if (isPricingRoute) {
-    return <PricingPage apiOnline={apiOnline} />;
+    return <PricingPage apiMode={apiMode} apiOnline={apiOnline} />;
   }
 
   if (isRegisterRoute) {
@@ -6951,7 +7155,7 @@ export default function App() {
     if (initialPath === "/register/success") return <RegistrationResultPage type="success" />;
     if (initialPath === "/register/cancelled") return <RegistrationResultPage type="cancelled" />;
     if (initialPath === "/register/failed") return <RegistrationResultPage type="failed" />;
-    return <RegistrationPage apiOnline={apiOnline} />;
+    return <RegistrationPage apiMode={apiMode} apiOnline={apiOnline} />;
   }
 
   if (isLoginRoute) {

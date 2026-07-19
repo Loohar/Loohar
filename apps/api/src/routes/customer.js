@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
+import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { findOrderForTracking, limitedTrackingOrder } from "../services/orderWorkflowService.js";
 import { createOrderPayment } from "../modules/orderPayments/orderPaymentService.js";
@@ -21,6 +23,7 @@ router.get("/restaurants/:slug", async (req, res, next) => {
       }
     });
     if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Business not found" });
+    await assertFeatureForRestaurant({ restaurantId: restaurant.id, feature: FEATURE.FOOD_CATALOG, method: req.method });
     const orderingEnabled = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType);
     const moduleNotice = orderingEnabled
       ? null
@@ -44,6 +47,7 @@ router.get("/sites/:slug", async (req, res, next) => {
       }
     });
     if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Business not found" });
+    await assertFeatureForRestaurant({ restaurantId: restaurant.id, feature: FEATURE.FOOD_CATALOG, method: req.method });
     const orderingEnabled = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType);
     const moduleNotice = orderingEnabled
       ? null
@@ -93,6 +97,11 @@ export async function attachRestaurantIdBySlug(req, res, next) {
 
 export async function createOrder(req, res, next) {
   try {
+    await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.RESTAURANT_ORDERING, method: req.method });
+    await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: req.body.type === "DELIVERY" ? FEATURE.DELIVERY : FEATURE.PICKUP, method: req.method });
+    if (req.body.couponCode) {
+      await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.COUPONS, method: req.method });
+    }
     res.status(201).json(await createOrderPayment({ body: req.body }));
   } catch (error) {
     next(error);
@@ -147,7 +156,16 @@ router.get("/me/loyalty", async (req, res, next) => {
       where: { userId: req.user.id },
       include: { restaurant: { include: { loyaltyRewards: true } }, loyaltyPoints: { orderBy: { createdAt: "desc" } } }
     });
-    const programs = customers.map((customer) => ({
+    const allowedCustomers = [];
+    for (const customer of customers) {
+      try {
+        await assertFeatureForRestaurant({ restaurantId: customer.restaurantId, feature: FEATURE.LOYALTY, method: req.method });
+        allowedCustomers.push(customer);
+      } catch (error) {
+        if (error.status !== 403) throw error;
+      }
+    }
+    const programs = allowedCustomers.map((customer) => ({
       restaurant: customer.restaurant,
       currentPoints: customer.loyaltyPoints.reduce((sum, point) => sum + point.points, 0),
       availableRewards: customer.restaurant.loyaltyRewards,
@@ -163,6 +181,7 @@ router.patch("/me/favorites", async (req, res, next) => {
   try {
     const customer = await prisma.customer.findFirst({ where: { userId: req.user.id, restaurantId: req.body.restaurantId } });
     if (!customer) return res.status(404).json({ error: "Customer profile not found" });
+    await assertFeatureForRestaurant({ restaurantId: customer.restaurantId, feature: FEATURE.RESTAURANT_ORDERING, method: req.method });
     const updated = await prisma.customer.update({
       where: { id: customer.id },
       data: { favoriteOrdersJson: req.body.favoriteOrdersJson, favoriteItemsJson: req.body.favoriteItemsJson }
@@ -180,6 +199,7 @@ router.post("/orders/:orderId/reorder", async (req, res, next) => {
       include: { items: true, customer: true }
     });
     if (!previous) return res.status(404).json({ error: "Order not found" });
+    await assertFeatureForRestaurant({ restaurantId: previous.restaurantId, feature: FEATURE.RESTAURANT_ORDERING, method: req.method });
     res.json({ reorderDraft: { restaurantId: previous.restaurantId, type: previous.type, items: previous.items } });
   } catch (error) {
     next(error);

@@ -529,12 +529,23 @@ export async function cancelPlatformSubscription({ user }) {
   }
   const form = stripeForm({ cancel_at_period_end: "true" });
   const stripeSubscription = await stripeRequest({ secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY, path: `/subscriptions/${subscription.stripeSubscriptionId}`, body: form });
-  const updated = await prisma.platformSubscription.update({
-    where: { id: subscription.id },
-    data: { cancelAtPeriodEnd: Boolean(stripeSubscription.cancel_at_period_end), status: stripeSubscription.status?.toUpperCase() === "ACTIVE" ? "ACTIVE" : "PAST_DUE" }
+  await recordAudit({
+    actorUserId: user.id,
+    restaurantId: user.restaurantId,
+    action: "platform_subscription.cancel_requested",
+    entityType: "PlatformSubscription",
+    entityId: subscription.id,
+    metadata: { stripeSubscriptionId: subscription.stripeSubscriptionId }
   });
-  await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "platform_subscription.cancel_at_period_end", entityType: "PlatformSubscription", entityId: updated.id });
-  return { subscription: updated };
+  return {
+    subscription,
+    providerSubscription: {
+      id: stripeSubscription.id,
+      cancelAtPeriodEnd: Boolean(stripeSubscription.cancel_at_period_end),
+      status: stripeSubscription.status || null
+    },
+    pendingWebhook: true
+  };
 }
 
 function statusFromStripe(status = "") {

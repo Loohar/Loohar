@@ -34,7 +34,7 @@ function authUserSelect() {
     mfaEnabled: true,
     mfaSetupStatus: true,
     mfaVerifiedAt: true,
-    restaurant: { select: { id: true, name: true, businessName: true, slug: true, onboardingStatus: true, onboardingCurrentStep: true, websitePublishedAt: true } }
+    restaurant: { select: { id: true, name: true, businessName: true, slug: true, status: true, onboardingStatus: true, onboardingCurrentStep: true, websitePublishedAt: true } }
   };
 }
 
@@ -173,12 +173,49 @@ function demoEmailForRole(role) {
   }[role];
 }
 
+function demoFallbackEmailsForRole(role) {
+  return {
+    TENANT_OWNER: ["rowner@loohar.com", "owner@northsidetacos.local"],
+    RESTAURANT_ADMIN: ["rowner@loohar.com", "archie+admin@gmail.com"],
+    RESTAURANT_OWNER: ["owner@northsidetacos.local", "rowner@loohar.com"],
+    RESTAURANT_MANAGER: ["manager@demobistro.local"],
+    CASHIER: ["cashier@demobistro.local"],
+    KITCHEN_STAFF: ["kitchen@loohar.com"],
+    DRIVER: ["driver@loohar.com", "driver@northsidetacos.local"]
+  }[role] || [];
+}
+
 function userEmailWhere(email) {
   return { email: { equals: normalizeEmail(email), mode: "insensitive" } };
 }
 
 function findUserByEmail(email, select) {
   return prisma.user.findFirst({ where: userEmailWhere(email), select });
+}
+
+function demoUserAvailable(user) {
+  if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) return false;
+  if (user.role !== "SUPER_ADMIN" && user.restaurantId && user.restaurant?.status !== "ACTIVE") return false;
+  return true;
+}
+
+async function findDemoUser({ email, role }) {
+  const preferred = email ? await findUserByEmail(email, authUserSelect()) : null;
+  if (demoUserAvailable(preferred)) return preferred;
+  if (!role || role === "SUPER_ADMIN") return null;
+  for (const fallbackEmail of demoFallbackEmailsForRole(role)) {
+    const fallback = await findUserByEmail(fallbackEmail, authUserSelect());
+    if (demoUserAvailable(fallback)) return fallback;
+  }
+  return prisma.user.findFirst({
+    where: {
+      role,
+      status: { in: ["ACTIVE", "PASSWORD_RESET_REQUIRED"] },
+      restaurant: { status: "ACTIVE" }
+    },
+    orderBy: { lastLoginAt: "desc" },
+    select: authUserSelect()
+  });
 }
 
 router.post("/register", validate(credentialsSchema), async (req, res, next) => {
@@ -236,8 +273,8 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
   try {
     if (!demoLoginEnabled()) return res.status(404).json({ error: "Demo login is disabled." });
     const email = demoEmailForRole(req.body.role) || demoEmailForMode(req.body.mode);
-    const user = await findUserByEmail(email, authUserSelect());
-    if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) return res.status(404).json({ error: "Seeded development account is unavailable." });
+    const user = await findDemoUser({ email, role: req.body.role });
+    if (!demoUserAvailable(user)) return res.status(404).json({ error: "Seeded development account is unavailable." });
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },

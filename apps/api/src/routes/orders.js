@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { FEATURE } from "../config/entitlements.js";
 import { prisma } from "../config/prisma.js";
+import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { requireAuth } from "../middleware/auth.js";
 import { recordAudit } from "../services/auditService.js";
 import { buildReceiptPayload, findOrderForTracking, issueOrderTrackingToken, limitedTrackingOrder, normalizeTipInput, receiptOrderInclude } from "../services/orderWorkflowService.js";
@@ -29,6 +31,10 @@ router.patch("/:orderId/tip", async (req, res, next) => {
   try {
     const order = await findOrderForTracking(req.params.orderId, req.query.token?.toString() || req.body.token);
     if (!order) return res.status(403).json({ error: "Invalid or expired tracking token" });
+    await assertFeatureForRestaurant({ restaurantId: order.restaurantId, feature: FEATURE.ORDER_PAYMENTS, method: req.method });
+    if (order.type === "DELIVERY") {
+      await assertFeatureForRestaurant({ restaurantId: order.restaurantId, feature: FEATURE.DELIVERY, method: req.method });
+    }
     if (["DELIVERED", "CANCELLED"].includes(order.status) || ["PAID", "REFUNDED"].includes(order.payment?.status)) {
       return res.status(409).json({ error: "Tips cannot be changed after final payment settlement in this workflow" });
     }

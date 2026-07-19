@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma.js";
+import { FEATURE, USAGE_LIMIT } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { assertUsageLimitForRestaurant, featureGuard } from "../middleware/entitlements.js";
 import { recordAudit } from "../services/auditService.js";
 import { uploadImageToSupabaseStorage } from "../services/uploadService.js";
 
@@ -43,7 +45,7 @@ async function ensureUploadRestaurant(req, res) {
   return restaurant;
 }
 
-router.post("/:kind", async (req, res, next) => {
+router.post("/:kind", featureGuard((req) => req.params.kind === "menu-item" ? FEATURE.MENU_MANAGEMENT : FEATURE.BASIC_WEBSITE), async (req, res, next) => {
   try {
     const kind = req.params.kind;
     if (!uploadKinds.has(kind)) return res.status(404).json({ error: "Upload type not found" });
@@ -61,6 +63,12 @@ router.post("/:kind", async (req, res, next) => {
         select: { id: true }
       });
       if (!existingMenuItem) return res.status(404).json({ error: "Menu item not found" });
+    }
+
+    let galleryCount = 0;
+    if (kind === "gallery") {
+      galleryCount = await prisma.restaurantGalleryImage.count({ where: { restaurantId: restaurant.id } });
+      await assertUsageLimitForRestaurant({ restaurantId: restaurant.id, limitCode: USAGE_LIMIT.GALLERY_IMAGES, used: galleryCount, requestedIncrement: 1 });
     }
 
     const upload = await uploadImageToSupabaseStorage({
@@ -126,7 +134,6 @@ router.post("/:kind", async (req, res, next) => {
       return res.status(201).json({ upload, item });
     }
 
-    const count = await prisma.restaurantGalleryImage.count({ where: { restaurantId: restaurant.id } });
     const image = await prisma.restaurantGalleryImage.create({
       data: {
         restaurantId: restaurant.id,
@@ -136,7 +143,7 @@ router.post("/:kind", async (req, res, next) => {
         caption: req.body.caption ? String(req.body.caption).trim() : null,
         category: req.body.category || "food",
         published: toBoolean(req.body.published, true),
-        sortOrder: Number.isInteger(Number(req.body.sortOrder)) ? Number(req.body.sortOrder) : count + 1
+        sortOrder: Number.isInteger(Number(req.body.sortOrder)) ? Number(req.body.sortOrder) : galleryCount + 1
       }
     });
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "gallery.image.uploaded", entityType: "RestaurantGalleryImage", entityId: image.id, metadata: { provider: upload.provider, key: upload.key } });

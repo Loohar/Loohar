@@ -17,6 +17,43 @@ export function errorHandler(error, req, res, next) {
     return res.status(503).json({ error: "Database unavailable. Start PostgreSQL and verify DATABASE_URL." });
   }
   const status = error.status || 500;
+  if (status === 403 && error.code && String(error.code).startsWith("FEATURE_")) {
+    return res.status(status).json({
+      error: error.message,
+      code: error.code,
+      feature: error.feature,
+      featureLabel: error.featureLabel,
+      currentPlan: error.currentPlan,
+      requiredPlan: error.requiredPlan,
+      subscriptionStatus: error.subscriptionStatus,
+      upgradeRequired: error.code === "FEATURE_NOT_INCLUDED"
+    });
+  }
+  if (status === 403 && ["SUBSCRIPTION_READ_ONLY", "SUBSCRIPTION_SUSPENDED", "PLAN_NOT_INCLUDED"].includes(error.code)) {
+    return res.status(status).json({
+      error: error.message,
+      code: error.code,
+      feature: error.feature,
+      featureLabel: error.featureLabel,
+      currentPlan: error.currentPlan,
+      requiredPlan: error.requiredPlan,
+      subscriptionStatus: error.subscriptionStatus,
+      upgradeRequired: error.code === "PLAN_NOT_INCLUDED"
+    });
+  }
+  if (status === 403 && error.code === "USAGE_LIMIT_REACHED") {
+    return res.status(status).json({
+      error: error.message,
+      code: error.code,
+      limitCode: error.limitCode,
+      limitLabel: error.limitLabel,
+      currentPlan: error.currentPlan,
+      used: error.used,
+      requestedIncrement: error.requestedIncrement,
+      maxAllowed: error.maxAllowed,
+      upgradeRequired: Boolean(error.upgradeRequired)
+    });
+  }
   res.status(status).json({
     error: status === 500 ? "Internal server error" : error.message,
     detail: process.env.NODE_ENV === "production" ? undefined : error.message

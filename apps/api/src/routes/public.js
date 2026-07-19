@@ -1,6 +1,8 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { attachRestaurantIdBySlug, createOrder, createOrderSchema, getOrderStatus } from "./customer.js";
+import { FEATURE } from "../config/entitlements.js";
+import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { getWebsiteBundleBySlug } from "../services/websiteService.js";
 import { prisma } from "../config/prisma.js";
@@ -11,6 +13,16 @@ const DISCOVERY_BUSINESS_TYPES = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_T
 
 function restaurantName(restaurant = {}) {
   return restaurant.businessName || restaurant.name || "Restaurant";
+}
+
+async function featureAllowed(restaurantId, feature) {
+  try {
+    await assertFeatureForRestaurant({ restaurantId, feature, method: "GET" });
+    return true;
+  } catch (error) {
+    if (error.status === 403) return false;
+    throw error;
+  }
 }
 
 function requestIdFor(req) {
@@ -311,6 +323,7 @@ async function sendWebsiteBundle(req, res, next) {
   try {
     const { resolved, bundle, requestId, cacheKey } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.BASIC_WEBSITE, method: req.method });
     res.json({ ...buildPublicSiteResponse(bundle, req), tenantResolution: { type: resolved.type, slug: resolved.restaurant.slug, host: resolved.host, cacheKey, requestId } });
   } catch (error) {
     next(error);
@@ -321,6 +334,7 @@ async function sendSiteBundle(req, res, next) {
   try {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.BASIC_WEBSITE, method: req.method });
     res.json(bundle);
   } catch (error) {
     next(error);
@@ -338,6 +352,7 @@ async function sendWebsiteBundleByHost(req, res, next) {
         resolution: resolved.type
       });
     }
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.BASIC_WEBSITE, method: req.method });
     res.json({ ...buildPublicSiteResponse(bundle, req), hostResolution: { type: resolved.type, host: resolved.host, cacheKey, requestId } });
   } catch (error) {
     next(error);
@@ -378,6 +393,7 @@ async function sendMenu(req, res, next) {
   try {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Menu not found" });
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.FOOD_CATALOG, method: req.method });
     const site = buildPublicSiteResponse(bundle, req);
     res.json({
       restaurant: site.restaurant,
@@ -396,6 +412,7 @@ async function sendMenuItem(req, res, next) {
   try {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Menu item not found" });
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.FOOD_CATALOG, method: req.method });
     const item = bundle.restaurant.categories.flatMap((category) => category.items).find((menuItem) => menuItem.id === req.params.itemId);
     if (!item) return res.status(404).json({ error: "Menu item not found" });
     res.json({ item });
@@ -418,6 +435,7 @@ async function sendLoyalty(req, res, next) {
   try {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Loyalty not found" });
+    await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.LOYALTY, method: req.method });
     res.json({ settings: bundle.restaurant.loyaltySettingsJson, rewards: bundle.restaurant.loyaltyRewards });
   } catch (error) {
     next(error);
@@ -428,15 +446,29 @@ async function sendOrderConfig(req, res, next) {
   try {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Order page not found" });
+    const restaurantId = bundle.restaurant.id;
+    const [orderingAllowed, pickupAllowed, deliveryAllowed, couponsAllowed, loyaltyAllowed] = await Promise.all([
+      featureAllowed(restaurantId, FEATURE.RESTAURANT_ORDERING),
+      featureAllowed(restaurantId, FEATURE.PICKUP),
+      featureAllowed(restaurantId, FEATURE.DELIVERY),
+      featureAllowed(restaurantId, FEATURE.COUPONS),
+      featureAllowed(restaurantId, FEATURE.LOYALTY)
+    ]);
     res.json({
       restaurant: bundle.restaurant,
-      orderingEnabled: ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(bundle.restaurant.businessType),
-      pickupEnabled: bundle.restaurant.pickupEnabled,
-      deliveryEnabled: bundle.restaurant.deliveryEnabled,
+      orderingEnabled: orderingAllowed && ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(bundle.restaurant.businessType),
+      pickupEnabled: pickupAllowed && bundle.restaurant.pickupEnabled,
+      deliveryEnabled: deliveryAllowed && bundle.restaurant.deliveryEnabled,
       deliveryFeeCents: bundle.restaurant.deliveryFeeCents,
       taxRatePlaceholder: 0.0825,
-      coupons: bundle.restaurant.coupons,
-      loyaltyRewards: bundle.restaurant.loyaltyRewards
+      coupons: couponsAllowed ? bundle.restaurant.coupons : [],
+      loyaltyRewards: loyaltyAllowed ? bundle.restaurant.loyaltyRewards : [],
+      entitlements: {
+        pickup: pickupAllowed,
+        delivery: deliveryAllowed,
+        coupons: couponsAllowed,
+        loyalty: loyaltyAllowed
+      }
     });
   } catch (error) {
     next(error);
@@ -478,11 +510,15 @@ async function discoverRestaurants(req, res, next) {
     });
 
     const bundles = (await Promise.all(rows.map((row) => getWebsiteBundleBySlug(row.slug)))).filter((bundle) => bundle && bundle.website.websiteEnabled !== false);
-    const restaurants = bundles.map((bundle) => {
+    const restaurants = (await Promise.all(bundles.map(async (bundle) => {
       const restaurant = bundle.restaurant;
       const website = bundle.website;
       const address = fullAddress(restaurant);
       const distance = distanceMiles(lat, lng, restaurant.latitude, restaurant.longitude);
+      const [pickupAllowed, deliveryAllowed] = await Promise.all([
+        featureAllowed(restaurant.id, FEATURE.PICKUP),
+        featureAllowed(restaurant.id, FEATURE.DELIVERY)
+      ]);
       return {
         id: restaurant.id,
         name: restaurantName(restaurant),
@@ -496,14 +532,18 @@ async function discoverRestaurants(req, res, next) {
         state: restaurant.state,
         zip: restaurant.zip,
         phone: restaurant.phone,
-        pickupEnabled: restaurant.pickupEnabled,
-        deliveryEnabled: restaurant.deliveryEnabled,
+        pickupEnabled: pickupAllowed && restaurant.pickupEnabled,
+        deliveryEnabled: deliveryAllowed && restaurant.deliveryEnabled,
         deliveryRadiusMiles: restaurant.deliveryRadiusMiles || 5,
         distanceMiles: distance,
         openStatus: "Hours vary",
         websiteUrl: publicUrlForRestaurant(restaurant),
         orderUrl: publicUrlForRestaurant(restaurant, "/order")
       };
+    }))).filter((restaurant) => {
+      if (delivery === "true") return restaurant.deliveryEnabled;
+      if (delivery === "false") return restaurant.pickupEnabled;
+      return true;
     }).sort((a, b) => {
       if (a.distanceMiles === null && b.distanceMiles === null) return a.name.localeCompare(b.name);
       if (a.distanceMiles === null) return 1;
