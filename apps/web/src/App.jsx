@@ -44,7 +44,7 @@ const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.
 const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
 const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
 const reservedHostLabels = RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes("."));
-const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, "localhost", ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
+const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, "localhost", "127.0.0.1", "::1", ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 const kitchenRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "SUPER_ADMIN"];
@@ -141,7 +141,7 @@ const socialPlatformMarks = {
   google: "G",
   google_business: "G"
 };
-const defaultLooharImage = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=80";
+const defaultLooharImage = "/marketing/loohar-restaurant-hero.png";
 const demoEmployees = [
   { id: "emp-manager", name: "Rina Manager", email: "manager@demobistro.local", phone: "555-0188", role: "RESTAURANT_MANAGER", status: "ACTIVE", active: true, permissions: ["orders", "kitchen", "employees"] },
   { id: "emp-kitchen", name: "Kai Kitchen", email: "kitchen@demobistro.local", phone: "555-0199", role: "KITCHEN_STAFF", status: "ACTIVE", active: true, permissions: ["kitchen", "orders"] },
@@ -1095,6 +1095,67 @@ function setRobots(indexable) {
   });
 }
 
+function applyHomepageSeo() {
+  const title = "Loohar | Restaurant Websites, Direct Ordering and Delivery SaaS";
+  const description = "Loohar helps restaurants launch branded websites, accept direct online orders, manage pickup and delivery, run loyalty programs, and reduce marketplace dependency.";
+  const canonicalUrl = "https://loohar.com/";
+  const image = `${canonicalUrl}marketing/loohar-restaurant-hero.png`;
+  document.title = title;
+  setMetaTag('meta[name="description"]', { identity: { name: "description" }, values: { content: description } });
+  setMetaTag('meta[property="og:title"]', { identity: { property: "og:title" }, values: { content: title } });
+  setMetaTag('meta[property="og:description"]', { identity: { property: "og:description" }, values: { content: description } });
+  setMetaTag('meta[property="og:image"]', { identity: { property: "og:image" }, values: { content: image } });
+  setMetaTag('meta[property="og:url"]', { identity: { property: "og:url" }, values: { content: canonicalUrl } });
+  setMetaTag('meta[property="og:type"]', { identity: { property: "og:type" }, values: { content: "website" } });
+  setMetaTag('meta[name="twitter:card"]', { identity: { name: "twitter:card" }, values: { content: "summary_large_image" } });
+  setMetaTag('meta[name="twitter:title"]', { identity: { name: "twitter:title" }, values: { content: title } });
+  setMetaTag('meta[name="twitter:description"]', { identity: { name: "twitter:description" }, values: { content: description } });
+  setMetaTag('meta[name="twitter:image"]', { identity: { name: "twitter:image" }, values: { content: image } });
+  setLinkTag("canonical", canonicalUrl);
+  setRobots(true);
+
+  const schema = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://loohar.com/#organization",
+        name: "Loohar",
+        url: "https://loohar.com/",
+        logo: "https://loohar.com/marketing/loohar-mark.svg",
+        contactPoint: {
+          "@type": "ContactPoint",
+          email: "support@loohar.com",
+          contactType: "customer support"
+        }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://loohar.com/#software",
+        name: "Loohar",
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web",
+        description
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://loohar.com/#website",
+        name: "Loohar",
+        url: "https://loohar.com/",
+        publisher: { "@id": "https://loohar.com/#organization" }
+      }
+    ]
+  };
+  let script = document.head.querySelector("#loohar-homepage-jsonld");
+  if (!script) {
+    script = document.createElement("script");
+    script.id = "loohar-homepage-jsonld";
+    script.type = "application/ld+json";
+    document.head.appendChild(script);
+  }
+  script.textContent = JSON.stringify(schema);
+}
+
 function applyPublicSeo(bundle, page = "home") {
   if (!bundle) return;
   const restaurant = bundle.restaurant || {};
@@ -1841,58 +1902,357 @@ function RegistrationShell({ children }) {
 }
 
 function PublicHome({ user, onLogout }) {
-  const benefits = [
-    { icon: Store, title: "Restaurant website", detail: "Launch a branded ordering website for each restaurant tenant." },
-    { icon: ReceiptText, title: "Direct online ordering", detail: "Keep customer relationships and reduce marketplace dependency." },
-    { icon: Truck, title: "Delivery app", detail: "Dispatch orders to in-house drivers with tips and earnings tracking." },
-    { icon: TicketPercent, title: "Customer loyalty", detail: "Reward repeat guests with points, coupons, and direct reordering." },
-    { icon: CreditCard, title: "Lower fees", detail: "Use subscription and platform fees instead of high marketplace commissions." },
-    { icon: LayoutDashboard, title: "Operations dashboard", detail: "Manage menu, orders, kitchen, drivers, staff, reporting, and settings." }
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const productLinks = [
+    { label: "Restaurant websites", href: "#product" },
+    { label: "Direct ordering", href: "#features" },
+    { label: "Delivery workflow", href: "#how-it-works" },
+    { label: "Operations tools", href: "#security" }
   ];
-  return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <BrandMark />
-          <nav className="flex flex-wrap gap-2">
-            {user ? <a className="nav-tab active" href={dashboardPathFor(user)}>Dashboard</a> : null}
-            <a className="nav-tab" href="/pricing">View Pricing</a>
-            <a className="nav-tab" href="/register">Register Your Restaurant</a>
-            <a className="nav-tab" href="/login">Sign In</a>
-            {user ? <button className="nav-tab" onClick={onLogout}>Logout</button> : null}
-          </nav>
+  const resourceLinks = [
+    { label: "Pricing overview", href: "#pricing-overview" },
+    { label: "Security and trust", href: "#security" },
+    { label: "Restaurant onboarding", href: "/register" },
+    { label: "Support", href: "mailto:support@loohar.com" }
+  ];
+  const featureCards = [
+    {
+      icon: Store,
+      title: "Restaurant Website",
+      plan: "Starter+",
+      detail: "Launch a branded restaurant website that keeps ordering, menu content, and customer relationships under your name.",
+      mockup: "website"
+    },
+    {
+      icon: ReceiptText,
+      title: "Direct Online Ordering",
+      plan: "Starter+",
+      detail: "Accept pickup and direct orders without sending guests through a marketplace checkout experience.",
+      mockup: "ordering"
+    },
+    {
+      icon: Truck,
+      title: "Delivery Management",
+      plan: "Professional+",
+      detail: "Assign deliveries to in-house drivers, track delivery status, and keep tips and earnings visible.",
+      mockup: "delivery"
+    },
+    {
+      icon: TicketPercent,
+      title: "Loyalty and Marketing",
+      plan: "Professional+",
+      detail: "Build repeat visits with points, rewards, coupons, customer notes, and restaurant-owned promotions.",
+      mockup: "loyalty"
+    },
+    {
+      icon: Activity,
+      title: "Analytics and Reports",
+      plan: "Enterprise",
+      detail: "Review sales trends, order volume, customer growth, menu performance, driver tips, and operating patterns.",
+      mockup: "analytics"
+    },
+    {
+      icon: LayoutDashboard,
+      title: "Operations Tools",
+      plan: "Starter to Professional",
+      detail: "Manage menus, orders, kitchen flow, staff, drivers, website content, settings, and restaurant workflows.",
+      mockup: "operations"
+    }
+  ];
+  const trustItems = [
+    { icon: Store, label: "Restaurant-owned ordering" },
+    { icon: Users, label: "Direct customer relationships" },
+    { icon: CreditCard, label: "Secure payment architecture" },
+    { icon: Shield, label: "Multi-tenant operations" },
+    { icon: PackageCheck, label: "Mobile-ready experiences" }
+  ];
+  const securityItems = [
+    "Secure authentication and role-based access",
+    "Tenant-isolated restaurant data",
+    "Stripe-hosted subscription checkout",
+    "Stripe Connect merchant onboarding",
+    "Separate SaaS and order accounting foundations",
+    "Secure image storage through backend upload controls",
+    "Audit logging for sensitive platform actions",
+    "Mobile-ready registration and restaurant onboarding"
+  ];
+  const planCards = [
+    { name: "Starter", detail: "Website, menu, direct ordering, and pickup for restaurants getting online fast." },
+    { name: "Professional", detail: "Delivery, drivers, loyalty, coupons, CRM, and operational tools for growing teams." },
+    { name: "Enterprise", detail: "Advanced analytics, custom domain support, and multi-location foundations." }
+  ];
+
+  useEffect(() => {
+    applyHomepageSeo();
+  }, []);
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
+
+  function MarketingFeatureMockup({ type }) {
+    if (type === "website") {
+      return (
+        <div className="marketing-mockup website" aria-hidden="true">
+          <div className="mock-toolbar"><span /><span /><span /></div>
+          <div className="mock-hero"><strong>Direct ordering</strong><small>Pickup and delivery</small></div>
+          <div className="mock-card-row"><span /><span /><span /></div>
         </div>
+      );
+    }
+    if (type === "ordering") {
+      return (
+        <div className="marketing-phone" aria-hidden="true">
+          <div className="phone-notch" />
+          <div className="order-line"><span>Garlic noodles</span><strong>$14</strong></div>
+          <div className="order-line"><span>Fresh salad</span><strong>$11</strong></div>
+          <div className="order-total"><span>Total</span><strong>$25</strong></div>
+          <div className="phone-cta">Checkout</div>
+        </div>
+      );
+    }
+    if (type === "delivery") {
+      return (
+        <div className="marketing-route" aria-hidden="true">
+          <MapPin size={18} />
+          <div className="route-line" />
+          <Truck size={20} />
+          <div className="route-chip">Assigned</div>
+          <div className="route-earnings">$7.50 tip</div>
+        </div>
+      );
+    }
+    if (type === "loyalty") {
+      return (
+        <div className="marketing-loyalty" aria-hidden="true">
+          <CheckCircle2 size={22} />
+          <strong>Reward ready</strong>
+          <span>Free delivery</span>
+          <div className="loyalty-progress"><span /></div>
+        </div>
+      );
+    }
+    if (type === "analytics") {
+      return (
+        <div className="marketing-chart" aria-hidden="true">
+          <div className="chart-total">Sales trend</div>
+          <div className="chart-bars"><span /><span /><span /><span /><span /></div>
+        </div>
+      );
+    }
+    return (
+      <div className="marketing-menu-card" aria-hidden="true">
+        <div><span />Menu item</div>
+        <div><span />Kitchen queue</div>
+        <div><span />Driver dispatch</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="marketing-page">
+      <header className="marketing-header">
+        <div className="marketing-header-inner">
+          <a className="marketing-brand" href="/" aria-label="Loohar home">
+            <img src="/marketing/loohar-mark.svg" alt="" width="28" height="34" />
+            <span>{appName}</span>
+          </a>
+
+          <button className="marketing-menu-button" type="button" aria-expanded={mobileMenuOpen} aria-controls="marketing-mobile-nav" onClick={() => setMobileMenuOpen((open) => !open)}>
+            <MenuIcon size={20} />
+            <span>Menu</span>
+          </button>
+
+          <nav className="marketing-nav" aria-label="Primary">
+            <details className="marketing-dropdown">
+              <summary>Product</summary>
+              <div>
+                {productLinks.map((link) => <a href={link.href} key={link.href}>{link.label}</a>)}
+              </div>
+            </details>
+            <a href="#features">Features</a>
+            <a href="/pricing">Pricing</a>
+            <details className="marketing-dropdown">
+              <summary>Resources</summary>
+              <div>
+                {resourceLinks.map((link) => <a href={link.href} key={link.href}>{link.label}</a>)}
+              </div>
+            </details>
+            <a href="#about">About Us</a>
+          </nav>
+
+          <div className="marketing-actions">
+            <a className="marketing-button secondary" href="/pricing">View Pricing</a>
+            <a className="marketing-button primary" href="/register">Register Your Restaurant</a>
+            {user ? <a className="marketing-button secondary" href={dashboardPathFor(user)}>Dashboard</a> : <a className="marketing-button ghost" href="/login">Sign In</a>}
+            {user ? <button className="marketing-button ghost" type="button" onClick={onLogout}>Logout</button> : null}
+          </div>
+        </div>
+
+        <nav id="marketing-mobile-nav" className={`marketing-mobile-nav ${mobileMenuOpen ? "open" : ""}`} aria-label="Mobile primary">
+          <a href="#product" onClick={closeMobileMenu}>Product</a>
+          <a href="#features" onClick={closeMobileMenu}>Features</a>
+          <a href="/pricing" onClick={closeMobileMenu}>Pricing</a>
+          <a href="#resources" onClick={closeMobileMenu}>Resources</a>
+          <a href="#about" onClick={closeMobileMenu}>About Us</a>
+          <a href="/register" onClick={closeMobileMenu}>Register Your Restaurant</a>
+          <a href="/login" onClick={closeMobileMenu}>Sign In</a>
+        </nav>
       </header>
+
       <main>
-        <section
-          className="loohar-hero"
-          style={{ backgroundImage: "linear-gradient(90deg, rgba(9, 15, 23, 0.92), rgba(9, 15, 23, 0.52)), url('https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=1800&q=80')" }}
-        >
-          <div className="mx-auto flex min-h-[68vh] max-w-7xl flex-col justify-center px-4 py-16 text-white">
-            <p className="text-sm font-black uppercase tracking-wide text-mint">Restaurant direct ordering platform</p>
-            <h1 className="mt-4 max-w-4xl text-5xl font-black leading-tight md:text-7xl">{appName}</h1>
-            <p className="mt-5 max-w-2xl text-lg leading-8 text-white/85">Restaurant websites, direct ordering, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <a className="button-primary bg-mint hover:bg-emerald-700" href="/register"><LogIn size={18} />Get Started</a>
-              <a className="button-muted border-white/30 bg-white/10 text-white hover:bg-white hover:text-ink" href="/pricing"><CreditCard size={18} />View Pricing</a>
+        <section className="marketing-hero" aria-labelledby="homepage-hero-title">
+          <img className="marketing-hero-image" src="/marketing/loohar-restaurant-hero.png" alt="Premium restaurant interior with dining room and order counter" width="1792" height="1024" fetchPriority="high" />
+          <div className="marketing-hero-overlay" />
+          <div className="marketing-hero-content">
+            <p className="marketing-eyebrow">Restaurant direct ordering platform</p>
+            <h1 id="homepage-hero-title">Loohar</h1>
+            <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
+            <div className="marketing-hero-actions">
+              <a className="marketing-button primary large" href="/register"><LogIn size={18} />Get Started</a>
+              <a className="marketing-button inverse large" href="/pricing"><CreditCard size={18} />View Pricing</a>
+            </div>
+            <div className="marketing-hero-badges" aria-label="Loohar launch benefits">
+              <span><Shield size={16} />No setup fees</span>
+              <span><Clock size={16} />Launch in minutes</span>
+              <span><Users size={16} />Restaurant-owned customer relationships</span>
             </div>
           </div>
         </section>
-        <section className="mx-auto grid max-w-7xl gap-4 px-4 py-8 md:grid-cols-3">
-          {benefits.map(({ icon: Icon, title, detail }) => (
-            <div className="panel" key={title}>
-              <Icon className="text-mint" size={24} />
-              <h2 className="mt-3 text-lg font-black text-ink">{title}</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>
+
+        <section className="marketing-feature-grid" id="features" aria-label="Loohar features">
+          {featureCards.map(({ icon: Icon, title, plan, detail, mockup }) => (
+            <article className="marketing-feature-card" key={title}>
+              <div className="marketing-feature-copy">
+                <span className="marketing-feature-icon"><Icon size={24} /></span>
+                <p className="marketing-plan-chip">{plan}</p>
+                <h2>{title}</h2>
+                <p>{detail}</p>
+                <a href="/pricing">Learn more</a>
+              </div>
+              <MarketingFeatureMockup type={mockup} />
+            </article>
+          ))}
+        </section>
+
+        <section className="marketing-trust-strip" aria-label="Platform trust signals">
+          {trustItems.map(({ icon: Icon, label }) => (
+            <div key={label}>
+              <Icon size={28} />
+              <span>{label}</span>
             </div>
           ))}
         </section>
+
+        <section className="marketing-split" id="product">
+          <div>
+            <p className="marketing-eyebrow dark">Product</p>
+            <h2>Own your restaurant&apos;s digital experience.</h2>
+          </div>
+          <div>
+            <p>
+              Loohar gives local restaurants a restaurant-owned ordering channel with branded websites, pickup, delivery, driver workflow,
+              loyalty, coupons, and daily operations in one focused SaaS platform.
+            </p>
+            <div className="marketing-inline-actions">
+              <a className="marketing-button primary" href="/register">Start registration</a>
+              <a className="marketing-button secondary" href="/pricing">Compare plans</a>
+            </div>
+          </div>
+        </section>
+
+        <section className="marketing-process" id="how-it-works">
+          <div className="marketing-section-heading">
+            <p className="marketing-eyebrow dark">How it works</p>
+            <h2>From restaurant signup to direct orders.</h2>
+          </div>
+          <div className="marketing-process-grid">
+            <article>
+              <span>01</span>
+              <h3>Register the restaurant</h3>
+              <p>Select a plan, create the restaurant profile, and start the onboarding flow.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Set up the storefront</h3>
+              <p>Add branding, menu content, pickup, delivery, hours, photos, and restaurant settings.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>Operate direct orders</h3>
+              <p>Manage orders, drivers, loyalty, coupons, reporting, and customer relationships from Loohar.</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="marketing-pricing-cta" id="pricing-overview">
+          <div>
+            <p className="marketing-eyebrow dark">Pricing</p>
+            <h2>Choose the right plan for your restaurant.</h2>
+            <p>Start with direct ordering and pickup, then add delivery, loyalty, CRM, and advanced operations as the restaurant grows.</p>
+          </div>
+          <div className="marketing-plan-grid">
+            {planCards.map((plan) => (
+              <article key={plan.name}>
+                <h3>{plan.name}</h3>
+                <p>{plan.detail}</p>
+              </article>
+            ))}
+          </div>
+          <a className="marketing-button primary" href="/pricing">View Pricing</a>
+        </section>
+
+        <section className="marketing-security" id="security">
+          <div className="marketing-section-heading">
+            <p className="marketing-eyebrow dark">Security and trust</p>
+            <h2>Built for restaurant operations, subscriptions, and direct payments.</h2>
+            <p>Loohar keeps public storefronts, admin dashboards, delivery workflows, and subscription controls separated by role and tenant.</p>
+          </div>
+          <div className="marketing-security-grid">
+            {securityItems.map((item) => (
+              <div key={item}><CheckCircle2 size={18} />{item}</div>
+            ))}
+          </div>
+        </section>
+
+        <section className="marketing-about" id="about">
+          <div>
+            <p className="marketing-eyebrow dark">About Loohar</p>
+            <h2>A focused restaurant growth platform.</h2>
+          </div>
+          <p>
+            Loohar is designed around one clear promise: help restaurants reduce marketplace dependency by owning their ordering,
+            delivery, customer, loyalty, and operations experience.
+          </p>
+        </section>
+
+        <section className="marketing-final-cta" id="resources">
+          <p className="marketing-eyebrow">Ready for direct ordering?</p>
+          <h2>Launch a restaurant-owned ordering channel with Loohar.</h2>
+          <div className="marketing-hero-actions">
+            <a className="marketing-button primary large" href="/register">Register Your Restaurant</a>
+            <a className="marketing-button inverse large" href="/pricing">View Pricing</a>
+          </div>
+        </section>
       </main>
-      <footer className="border-t border-line bg-white px-4 py-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-2 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
-          <span>{appName} - restaurant direct ordering, delivery, website, and operations SaaS.</span>
-          <span>{tenantRootDomain}</span>
+
+      <footer className="marketing-footer">
+        <div className="marketing-footer-brand">
+          <a className="marketing-brand" href="/" aria-label="Loohar home">
+            <img src="/marketing/loohar-mark.svg" alt="" width="28" height="34" />
+            <span>{appName}</span>
+          </a>
+          <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations.</p>
         </div>
+        <div className="marketing-footer-links">
+          <a href="#product">Product</a>
+          <a href="#features">Features</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/register">Register</a>
+          <a href="/login">Sign In</a>
+          <a href="mailto:support@loohar.com">support@loohar.com</a>
+        </div>
+        <p className="marketing-copyright">Copyright {new Date().getFullYear()} Loohar. All rights reserved.</p>
       </footer>
     </div>
   );
