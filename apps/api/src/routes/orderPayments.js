@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
+import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { assertFeatureForRestaurant, featureGuard } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
 import { calculateOrderQuote } from "../modules/orderPayments/quoteService.js";
@@ -49,8 +51,17 @@ const refundSchema = z.object({
   })
 });
 
+async function assertOrderPaymentEntitlements(req) {
+  await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.ORDER_PAYMENTS, method: req.method });
+  await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: req.body.type === "DELIVERY" ? FEATURE.DELIVERY : FEATURE.PICKUP, method: req.method });
+  if (req.body.couponCode) {
+    await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.COUPONS, method: req.method });
+  }
+}
+
 router.post("/quote", validate(quoteSchema), async (req, res, next) => {
   try {
+    await assertOrderPaymentEntitlements(req);
     const quote = await calculateOrderQuote({ restaurantId: req.body.restaurantId, body: req.body });
     const { restaurant, coupon, ...safeQuote } = quote;
     res.json({ quote: safeQuote });
@@ -61,6 +72,7 @@ router.post("/quote", validate(quoteSchema), async (req, res, next) => {
 
 router.post("/create", validate(createSchema), async (req, res, next) => {
   try {
+    await assertOrderPaymentEntitlements(req);
     const result = await createOrderPayment({ body: req.body });
     res.status(201).json(result);
   } catch (error) {
@@ -72,7 +84,7 @@ router.post("/confirm", async (req, res) => {
   res.status(202).json({ status: "provider_confirmed", message: "Client-side provider confirmation is handled by Stripe.js or Authorize.Net Accept.js; server confirmation is completed by signed webhooks." });
 });
 
-router.get("/merchant-account", requireAuth, requireRole("TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), async (req, res, next) => {
+router.get("/merchant-account", requireAuth, requireRole("TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), async (req, res, next) => {
   try {
     res.json(await getMerchantAccount({ user: req.user }));
   } catch (error) {
@@ -80,7 +92,7 @@ router.get("/merchant-account", requireAuth, requireRole("TENANT_OWNER", "RESTAU
   }
 });
 
-router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), async (req, res, next) => {
+router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), async (req, res, next) => {
   try {
     res.status(201).json(await createMerchantOnboardingLink({ user: req.user }));
   } catch (error) {
@@ -88,7 +100,7 @@ router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENAN
   }
 });
 
-router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), validate(refundSchema), async (req, res, next) => {
+router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), validate(refundSchema), async (req, res, next) => {
   try {
     const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user });
     res.status(201).json({ refund });

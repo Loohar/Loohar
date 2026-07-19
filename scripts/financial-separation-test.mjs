@@ -53,6 +53,23 @@ const groups = {
     assertCheck(!app.includes("stripePriceId") && !app.includes("priceId") && !app.includes("STRIPE_PLATFORM"), "Frontend registration never submits Stripe Price IDs");
     assertCheck(!app.includes("activatePaidRegistration") && !app.includes("/tenant-created") && !app.includes("/payment-verified"), "Frontend does not activate paid registrations directly");
   },
+  "slug-reservation": () => {
+    assertCheck(schema.includes("model SlugReservation") && schema.includes("slug        String    @unique"), "Slug reservations are modeled with a unique slug");
+    assertCheck(schema.includes("model PendingRegistration") && schema.includes("@@unique([slug])"), "Pending registrations enforce one active slug record");
+    assertCheck(registrationRoutes.includes('"/slug/:slug"'), "Registration exposes a slug availability route");
+    assertCheck(includesAll(registrationService, ["validatePublicSlug", "prisma.slugReservation.findUnique", "prisma.pendingRegistration.findUnique", "prisma.restaurant.findUnique"]), "Slug checks compare reservations, pending registrations, and tenants");
+    assertCheck(includesAll(registrationService, ["expiresAt", "terminalStatuses", "That slug is temporarily reserved during another checkout."]), "Slug reservation checks honor expiration and terminal states");
+    assertCheck(includesAll(registrationService, ["tx.slugReservation.upsert", "registration.slug.reserved", "registration.cancelled"]), "Registration reserves and releases slugs through audited writes");
+  },
+  "registration-security": () => {
+    assertCheck(includesAll(registrationService, ["normalizeEmail(body.email)", "bcrypt.hash(body.password, 12)", "passwordHash"]), "Registration normalizes email and hashes passwords");
+    assertCheck(!registrationService.includes("password: body.password") && !registrationService.includes("registrationJson: body"), "Registration does not persist plaintext password or raw request body");
+    assertCheck(includesAll(registrationService, ["safeRegistrationJson", "maskEmail", "forcePasswordChange: false", "temporaryPassword: false"]), "Registration returns sanitized metadata and avoids temporary-password state");
+    assertCheck(includesAll(registrationRoutes, ["validate(registrationSchema)", "validate(checkoutSchema)", "validate(cancelSchema)"]), "Registration routes validate mutating requests");
+    assertCheck(includesAll(registrationRoutes, ["strongPasswordSchema", "termsAccepted: z.literal(true)", "privacyAccepted: z.literal(true)"]), "Registration account validation requires strong password policy and user agreements");
+    assertCheck(!app.includes("localStorage.setItem(\"password") && !app.includes("sessionStorage.setItem(\"password") && !app.includes("passwordHash"), "Frontend does not store registration password or hash");
+    assertCheck(!app.includes("STRIPE_PLATFORM_SECRET") && !app.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Frontend contains no platform Stripe secrets");
+  },
   "platform-billing": () => {
     assertCheck(includesAll(schema, ["model PlatformPlan", "model PlatformSubscription", "model PlatformInvoice", "model PlatformBillingEvent"]), "Platform billing models are separate from restaurant order payments");
     assertCheck(includesAll(platformRoutes, ['"/checkout"', '"/portal"', '"/change-plan"', '"/cancel"', '"/subscription"', '"/invoices"']), "Platform billing routes exist");

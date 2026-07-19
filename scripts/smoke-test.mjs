@@ -115,7 +115,7 @@ const driverToken = await demoLogin("DRIVER");
 if (driverToken) {
   await requestJson("Driver me", `${apiOrigin}/api/driver/me`, { headers: { Authorization: `Bearer ${driverToken}` } }, (response, body) => response.ok && Boolean(body?.driver?.id));
   const driverDeliveries = await requestJson("Driver deliveries", `${apiOrigin}/api/driver/deliveries`, { headers: { Authorization: `Bearer ${driverToken}` } }, (response, body) => response.ok && Array.isArray(body?.deliveries));
-  const driverOrderId = driverDeliveries.payload?.deliveries?.[0]?.orderId || deliveryOrderId;
+  const driverOrderId = driverDeliveries.payload?.deliveries?.[0]?.orderId || "";
   if (driverOrderId) {
     await requestJson("Driver QR order route", `${apiOrigin}/api/driver/orders/${driverOrderId}`, { headers: { Authorization: `Bearer ${driverToken}` } }, (response, body) => response.ok && Boolean(body?.order?.id));
   }
