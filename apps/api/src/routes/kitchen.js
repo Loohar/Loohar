@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma.js";
+import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { featureGuard } from "../middleware/entitlements.js";
 import { notifyOrderStatusUpdate } from "../services/notificationService.js";
 import { emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
 
@@ -16,6 +18,7 @@ const kdsStatusToOrderStatus = {
 };
 
 router.use(requireAuth, requireRole(...kitchenRoles));
+router.use(featureGuard(FEATURE.KITCHEN_DISPLAY));
 
 function kdsStatusFor(orderStatus) {
   if (orderStatus === "PENDING") return "NEW";

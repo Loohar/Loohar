@@ -3,7 +3,9 @@ import crypto from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
+import { FEATURE, USAGE_LIMIT } from "../config/entitlements.js";
 import { requireAuth, requireRole, requireTenantAccess } from "../middleware/auth.js";
+import { assertUsageLimitForRestaurant, featureGuard, loadRestaurantEntitlements } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
@@ -23,6 +25,32 @@ function restaurantIdFor(req) {
   return req.user.role === "SUPER_ADMIN" ? req.params.restaurantId || req.body.restaurantId : req.tenantId;
 }
 
+async function assertMenuItemLimit(restaurantId) {
+  const used = await prisma.menuItem.count({ where: { restaurantId } });
+  return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.MENU_ITEMS, used, requestedIncrement: 1 });
+}
+
+async function assertStaffLimit(restaurantId) {
+  const used = await prisma.user.count({
+    where: {
+      restaurantId,
+      role: { in: ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"] },
+      status: { not: "DELETED" }
+    }
+  });
+  return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.STAFF_MEMBERS, used, requestedIncrement: 1 });
+}
+
+async function assertDeliveryZoneLimit(restaurantId) {
+  const used = await prisma.deliveryZone.count({ where: { restaurantId, active: true } });
+  return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.DELIVERY_ZONES, used, requestedIncrement: 1 });
+}
+
+async function assertGalleryImageLimit(restaurantId) {
+  const used = await prisma.restaurantGalleryImage.count({ where: { restaurantId } });
+  return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.GALLERY_IMAGES, used, requestedIncrement: 1 });
+}
+
 router.param("restaurantId", async (req, res, next, value) => {
   try {
     const restaurant = await prisma.restaurant.findFirst({
@@ -40,6 +68,37 @@ router.param("restaurantId", async (req, res, next, value) => {
     next(error);
   }
 });
+
+router.use(["/onboarding", "/:restaurantId/onboarding"], featureGuard(FEATURE.ONBOARDING));
+router.use("/:restaurantId/dashboard", featureGuard(FEATURE.BASIC_DASHBOARD));
+router.use(["/:restaurantId/profile", "/:restaurantId/branding"], featureGuard(FEATURE.BASIC_SETTINGS));
+router.use(["/website", "/:restaurantId/website", "/gallery", "/:restaurantId/gallery", "/social-links", "/:restaurantId/social-links"], featureGuard(FEATURE.BASIC_WEBSITE));
+router.use(["/domain", "/:restaurantId/domain"], featureGuard(FEATURE.CUSTOM_DOMAIN));
+router.use(["/:restaurantId/menu/items/:itemId/insights", "/:restaurantId/menu/insights"], featureGuard(FEATURE.MENU_INSIGHTS));
+router.use(["/:restaurantId/menu", "/:restaurantId/menu-items", "/menu-items"], featureGuard(FEATURE.MENU_MANAGEMENT));
+router.use([
+  "/:restaurantId/orders/:orderId/assign-driver",
+  "/:restaurantId/deliveries",
+  "/:restaurantId/dispatch",
+  "/:restaurantId/drivers"
+], featureGuard(FEATURE.DRIVER_MANAGEMENT));
+router.use([
+  "/:restaurantId/orders/:orderId/print-kitchen-ticket",
+  "/:restaurantId/orders/:orderId/print-customer-receipt",
+  "/:restaurantId/orders/:orderId/print-driver-slip",
+  "/:restaurantId/printing"
+], featureGuard(FEATURE.PRINTING));
+router.use("/:restaurantId/orders", featureGuard(FEATURE.ORDER_TRACKING));
+router.use(["/:restaurantId/staff", "/:restaurantId/employees"], featureGuard(FEATURE.EMPLOYEE_MANAGEMENT));
+router.use("/:restaurantId/customers", featureGuard(FEATURE.CUSTOMER_CRM));
+router.use(["/:restaurantId/coupons", "/:restaurantId/promotions"], featureGuard(FEATURE.COUPONS));
+router.use("/:restaurantId/loyalty", featureGuard(FEATURE.LOYALTY));
+router.use("/:restaurantId/notification-settings", featureGuard(FEATURE.NOTIFICATIONS));
+router.use("/:restaurantId/delivery-zones", featureGuard(FEATURE.DELIVERY_ZONES));
+router.use("/:restaurantId/inventory", featureGuard(FEATURE.INVENTORY));
+router.use("/:restaurantId/reports", featureGuard(FEATURE.REPORTS));
+router.use("/:restaurantId/analytics", featureGuard(FEATURE.ANALYTICS));
+router.use("/:restaurantId/locations", featureGuard(FEATURE.MULTI_LOCATION));
 
 function centsTotal(orders = []) {
   return orders.reduce((sum, order) => sum + (order.totalCents || 0), 0);
@@ -719,10 +778,16 @@ router.get("/me", async (req, res, next) => {
     if (!req.tenantId) return res.status(404).json({ error: "No restaurant assigned to this user" });
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: req.tenantId },
-      include: { websiteSettings: true, domains: true, subscriptions: { include: { plan: true } } }
+      include: {
+        websiteSettings: true,
+        domains: true,
+        subscriptions: { include: { plan: true } },
+        platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 }
+      }
     });
     if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
-    res.json({ restaurant });
+    const entitlements = await loadRestaurantEntitlements(req.tenantId, req);
+    res.json({ restaurant: { ...restaurant, entitlements }, entitlements });
   } catch (error) {
     next(error);
   }
@@ -878,6 +943,7 @@ router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, r
     const restaurantId = restaurantIdFor(req);
     const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
     if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
+    await assertMenuItemLimit(restaurantId);
     const item = await prisma.menuItem.create({
       data: { ...menuItemUpdateData(data), restaurantId, options: { create: options } },
       include: { category: true, options: true, optionGroups: { include: { options: true } } }
@@ -1173,12 +1239,14 @@ router.get("/:restaurantId/staff", async (req, res, next) => {
 
 router.post("/:restaurantId/staff", async (req, res, next) => {
   try {
+    const restaurantId = restaurantIdFor(req);
+    await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email, name: req.body.name, passwordHash, role: req.body.role, restaurantId: restaurantIdFor(req), phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name, passwordHash, role: req.body.role, restaurantId, phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
-    const staff = await prisma.restaurantStaff.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id, role: req.body.role, permissionsJson: req.body.permissionsJson || permissionsForRole(req.body.role) } });
+    const staff = await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role: req.body.role, permissionsJson: req.body.permissionsJson || permissionsForRole(req.body.role) } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ staff });
   } catch (error) {
@@ -1229,6 +1297,7 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
     const role = sanitizeEmployeeRole(req.body.role);
+    await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
@@ -1548,6 +1617,7 @@ router.get("/:restaurantId/delivery-zones", async (req, res, next) => {
 router.post("/:restaurantId/delivery-zones", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
+    await assertDeliveryZoneLimit(restaurantId);
     const zone = await prisma.deliveryZone.create({
       data: {
         restaurantId,
@@ -1887,6 +1957,7 @@ async function addGalleryImage(req, res, next) {
   try {
     const restaurantId = restaurantIdFor(req);
     if (!req.body.imageUrl || !isValidHttpUrl(req.body.imageUrl)) return res.status(400).json({ error: "A valid uploaded image URL is required." });
+    await assertGalleryImageLimit(restaurantId);
     const image = await prisma.restaurantGalleryImage.create({
       data: {
         imageUrl: req.body.imageUrl,
