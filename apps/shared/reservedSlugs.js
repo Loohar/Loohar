@@ -10,6 +10,7 @@ export const RESERVED_PLATFORM_SLUGS = [
   "discover",
   "driver",
   "favicon.ico",
+  "features",
   "forgot-password",
   "gallery",
   "health",
