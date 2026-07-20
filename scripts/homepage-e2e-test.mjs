@@ -102,14 +102,15 @@ async function runScenario(browserType, viewport, baseUrl) {
     if (pricingHref !== "/pricing") throw new Error(`View Pricing link points to ${pricingHref}.`);
     if (registerHref !== "/register") throw new Error(`Register link points to ${registerHref}.`);
 
-    if (viewport.width < 768) {
-      await page.getByRole("button", { name: /menu/i }).click();
-      await page.locator("#marketing-mobile-nav.open").waitFor();
-      await page.getByRole("link", { name: "Features" }).last().click();
-    } else {
-      await page.getByRole("link", { name: "Features" }).first().click();
-    }
-    await page.locator("#features").waitFor();
+    const featureCard = page.locator('a.marketing-feature-link-card[href="/features/restaurant-website"]').first();
+    await featureCard.waitFor();
+    await featureCard.click();
+    await page.waitForURL(/\/features\/restaurant-website$/);
+    await page.getByRole("heading", { name: "Restaurant Website", level: 1 }).waitFor();
+    const featurePricingHref = await page.getByRole("link", { name: "View plan availability" }).first().getAttribute("href");
+    const featureRegisterHref = await page.getByRole("link", { name: "Register Your Restaurant" }).first().getAttribute("href");
+    if (featurePricingHref !== "/pricing?feature=restaurant-website") throw new Error(`Feature pricing CTA points to ${featurePricingHref}.`);
+    if (featureRegisterHref !== "/register") throw new Error(`Feature registration CTA points to ${featureRegisterHref}.`);
     await assertNoHorizontalOverflow(page);
     await context.close();
   } finally {

@@ -25,8 +25,17 @@ function sliceBetween(content, startNeedle, endNeedle) {
   return content.slice(start, end);
 }
 
-const publicHome = sliceBetween(app, "function PublicHome(", "\nfunction PricingPage");
+const publicHome = sliceBetween(app, "function PublicHome(", "\nfunction FeatureHero");
+const featureData = sliceBetween(app, "const publicFeatureCards = [", "\nconst publicFeatureBySlug");
 const homeSeo = sliceBetween(app, "function applyHomepageSeo(", "\nfunction applyPublicSeo");
+const requiredFeatureRoutes = [
+  "/features/restaurant-website",
+  "/features/direct-online-ordering",
+  "/features/delivery-management",
+  "/features/loyalty-marketing",
+  "/features/analytics-reports",
+  "/features/operations-tools"
+];
 const fakeMetricPatterns = [
   /500\+/,
   /50K\+/i,
@@ -38,15 +47,16 @@ const fakeMetricPatterns = [
 
 assertCheck(publicHome.includes("Restaurant direct ordering platform"), "Homepage keeps the restaurant direct ordering positioning");
 assertCheck(publicHome.includes("Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations"), "Hero copy describes the restaurant SaaS product");
-assertCheck(publicHome.includes('href="/register"') && publicHome.includes('href="/pricing"') && publicHome.includes('href="/login"'), "Homepage CTAs link to registration, pricing, and sign in routes");
-assertCheck(["#product", "#features", "#pricing-overview", "#resources", "#about", "#security", "#how-it-works"].every((id) => publicHome.includes(id)), "Homepage includes all required navigation anchors");
-assertCheck(["Restaurant Website", "Direct Online Ordering", "Delivery Management", "Loyalty and Marketing", "Analytics and Reports", "Operations Tools"].every((title) => publicHome.includes(title)), "Homepage renders the six required feature cards");
-assertCheck(["Starter+", "Professional+", "Enterprise"].every((label) => publicHome.includes(label)), "Feature cards disclose plan availability");
+assertCheck(publicHome.includes('href="/register"') && publicHome.includes('href="/pricing"') && app.includes('href={compact ? "/" : "/login"}'), "Homepage and global public navbar link to registration, pricing, and sign in routes");
+assertCheck(["id=\"product\"", "id=\"features\"", "id=\"pricing-overview\"", "id=\"resources\"", "id=\"about\"", "id=\"security\"", "id=\"how-it-works\""].every((id) => publicHome.includes(id)), "Homepage includes all required navigation anchors");
+assertCheck(["Restaurant Website", "Direct Online Ordering", "Delivery Management", "Loyalty and Marketing", "Analytics and Reports", "Operations Tools"].every((title) => featureData.includes(title)), "Homepage renders the six required feature cards");
+assertCheck(requiredFeatureRoutes.every((route) => app.includes(`href: "${route}"`)), "Homepage feature cards route to dedicated feature pages before pricing");
+assertCheck(["Starter+", "Professional+", "Enterprise"].every((label) => featureData.includes(label)), "Feature cards disclose plan availability");
 assertCheck(publicHome.includes("Restaurant-owned ordering") && publicHome.includes("Direct customer relationships") && publicHome.includes("Multi-tenant operations"), "Trust strip uses non-numeric restaurant platform statements");
 assertCheck(!fakeMetricPatterns.some((pattern) => pattern.test(publicHome)), "Homepage does not include fake scale metrics or unsupported 24/7 support claims");
 assertCheck(!publicHome.includes("images.unsplash.com") && !app.includes("images.unsplash.com"), "Homepage and fallback images do not depend on external Unsplash hotlinks");
 assertCheck(publicHome.includes("/marketing/loohar-restaurant-hero.png") && publicHome.includes('width="1792"') && publicHome.includes('height="1024"'), "Hero image is a committed asset with explicit dimensions");
-assertCheck(publicHome.includes("/marketing/loohar-mark.svg"), "Homepage uses the provided Loohar logo asset");
+assertCheck(app.includes("function LooharBrand(") && app.includes("/marketing/loohar-mark.svg"), "Public layout uses the provided Loohar logo asset");
 assertCheck(existsSync(heroPath) && statSync(heroPath).size > 100_000, "Committed hero image asset exists");
 assertCheck(existsSync(logoPath) && readFileSync(logoPath, "utf8").includes("<svg"), "Committed Loohar logo SVG exists");
 assertCheck(homeSeo.includes("Loohar | Restaurant Websites, Direct Ordering and Delivery SaaS") && homeSeo.includes("https://loohar.com/"), "Runtime homepage SEO sets title and canonical URL");

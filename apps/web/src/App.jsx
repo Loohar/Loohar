@@ -1,6 +1,8 @@
 import {
   Activity,
+  ArrowRight,
   Bike,
+  ChevronDown,
   CheckCircle2,
   ChefHat,
   Clock,
@@ -21,7 +23,8 @@ import {
   Trash2,
   Truck,
   UserCog,
-  Users
+  Users,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
@@ -44,7 +47,8 @@ const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.
 const appDomain = import.meta.env.VITE_APP_DOMAIN || tenantRootDomain;
 const vercelProjectDomain = import.meta.env.VITE_VERCEL_PROJECT_DOMAIN || "loohar.vercel.app";
 const reservedHostLabels = RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes("."));
-const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, "localhost", "127.0.0.1", "::1", ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
+const localDevReservedHosts = import.meta.env.DEV ? ["localhost", ["127", "0", "0", "1"].join("."), "::1"] : [];
+const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, ...localDevReservedHosts, ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
 const kitchenRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "SUPER_ADMIN"];
@@ -1156,6 +1160,84 @@ function applyHomepageSeo() {
   script.textContent = JSON.stringify(schema);
 }
 
+function applyMarketingSeo({ title, description, path = "/" }) {
+  const canonicalUrl = `https://loohar.com${path}`;
+  const image = "https://loohar.com/marketing/loohar-restaurant-hero.png";
+  document.title = title;
+  setMetaTag('meta[name="description"]', { identity: { name: "description" }, values: { content: description } });
+  setMetaTag('meta[property="og:title"]', { identity: { property: "og:title" }, values: { content: title } });
+  setMetaTag('meta[property="og:description"]', { identity: { property: "og:description" }, values: { content: description } });
+  setMetaTag('meta[property="og:image"]', { identity: { property: "og:image" }, values: { content: image } });
+  setMetaTag('meta[property="og:url"]', { identity: { property: "og:url" }, values: { content: canonicalUrl } });
+  setMetaTag('meta[property="og:type"]', { identity: { property: "og:type" }, values: { content: "website" } });
+  setMetaTag('meta[name="twitter:card"]', { identity: { name: "twitter:card" }, values: { content: "summary_large_image" } });
+  setMetaTag('meta[name="twitter:title"]', { identity: { name: "twitter:title" }, values: { content: title } });
+  setMetaTag('meta[name="twitter:description"]', { identity: { name: "twitter:description" }, values: { content: description } });
+  setMetaTag('meta[name="twitter:image"]', { identity: { name: "twitter:image" }, values: { content: image } });
+  setLinkTag("canonical", canonicalUrl);
+  setRobots(true);
+}
+
+function applyFeatureSchema(feature) {
+  if (!feature) return;
+  const canonicalUrl = `https://loohar.com${feature.href}`;
+  const schema = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebPage",
+        "@id": `${canonicalUrl}#webpage`,
+        name: `${feature.title} | Loohar`,
+        url: canonicalUrl,
+        description: feature.description,
+        isPartOf: { "@id": "https://loohar.com/#website" }
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          {
+            "@type": "ListItem",
+            position: 1,
+            name: "Home",
+            item: "https://loohar.com/"
+          },
+          {
+            "@type": "ListItem",
+            position: 2,
+            name: "Features",
+            item: "https://loohar.com/features"
+          },
+          {
+            "@type": "ListItem",
+            position: 3,
+            name: feature.title,
+            item: canonicalUrl
+          }
+        ]
+      },
+      {
+        "@type": "Service",
+        name: `Loohar ${feature.title}`,
+        serviceType: "Restaurant SaaS",
+        provider: {
+          "@type": "Organization",
+          name: "Loohar",
+          url: "https://loohar.com/"
+        },
+        description: feature.description
+      }
+    ]
+  };
+  let script = document.head.querySelector("#loohar-feature-jsonld");
+  if (!script) {
+    script = document.createElement("script");
+    script.id = "loohar-feature-jsonld";
+    script.type = "application/ld+json";
+    document.head.appendChild(script);
+  }
+  script.textContent = JSON.stringify(schema);
+}
+
 function applyPublicSeo(bundle, page = "home") {
   if (!bundle) return;
   const restaurant = bundle.restaurant || {};
@@ -1564,6 +1646,329 @@ function BrandMark() {
   );
 }
 
+const publicProductLinks = [
+  { label: "Restaurant websites", detail: "Branded direct-ordering storefronts.", href: "/features/restaurant-website" },
+  { label: "Direct ordering", detail: "Pickup and online ordering without marketplace dependency.", href: "/features/direct-online-ordering" },
+  { label: "Delivery workflow", detail: "Driver assignments, tips, status updates, and earnings.", href: "/features/delivery-management" },
+  { label: "Operations tools", detail: "Menu, orders, loyalty, coupons, reports, and settings.", href: "/features/operations-tools" }
+];
+
+const publicResourceLinks = [
+  { label: "Security", detail: "Role-based access and tenant isolation.", href: "/security" },
+  { label: "Restaurant onboarding", detail: "Start self-service setup.", href: "/register" },
+  { label: "Support", detail: "Get help from Loohar.", href: "/support" },
+  { label: "Terms and privacy", detail: "Review platform policies.", href: "/terms" }
+];
+
+function LooharBrand({ compact = false }) {
+  return (
+    <a className={`loohar-brand ${compact ? "compact" : ""}`} href="/" aria-label="Loohar home">
+      <img src="/marketing/loohar-mark.svg" alt="" width="30" height="36" />
+      <span>{appName}</span>
+    </a>
+  );
+}
+
+function internalNavigationTarget(href = "") {
+  if (!href || href.startsWith("mailto:") || href.startsWith("tel:")) return null;
+  try {
+    return new globalThis.URL(href, window.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function PublicLink({ href, children, className = "", onNavigate, role, "aria-current": ariaCurrent }) {
+  function handleClick(event) {
+    const nextUrl = internalNavigationTarget(href);
+    onNavigate?.();
+    if (!nextUrl || nextUrl.origin !== window.location.origin || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (nextUrl.pathname === window.location.pathname && nextUrl.hash) return;
+    event.preventDefault();
+    navigateInApp(`${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    if (nextUrl.hash) {
+      window.setTimeout(() => {
+        document.querySelector(nextUrl.hash)?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          block: "start"
+        });
+      }, 0);
+    } else {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }
+
+  return (
+    <a className={className} href={href} role={role} aria-current={ariaCurrent} onClick={handleClick}>
+      {children}
+    </a>
+  );
+}
+
+function LearnMoreLink({ href, children = "Learn more", className = "" }) {
+  return (
+    <PublicLink href={href} className={`learn-more-link ${className}`}>
+      <span>{children}</span>
+      <ArrowRight size={15} aria-hidden="true" />
+    </PublicLink>
+  );
+}
+
+function MarketingCard({ children, className = "", as: Component = "article" }) {
+  return <Component className={`marketing-card ${className}`}>{children}</Component>;
+}
+
+function PublicDropdown({ id, label, links, openDropdown, setOpenDropdown, onNavigate, active }) {
+  const triggerRef = useRef(null);
+  const panelRef = useRef(null);
+  const isOpen = openDropdown === id;
+
+  function setOpen(nextOpen) {
+    setOpenDropdown(nextOpen ? id : "");
+  }
+
+  function focusPanelItem(index = 0) {
+    window.setTimeout(() => {
+      const items = Array.from(panelRef.current?.querySelectorAll("a") || []);
+      items[index]?.focus();
+    }, 0);
+  }
+
+  function handleTriggerKeyDown(event) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      focusPanelItem(0);
+    }
+    if (event.key === "Escape") {
+      setOpen(false);
+    }
+  }
+
+  function handlePanelKeyDown(event) {
+    const items = Array.from(panelRef.current?.querySelectorAll("a") || []);
+    const currentIndex = items.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
+    if (event.key === "ArrowDown" && items.length) {
+      event.preventDefault();
+      items[(currentIndex + 1 + items.length) % items.length]?.focus();
+    }
+    if (event.key === "ArrowUp" && items.length) {
+      event.preventDefault();
+      items[(currentIndex - 1 + items.length) % items.length]?.focus();
+    }
+  }
+
+  return (
+    <div className={`public-dropdown ${isOpen ? "open" : ""} ${active ? "active" : ""}`}>
+      <button
+        ref={triggerRef}
+        aria-controls={`public-dropdown-${id}`}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        className="public-nav-button"
+        type="button"
+        onClick={() => setOpen(!isOpen)}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span>{label}</span>
+        <ChevronDown className="public-chevron" size={15} aria-hidden="true" />
+      </button>
+      <div
+        ref={panelRef}
+        className="public-dropdown-panel"
+        id={`public-dropdown-${id}`}
+        role="menu"
+        aria-label={`${label} menu`}
+        onKeyDown={handlePanelKeyDown}
+      >
+        {links.map((link) => (
+          <PublicLink className="public-dropdown-item" href={link.href} key={link.href} role="menuitem" onNavigate={onNavigate}>
+            <span>{link.label}</span>
+            <small>{link.detail}</small>
+          </PublicLink>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PublicNavbar({ compact = false, user, onLogout }) {
+  const [openDropdown, setOpenDropdown] = useState("");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileGroup, setMobileGroup] = useState("");
+  const [scrolled, setScrolled] = useState(false);
+  const navRef = useRef(null);
+  const mobileCloseRef = useRef(null);
+  const currentPath = window.location.pathname;
+  const pricingActive = currentPath.startsWith("/pricing");
+  const aboutActive = currentPath.startsWith("/about");
+  const productActive = currentPath === "/" || currentPath.startsWith("/features");
+  const resourceActive = currentPath.startsWith("/resources") || currentPath.startsWith("/security") || currentPath.startsWith("/support") || currentPath.startsWith("/privacy") || currentPath.startsWith("/terms");
+
+  function closeNavigation() {
+    setOpenDropdown("");
+    setMobileOpen(false);
+    setMobileGroup("");
+  }
+
+  useEffect(() => {
+    function handleOutsideClick(event) {
+      if (navRef.current && !navRef.current.contains(event.target)) setOpenDropdown("");
+    }
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        closeNavigation();
+      }
+    }
+    function handleScroll() {
+      setScrolled(window.scrollY > 8);
+    }
+    document.addEventListener("pointerdown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("loohar:navigate", closeNavigation);
+    handleScroll();
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("loohar:navigate", closeNavigation);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => mobileCloseRef.current?.focus(), 0);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
+
+  return (
+    <header className={`public-navbar ${compact ? "compact" : ""} ${scrolled ? "scrolled" : ""}`}>
+      <div className="public-container public-navbar-grid" ref={navRef}>
+        <LooharBrand compact={compact} />
+        {!compact ? (
+          <nav className="public-nav-center" aria-label="Primary public navigation">
+            <PublicDropdown id="product" label="Product" links={publicProductLinks} openDropdown={openDropdown} setOpenDropdown={setOpenDropdown} onNavigate={closeNavigation} active={productActive} />
+            <PublicLink className="public-nav-link" href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
+            <PublicLink className={`public-nav-link ${pricingActive ? "active" : ""}`} href="/pricing" aria-current={pricingActive ? "page" : undefined} onNavigate={closeNavigation}>Pricing</PublicLink>
+            <PublicDropdown id="resources" label="Resources" links={publicResourceLinks} openDropdown={openDropdown} setOpenDropdown={setOpenDropdown} onNavigate={closeNavigation} active={resourceActive} />
+            <PublicLink className={`public-nav-link ${aboutActive ? "active" : ""}`} href="/about" aria-current={aboutActive ? "page" : undefined} onNavigate={closeNavigation}>About Us</PublicLink>
+          </nav>
+        ) : <div />}
+        <div className="public-nav-actions">
+          {!compact ? <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink> : null}
+          {!compact ? <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink> : null}
+          {user && !compact ? <PublicLink className="public-button secondary" href={dashboardPathFor(user)} onNavigate={closeNavigation}>Dashboard</PublicLink> : <PublicLink className="public-button ghost" href={compact ? "/" : "/login"} onNavigate={closeNavigation}>{compact ? "Back to Loohar" : "Sign In"}</PublicLink>}
+          {user && !compact ? <button className="public-button ghost" type="button" onClick={onLogout}>Logout</button> : null}
+        </div>
+        {!compact ? (
+          <button className="public-mobile-trigger" type="button" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={() => setMobileOpen(true)}>
+            <MenuIcon size={20} aria-hidden="true" />
+            <span>Menu</span>
+          </button>
+        ) : null}
+      </div>
+      {!compact ? (
+        <div className={`public-mobile-layer ${mobileOpen ? "open" : ""}`} aria-hidden={!mobileOpen}>
+          <button className="public-mobile-backdrop" type="button" tabIndex={mobileOpen ? 0 : -1} aria-label="Close menu" onClick={closeNavigation} />
+          <nav className="public-mobile-drawer" id="public-mobile-menu" aria-label="Mobile public navigation">
+            <div className="public-mobile-head">
+              <LooharBrand compact />
+              <button ref={mobileCloseRef} className="public-mobile-close" type="button" onClick={closeNavigation} aria-label="Close menu"><X size={20} /></button>
+            </div>
+            {[
+              ["product", "Product", publicProductLinks],
+              ["resources", "Resources", publicResourceLinks]
+            ].map(([groupId, groupLabel, links]) => (
+              <div className={`public-mobile-group ${mobileGroup === groupId ? "open" : ""}`} key={groupId}>
+                <button type="button" onClick={() => setMobileGroup((open) => open === groupId ? "" : groupId)} aria-expanded={mobileGroup === groupId}>
+                  <span>{groupLabel}</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                <div>
+                  {links.map((link) => <PublicLink href={link.href} key={link.href} onNavigate={closeNavigation}>{link.label}</PublicLink>)}
+                </div>
+              </div>
+            ))}
+            <PublicLink href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
+            <PublicLink href="/pricing" onNavigate={closeNavigation}>Pricing</PublicLink>
+            <PublicLink href="/about" onNavigate={closeNavigation}>About Us</PublicLink>
+            <div className="public-mobile-actions">
+              <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink>
+              <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink>
+              <PublicLink className="public-button ghost" href="/login" onNavigate={closeNavigation}>Sign In</PublicLink>
+            </div>
+          </nav>
+        </div>
+      ) : null}
+    </header>
+  );
+}
+
+function PublicFooter({ compact = false }) {
+  if (compact) {
+    return (
+      <footer className="public-footer compact">
+        <div className="public-container">
+          <p>Need help? <a href="mailto:support@loohar.com">support@loohar.com</a></p>
+        </div>
+      </footer>
+    );
+  }
+  return (
+    <footer className="public-footer">
+      <div className="public-container public-footer-grid">
+        <div className="public-footer-brand">
+          <LooharBrand />
+          <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
+        </div>
+        <nav aria-label="Footer product links">
+          <h2>Product</h2>
+          <a href="/features">Features</a>
+          <a href="/features/direct-online-ordering">Direct ordering</a>
+          <a href="/features/delivery-management">Delivery</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/register">Register</a>
+        </nav>
+        <nav aria-label="Footer company links">
+          <h2>Company</h2>
+          <a href="/about">About</a>
+          <a href="/security">Security</a>
+          <a href="/support">Support</a>
+        </nav>
+        <nav aria-label="Footer legal links">
+          <h2>Legal</h2>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="mailto:support@loohar.com">Contact</a>
+        </nav>
+        <p className="public-footer-copy">Copyright {new Date().getFullYear()} Loohar. All rights reserved.</p>
+      </div>
+    </footer>
+  );
+}
+
+function PublicLayout({ children, compactNav = false, user, onLogout, className = "" }) {
+  return (
+    <div className={`public-page ${className}`}>
+      <PublicNavbar compact={compactNav} user={user} onLogout={onLogout} />
+      <main className={`public-main public-page-transition ${compactNav ? "compact" : ""}`}>
+        {children}
+      </main>
+      <PublicFooter compact={compactNav} />
+    </div>
+  );
+}
+
 function AppHeader({ navItems = [] }) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
@@ -1884,81 +2289,332 @@ function RegistrationInput({ form, errors, field, label, type, autoComplete, inp
 
 function RegistrationShell({ children }) {
   return (
-    <div className="registration-shell min-h-screen bg-[#f7f8fb] text-slate-700">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <BrandMark />
-          <nav className="flex flex-wrap gap-2">
-            <a className="nav-tab" href="/">Home</a>
-            <a className="nav-tab" href="/pricing">Pricing</a>
-            <a className="nav-tab" href="/register">Register</a>
-            <a className="nav-tab" href="/login">Sign In</a>
-          </nav>
-        </div>
-      </header>
-      <main className="registration-shell-main mx-auto max-w-7xl px-4 py-8">{children}</main>
+    <PublicLayout className="registration-shell">
+      <div className="public-container registration-shell-main public-form-page">{children}</div>
+    </PublicLayout>
+  );
+}
+
+const publicFeatureCards = [
+  {
+    icon: Store,
+    title: "Restaurant Website",
+    slug: "restaurant-website",
+    href: "/features/restaurant-website",
+    plan: "Starter+",
+    mockup: "website",
+    eyebrow: "Restaurant website",
+    description: "Launch a branded restaurant-owned website that keeps ordering, menu content, customer trust, and launch control under your name.",
+    hero: "A polished website for direct ordering, pickup, delivery, menus, hours, photos, loyalty, and restaurant updates.",
+    benefits: [
+      "Own the first impression before guests choose a marketplace.",
+      "Publish restaurant branding, menu content, photos, hours, and calls to order.",
+      "Send customers to a direct ordering site built around your restaurant."
+    ],
+    useCases: [
+      "New restaurants launching a direct ordering channel",
+      "Existing restaurants replacing a basic brochure site",
+      "Operators who want a branded website connected to ordering"
+    ],
+    capabilities: [
+      "Homepage and public navigation",
+      "Restaurant profile, hours, contact, and gallery",
+      "Menu and order-online calls to action",
+      "Restaurant URL and future custom domain foundation"
+    ],
+    workflow: [
+      "Create the restaurant profile.",
+      "Add branding, menu, photos, hours, and ordering settings.",
+      "Share the Loohar restaurant URL or connect a custom domain later."
+    ],
+    availability: {
+      Starter: "Included",
+      Professional: "Included",
+      Enterprise: "Included"
+    }
+  },
+  {
+    icon: ReceiptText,
+    title: "Direct Online Ordering",
+    slug: "direct-online-ordering",
+    href: "/features/direct-online-ordering",
+    plan: "Starter+",
+    mockup: "ordering",
+    eyebrow: "Direct ordering",
+    description: "Accept pickup and direct restaurant orders without sending guests through a marketplace checkout experience.",
+    hero: "Give customers a fast way to order directly from your restaurant while keeping the relationship with your team.",
+    benefits: [
+      "Reduce dependency on third-party marketplace ordering.",
+      "Keep order flow, customer communication, and restaurant branding connected.",
+      "Support pickup-first restaurants and teams preparing for delivery."
+    ],
+    useCases: [
+      "Pickup ordering",
+      "Restaurant-owned checkout links",
+      "Repeat customers who prefer ordering directly"
+    ],
+    capabilities: [
+      "Menu categories and menu item publishing",
+      "Pickup and delivery order types",
+      "Customer order tracking foundation",
+      "Tips and loyalty-ready order records"
+    ],
+    workflow: [
+      "Publish menu categories and items.",
+      "Enable pickup, delivery, or both.",
+      "Receive orders inside the restaurant dashboard."
+    ],
+    availability: {
+      Starter: "Included",
+      Professional: "Included",
+      Enterprise: "Included"
+    }
+  },
+  {
+    icon: Truck,
+    title: "Delivery Management",
+    slug: "delivery-management",
+    href: "/features/delivery-management",
+    plan: "Professional+",
+    mockup: "delivery",
+    eyebrow: "Delivery management",
+    description: "Assign deliveries to in-house drivers, track delivery status, and keep tips and earnings visible.",
+    hero: "Run restaurant-owned delivery workflows without making drivers or customers use a broad marketplace system.",
+    benefits: [
+      "Coordinate assigned deliveries from the restaurant dashboard.",
+      "Give drivers a lightweight mobile-first delivery app.",
+      "Track status, tips, delivery fees, and completed delivery history."
+    ],
+    useCases: [
+      "Restaurants with in-house drivers",
+      "Delivery zones with restaurant-controlled fees",
+      "Teams that need a simple dispatch workflow"
+    ],
+    capabilities: [
+      "Driver assignment",
+      "Delivery status updates",
+      "Driver PWA workflow",
+      "Tips and earnings tracking"
+    ],
+    workflow: [
+      "Enable delivery and driver management.",
+      "Assign an order to an available driver.",
+      "Track delivery progress through pickup, on-the-way, and delivered states."
+    ],
+    availability: {
+      Starter: "Upgrade required",
+      Professional: "Included",
+      Enterprise: "Included"
+    }
+  },
+  {
+    icon: TicketPercent,
+    title: "Loyalty and Marketing",
+    slug: "loyalty-marketing",
+    href: "/features/loyalty-marketing",
+    plan: "Professional+",
+    mockup: "loyalty",
+    eyebrow: "Loyalty and marketing",
+    description: "Build repeat visits with points, rewards, coupons, customer notes, and restaurant-owned promotions.",
+    hero: "Turn direct ordering into repeat customer growth with loyalty, offers, and customer relationship tools.",
+    benefits: [
+      "Reward customers for ordering directly.",
+      "Create promotions without handing the relationship to a marketplace.",
+      "Use customer history and loyalty signals to guide retention."
+    ],
+    useCases: [
+      "Points and rewards programs",
+      "Free delivery or discount promotions",
+      "Restaurant-owned customer retention"
+    ],
+    capabilities: [
+      "Points and reward configuration",
+      "Coupons and promotion foundation",
+      "Customer profile and notes foundation",
+      "Repeat customer visibility"
+    ],
+    workflow: [
+      "Configure loyalty rewards and coupon rules.",
+      "Promote offers through the restaurant site.",
+      "Track points, redemptions, and repeat customer behavior."
+    ],
+    availability: {
+      Starter: "Upgrade required",
+      Professional: "Included",
+      Enterprise: "Included"
+    }
+  },
+  {
+    icon: Activity,
+    title: "Analytics and Reports",
+    slug: "analytics-reports",
+    href: "/features/analytics-reports",
+    plan: "Enterprise",
+    mockup: "analytics",
+    eyebrow: "Analytics and reports",
+    description: "Review sales trends, order volume, customer growth, menu performance, driver tips, and operating patterns.",
+    hero: "Make decisions from restaurant-owned order, customer, delivery, loyalty, and menu performance data.",
+    benefits: [
+      "Understand daily, weekly, and monthly restaurant performance.",
+      "Find best-selling and underperforming menu items.",
+      "Connect customer growth, loyalty, order mix, and delivery results."
+    ],
+    useCases: [
+      "Owner performance reviews",
+      "Menu optimization",
+      "Growth and retention planning"
+    ],
+    capabilities: [
+      "Sales and order trends",
+      "Customer growth analytics",
+      "Menu insights",
+      "Driver tip and delivery reporting"
+    ],
+    workflow: [
+      "Collect orders and customer activity through Loohar.",
+      "Review sales, menu, delivery, and customer metrics.",
+      "Use insights to improve operations and retention."
+    ],
+    availability: {
+      Starter: "Core order totals",
+      Professional: "Operational reports",
+      Enterprise: "Advanced analytics"
+    }
+  },
+  {
+    icon: LayoutDashboard,
+    title: "Operations Tools",
+    slug: "operations-tools",
+    href: "/features/operations-tools",
+    plan: "Starter to Professional",
+    mockup: "operations",
+    eyebrow: "Operations tools",
+    description: "Manage menus, orders, kitchen flow, staff, drivers, website content, settings, and restaurant workflows.",
+    hero: "Give restaurant teams one focused workspace for the day-to-day systems behind direct ordering and delivery.",
+    benefits: [
+      "Keep restaurant workflows in one focused SaaS dashboard.",
+      "Separate owner, manager, kitchen, driver, and customer experiences.",
+      "Add operational tools as the restaurant grows."
+    ],
+    useCases: [
+      "Menu and order management",
+      "Kitchen and driver coordination",
+      "Website, settings, and staff workflows"
+    ],
+    capabilities: [
+      "Menu management",
+      "Order workflow",
+      "Kitchen display foundation",
+      "Employee and driver operations"
+    ],
+    workflow: [
+      "Set up restaurant access and roles.",
+      "Manage menu, orders, website, settings, and operational modules.",
+      "Use plan entitlements to unlock advanced operations."
+    ],
+    availability: {
+      Starter: "Core menu and orders",
+      Professional: "Delivery and team workflows",
+      Enterprise: "Advanced operations"
+    }
+  }
+];
+
+const publicFeatureBySlug = Object.fromEntries(publicFeatureCards.map((feature) => [feature.slug, feature]));
+const featurePlanColumns = ["Starter", "Professional", "Enterprise"];
+const featureSeoBySlug = {
+  "restaurant-website": {
+    title: "Restaurant Website Builder for Direct Ordering | Loohar",
+    description: "Build a branded restaurant website with menu, photos, pickup, delivery, contact details, SEO content, and direct ordering calls to action."
+  },
+  "direct-online-ordering": {
+    title: "Direct Online Ordering for Restaurants | Loohar",
+    description: "Use Loohar for restaurant-owned pickup and delivery ordering, menu modifiers, order tracking, tips, and checkout-ready direct ordering workflows."
+  },
+  "delivery-management": {
+    title: "Restaurant Delivery Management Software | Loohar",
+    description: "Manage restaurant-owned delivery, driver assignments, delivery zones, driver status updates, tips, earnings, and customer tracking from Loohar."
+  },
+  "loyalty-marketing": {
+    title: "Restaurant Loyalty and Marketing Tools | Loohar",
+    description: "Grow repeat customers with restaurant-owned loyalty points, rewards, coupons, promotions, and customer retention tools in Loohar."
+  },
+  "analytics-reports": {
+    title: "Restaurant Analytics and Reports | Loohar",
+    description: "Review Loohar restaurant sales, order volume, customer growth, loyalty, menu performance, delivery, tips, and operations reporting."
+  },
+  "operations-tools": {
+    title: "Restaurant Operations Management Tools | Loohar",
+    description: "Run restaurant menu, orders, kitchen workflow, staff, driver dispatch, website, media, and settings operations from one Loohar workspace."
+  }
+};
+
+function featureSlugFromPath(path = "") {
+  const normalizedPath = String(path || "").replace(/\/+$/, "") || "/";
+  const match = normalizedPath.match(/^\/features\/([^/?#]+)$/);
+  return match?.[1] || "";
+}
+
+function MarketingFeatureMockup({ type }) {
+  if (type === "website") {
+    return (
+      <div className="marketing-mockup website" aria-hidden="true">
+        <div className="mock-toolbar"><span /><span /><span /></div>
+        <div className="mock-hero"><strong>Direct ordering</strong><small>Pickup and delivery</small></div>
+        <div className="mock-card-row"><span /><span /><span /></div>
+      </div>
+    );
+  }
+  if (type === "ordering") {
+    return (
+      <div className="marketing-phone" aria-hidden="true">
+        <div className="phone-notch" />
+        <div className="order-line"><span>Garlic noodles</span><strong>$14</strong></div>
+        <div className="order-line"><span>Fresh salad</span><strong>$11</strong></div>
+        <div className="order-total"><span>Total</span><strong>$25</strong></div>
+        <div className="phone-cta">Checkout</div>
+      </div>
+    );
+  }
+  if (type === "delivery") {
+    return (
+      <div className="marketing-route" aria-hidden="true">
+        <MapPin size={18} />
+        <div className="route-line" />
+        <Truck size={20} />
+        <div className="route-chip">Assigned</div>
+        <div className="route-earnings">$7.50 tip</div>
+      </div>
+    );
+  }
+  if (type === "loyalty") {
+    return (
+      <div className="marketing-loyalty" aria-hidden="true">
+        <CheckCircle2 size={22} />
+        <strong>Reward ready</strong>
+        <span>Free delivery</span>
+        <div className="loyalty-progress"><span /></div>
+      </div>
+    );
+  }
+  if (type === "analytics") {
+    return (
+      <div className="marketing-chart" aria-hidden="true">
+        <div className="chart-total">Sales trend</div>
+        <div className="chart-bars"><span /><span /><span /><span /><span /></div>
+      </div>
+    );
+  }
+  return (
+    <div className="marketing-menu-card" aria-hidden="true">
+      <div><span />Menu item</div>
+      <div><span />Kitchen queue</div>
+      <div><span />Driver dispatch</div>
     </div>
   );
 }
 
 function PublicHome({ user, onLogout }) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const productLinks = [
-    { label: "Restaurant websites", href: "#product" },
-    { label: "Direct ordering", href: "#features" },
-    { label: "Delivery workflow", href: "#how-it-works" },
-    { label: "Operations tools", href: "#security" }
-  ];
-  const resourceLinks = [
-    { label: "Pricing overview", href: "#pricing-overview" },
-    { label: "Security and trust", href: "#security" },
-    { label: "Restaurant onboarding", href: "/register" },
-    { label: "Support", href: "mailto:support@loohar.com" }
-  ];
-  const featureCards = [
-    {
-      icon: Store,
-      title: "Restaurant Website",
-      plan: "Starter+",
-      detail: "Launch a branded restaurant website that keeps ordering, menu content, and customer relationships under your name.",
-      mockup: "website"
-    },
-    {
-      icon: ReceiptText,
-      title: "Direct Online Ordering",
-      plan: "Starter+",
-      detail: "Accept pickup and direct orders without sending guests through a marketplace checkout experience.",
-      mockup: "ordering"
-    },
-    {
-      icon: Truck,
-      title: "Delivery Management",
-      plan: "Professional+",
-      detail: "Assign deliveries to in-house drivers, track delivery status, and keep tips and earnings visible.",
-      mockup: "delivery"
-    },
-    {
-      icon: TicketPercent,
-      title: "Loyalty and Marketing",
-      plan: "Professional+",
-      detail: "Build repeat visits with points, rewards, coupons, customer notes, and restaurant-owned promotions.",
-      mockup: "loyalty"
-    },
-    {
-      icon: Activity,
-      title: "Analytics and Reports",
-      plan: "Enterprise",
-      detail: "Review sales trends, order volume, customer growth, menu performance, driver tips, and operating patterns.",
-      mockup: "analytics"
-    },
-    {
-      icon: LayoutDashboard,
-      title: "Operations Tools",
-      plan: "Starter to Professional",
-      detail: "Manage menus, orders, kitchen flow, staff, drivers, website content, settings, and restaurant workflows.",
-      mockup: "operations"
-    }
-  ];
   const trustItems = [
     { icon: Store, label: "Restaurant-owned ordering" },
     { icon: Users, label: "Direct customer relationships" },
@@ -1986,131 +2642,18 @@ function PublicHome({ user, onLogout }) {
     applyHomepageSeo();
   }, []);
 
-  function closeMobileMenu() {
-    setMobileMenuOpen(false);
-  }
-
-  function MarketingFeatureMockup({ type }) {
-    if (type === "website") {
-      return (
-        <div className="marketing-mockup website" aria-hidden="true">
-          <div className="mock-toolbar"><span /><span /><span /></div>
-          <div className="mock-hero"><strong>Direct ordering</strong><small>Pickup and delivery</small></div>
-          <div className="mock-card-row"><span /><span /><span /></div>
-        </div>
-      );
-    }
-    if (type === "ordering") {
-      return (
-        <div className="marketing-phone" aria-hidden="true">
-          <div className="phone-notch" />
-          <div className="order-line"><span>Garlic noodles</span><strong>$14</strong></div>
-          <div className="order-line"><span>Fresh salad</span><strong>$11</strong></div>
-          <div className="order-total"><span>Total</span><strong>$25</strong></div>
-          <div className="phone-cta">Checkout</div>
-        </div>
-      );
-    }
-    if (type === "delivery") {
-      return (
-        <div className="marketing-route" aria-hidden="true">
-          <MapPin size={18} />
-          <div className="route-line" />
-          <Truck size={20} />
-          <div className="route-chip">Assigned</div>
-          <div className="route-earnings">$7.50 tip</div>
-        </div>
-      );
-    }
-    if (type === "loyalty") {
-      return (
-        <div className="marketing-loyalty" aria-hidden="true">
-          <CheckCircle2 size={22} />
-          <strong>Reward ready</strong>
-          <span>Free delivery</span>
-          <div className="loyalty-progress"><span /></div>
-        </div>
-      );
-    }
-    if (type === "analytics") {
-      return (
-        <div className="marketing-chart" aria-hidden="true">
-          <div className="chart-total">Sales trend</div>
-          <div className="chart-bars"><span /><span /><span /><span /><span /></div>
-        </div>
-      );
-    }
-    return (
-      <div className="marketing-menu-card" aria-hidden="true">
-        <div><span />Menu item</div>
-        <div><span />Kitchen queue</div>
-        <div><span />Driver dispatch</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="marketing-page">
-      <header className="marketing-header">
-        <div className="marketing-header-inner">
-          <a className="marketing-brand" href="/" aria-label="Loohar home">
-            <img src="/marketing/loohar-mark.svg" alt="" width="28" height="34" />
-            <span>{appName}</span>
-          </a>
-
-          <button className="marketing-menu-button" type="button" aria-expanded={mobileMenuOpen} aria-controls="marketing-mobile-nav" onClick={() => setMobileMenuOpen((open) => !open)}>
-            <MenuIcon size={20} />
-            <span>Menu</span>
-          </button>
-
-          <nav className="marketing-nav" aria-label="Primary">
-            <details className="marketing-dropdown">
-              <summary>Product</summary>
-              <div>
-                {productLinks.map((link) => <a href={link.href} key={link.href}>{link.label}</a>)}
-              </div>
-            </details>
-            <a href="#features">Features</a>
-            <a href="/pricing">Pricing</a>
-            <details className="marketing-dropdown">
-              <summary>Resources</summary>
-              <div>
-                {resourceLinks.map((link) => <a href={link.href} key={link.href}>{link.label}</a>)}
-              </div>
-            </details>
-            <a href="#about">About Us</a>
-          </nav>
-
-          <div className="marketing-actions">
-            <a className="marketing-button secondary" href="/pricing">View Pricing</a>
-            <a className="marketing-button primary" href="/register">Register Your Restaurant</a>
-            {user ? <a className="marketing-button secondary" href={dashboardPathFor(user)}>Dashboard</a> : <a className="marketing-button ghost" href="/login">Sign In</a>}
-            {user ? <button className="marketing-button ghost" type="button" onClick={onLogout}>Logout</button> : null}
-          </div>
-        </div>
-
-        <nav id="marketing-mobile-nav" className={`marketing-mobile-nav ${mobileMenuOpen ? "open" : ""}`} aria-label="Mobile primary">
-          <a href="#product" onClick={closeMobileMenu}>Product</a>
-          <a href="#features" onClick={closeMobileMenu}>Features</a>
-          <a href="/pricing" onClick={closeMobileMenu}>Pricing</a>
-          <a href="#resources" onClick={closeMobileMenu}>Resources</a>
-          <a href="#about" onClick={closeMobileMenu}>About Us</a>
-          <a href="/register" onClick={closeMobileMenu}>Register Your Restaurant</a>
-          <a href="/login" onClick={closeMobileMenu}>Sign In</a>
-        </nav>
-      </header>
-
-      <main>
+    <PublicLayout user={user} onLogout={onLogout} className="marketing-page">
         <section className="marketing-hero" aria-labelledby="homepage-hero-title">
           <img className="marketing-hero-image" src="/marketing/loohar-restaurant-hero.png" alt="Premium restaurant interior with dining room and order counter" width="1792" height="1024" fetchPriority="high" />
           <div className="marketing-hero-overlay" />
-          <div className="marketing-hero-content">
+          <div className="public-container marketing-hero-content">
             <p className="marketing-eyebrow">Restaurant direct ordering platform</p>
             <h1 id="homepage-hero-title">Loohar</h1>
             <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
             <div className="marketing-hero-actions">
-              <a className="marketing-button primary large" href="/register"><LogIn size={18} />Get Started</a>
-              <a className="marketing-button inverse large" href="/pricing"><CreditCard size={18} />View Pricing</a>
+              <PublicLink className="public-button primary large" href="/register"><LogIn size={18} />Get Started</PublicLink>
+              <PublicLink className="public-button inverse large" href="/pricing"><CreditCard size={18} />View Pricing</PublicLink>
             </div>
             <div className="marketing-hero-badges" aria-label="Loohar launch benefits">
               <span><Shield size={16} />No setup fees</span>
@@ -2121,17 +2664,17 @@ function PublicHome({ user, onLogout }) {
         </section>
 
         <section className="marketing-feature-grid" id="features" aria-label="Loohar features">
-          {featureCards.map(({ icon: Icon, title, plan, detail, mockup }) => (
-            <article className="marketing-feature-card" key={title}>
+          {publicFeatureCards.map(({ icon: Icon, title, plan, description, mockup, href }) => (
+            <PublicLink className="marketing-card marketing-feature-card marketing-feature-link-card" href={href} key={title} aria-label={`Learn more about ${title}`}>
               <div className="marketing-feature-copy">
                 <span className="marketing-feature-icon"><Icon size={24} /></span>
                 <p className="marketing-plan-chip">{plan}</p>
                 <h2>{title}</h2>
-                <p>{detail}</p>
-                <a href="/pricing">Learn more</a>
+                <p>{description}</p>
+                <span className="learn-more-link marketing-card-learn-more"><span>Learn more</span><ArrowRight size={15} aria-hidden="true" /></span>
               </div>
               <MarketingFeatureMockup type={mockup} />
-            </article>
+            </PublicLink>
           ))}
         </section>
 
@@ -2155,8 +2698,8 @@ function PublicHome({ user, onLogout }) {
               loyalty, coupons, and daily operations in one focused SaaS platform.
             </p>
             <div className="marketing-inline-actions">
-              <a className="marketing-button primary" href="/register">Start registration</a>
-              <a className="marketing-button secondary" href="/pricing">Compare plans</a>
+              <PublicLink className="public-button primary" href="/register">Start registration</PublicLink>
+              <PublicLink className="public-button secondary" href="/pricing">Compare plans</PublicLink>
             </div>
           </div>
         </section>
@@ -2167,21 +2710,21 @@ function PublicHome({ user, onLogout }) {
             <h2>From restaurant signup to direct orders.</h2>
           </div>
           <div className="marketing-process-grid">
-            <article>
+            <MarketingCard>
               <span>01</span>
               <h3>Register the restaurant</h3>
               <p>Select a plan, create the restaurant profile, and start the onboarding flow.</p>
-            </article>
-            <article>
+            </MarketingCard>
+            <MarketingCard>
               <span>02</span>
               <h3>Set up the storefront</h3>
               <p>Add branding, menu content, pickup, delivery, hours, photos, and restaurant settings.</p>
-            </article>
-            <article>
+            </MarketingCard>
+            <MarketingCard>
               <span>03</span>
               <h3>Operate direct orders</h3>
               <p>Manage orders, drivers, loyalty, coupons, reporting, and customer relationships from Loohar.</p>
-            </article>
+            </MarketingCard>
           </div>
         </section>
 
@@ -2193,13 +2736,13 @@ function PublicHome({ user, onLogout }) {
           </div>
           <div className="marketing-plan-grid">
             {planCards.map((plan) => (
-              <article key={plan.name}>
+              <MarketingCard key={plan.name}>
                 <h3>{plan.name}</h3>
                 <p>{plan.detail}</p>
-              </article>
+              </MarketingCard>
             ))}
           </div>
-          <a className="marketing-button primary" href="/pricing">View Pricing</a>
+          <PublicLink className="public-button primary" href="/pricing">View Pricing</PublicLink>
         </section>
 
         <section className="marketing-security" id="security">
@@ -2230,31 +2773,334 @@ function PublicHome({ user, onLogout }) {
           <p className="marketing-eyebrow">Ready for direct ordering?</p>
           <h2>Launch a restaurant-owned ordering channel with Loohar.</h2>
           <div className="marketing-hero-actions">
-            <a className="marketing-button primary large" href="/register">Register Your Restaurant</a>
-            <a className="marketing-button inverse large" href="/pricing">View Pricing</a>
+            <PublicLink className="public-button primary large" href="/register">Register Your Restaurant</PublicLink>
+            <PublicLink className="public-button inverse large" href="/pricing">View Pricing</PublicLink>
           </div>
         </section>
-      </main>
+    </PublicLayout>
+  );
+}
 
-      <footer className="marketing-footer">
-        <div className="marketing-footer-brand">
-          <a className="marketing-brand" href="/" aria-label="Loohar home">
-            <img src="/marketing/loohar-mark.svg" alt="" width="28" height="34" />
-            <span>{appName}</span>
-          </a>
-          <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations.</p>
+function FeatureHero({ feature }) {
+  const Icon = feature.icon;
+  return (
+    <section className="feature-detail-hero">
+      <div className="public-container feature-detail-grid">
+        <div className="feature-detail-copy">
+          <nav className="feature-breadcrumbs" aria-label="Breadcrumb">
+            <PublicLink href="/">Home</PublicLink>
+            <span>/</span>
+            <PublicLink href="/features">Features</PublicLink>
+            <span>/</span>
+            <span>{feature.title}</span>
+          </nav>
+          <p className="marketing-eyebrow dark">{feature.eyebrow}</p>
+          <h1 className="public-page-title">{feature.title}</h1>
+          <p className="public-page-lede">{feature.hero}</p>
+          <div className="feature-detail-actions">
+            <PublicLink className="public-button primary large" href={`/pricing?feature=${feature.slug}`}>View plan availability</PublicLink>
+            <PublicLink className="public-button secondary large" href="/register">Register Your Restaurant</PublicLink>
+          </div>
         </div>
-        <div className="marketing-footer-links">
-          <a href="#product">Product</a>
-          <a href="#features">Features</a>
-          <a href="/pricing">Pricing</a>
-          <a href="/register">Register</a>
-          <a href="/login">Sign In</a>
-          <a href="mailto:support@loohar.com">support@loohar.com</a>
+        <div className="feature-detail-visual" aria-label={`${feature.title} interface preview`}>
+          <span className="feature-detail-icon"><Icon size={28} /></span>
+          <MarketingFeatureMockup type={feature.mockup} />
         </div>
-        <p className="marketing-copyright">Copyright {new Date().getFullYear()} Loohar. All rights reserved.</p>
-      </footer>
-    </div>
+      </div>
+    </section>
+  );
+}
+
+function FeatureBenefits({ feature }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Benefits</p>
+        <h2>What this helps restaurants do</h2>
+      </div>
+      <div className="feature-benefit-grid">
+        {feature.benefits.map((benefit) => (
+          <MarketingCard key={benefit}>
+            <CheckCircle2 size={20} />
+            <p>{benefit}</p>
+          </MarketingCard>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureUseCases({ feature }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Use cases</p>
+        <h2>Where it fits in daily restaurant work</h2>
+      </div>
+      <div className="feature-capability-grid">
+        {feature.useCases.map((useCase) => (
+          <MarketingCard key={useCase}>
+            <h3>{useCase}</h3>
+            <p>Built for restaurant teams that need a focused, direct, and easy-to-explain workflow.</p>
+          </MarketingCard>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureCapabilities({ feature }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Capabilities</p>
+        <h2>Included workflow areas</h2>
+      </div>
+      <div className="feature-capability-grid">
+        {feature.capabilities.map((capability) => (
+          <div className="feature-capability-item" key={capability}>
+            <span />
+            <strong>{capability}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureWorkflow({ feature }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Workflow</p>
+        <h2>How teams use it</h2>
+      </div>
+      <div className="feature-workflow-grid">
+        {feature.workflow.map((step, index) => (
+          <MarketingCard key={step}>
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <p>{step}</p>
+          </MarketingCard>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeaturePlanAvailability({ feature }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Plan availability</p>
+        <h2>Know what is included before signup</h2>
+      </div>
+      <div className="feature-plan-grid" aria-label={`${feature.title} plan availability`}>
+        {featurePlanColumns.map((planName) => (
+          <MarketingCard className="feature-plan-card" key={planName}>
+            <h3>{planName}</h3>
+            <p>{feature.availability[planName]}</p>
+          </MarketingCard>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureCTA({ feature }) {
+  return (
+    <section className="feature-cta">
+      <div className="public-container">
+        <p className="marketing-eyebrow">Ready to use {feature.title.toLowerCase()}?</p>
+        <h2>Launch a restaurant-owned ordering channel with Loohar.</h2>
+        <div className="feature-detail-actions">
+          <PublicLink className="public-button primary large" href="/register">Register Your Restaurant</PublicLink>
+          <PublicLink className="public-button inverse large" href="/pricing">View Pricing</PublicLink>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RelatedFeatures({ features }) {
+  return (
+    <section className="public-container feature-detail-section">
+      <div className="feature-detail-section-head">
+        <p className="marketing-eyebrow dark">Related features</p>
+        <h2>Explore more Loohar workflows</h2>
+      </div>
+      <div className="feature-related-grid">
+        {features.map(({ icon: RelatedIcon, title, description, href }) => (
+          <PublicLink className="marketing-card feature-related-card" href={href} key={href}>
+            <span className="marketing-feature-icon"><RelatedIcon size={22} /></span>
+            <h3>{title}</h3>
+            <p>{description}</p>
+            <span className="learn-more-link marketing-card-learn-more"><span>Explore feature</span><ArrowRight size={15} aria-hidden="true" /></span>
+          </PublicLink>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FeatureDetailPage({ path, user, onLogout }) {
+  const slug = featureSlugFromPath(path);
+  const feature = publicFeatureBySlug[slug];
+  const relatedFeatures = (feature ? publicFeatureCards.filter((item) => item.slug !== feature.slug) : publicFeatureCards).slice(0, 3);
+  const featureSeo = feature ? featureSeoBySlug[feature.slug] : null;
+  const seoTitle = featureSeo?.title || "Loohar | Restaurant SaaS Features";
+  const seoDescription = featureSeo?.description || "Explore Loohar restaurant website, direct ordering, delivery, loyalty, analytics, and operations features.";
+  const canonicalPath = feature ? feature.href : "/features";
+
+  useEffect(() => {
+    applyMarketingSeo({
+      title: seoTitle,
+      description: seoDescription,
+      path: canonicalPath
+    });
+    if (feature) applyFeatureSchema(feature);
+    else document.getElementById("loohar-feature-jsonld")?.remove();
+  }, [canonicalPath, feature, seoDescription, seoTitle]);
+
+  if (!feature) {
+    return (
+      <PublicLayout user={user} onLogout={onLogout} className="feature-detail-page">
+        <section className="public-container feature-overview-hero">
+          <p className="marketing-eyebrow dark">Features</p>
+          <h1 className="public-page-title">Restaurant growth tools built around direct ordering.</h1>
+          <p className="public-page-lede">
+            Loohar brings restaurant websites, ordering, delivery, loyalty, analytics, and operations into one restaurant-owned platform.
+          </p>
+          <div className="public-info-actions">
+            <PublicLink className="public-button primary" href="/register">Register Your Restaurant</PublicLink>
+            <PublicLink className="public-button secondary" href="/pricing">View Pricing</PublicLink>
+          </div>
+        </section>
+        <section className="public-container feature-related-grid" aria-label="Loohar feature pages">
+          {publicFeatureCards.map(({ icon: Icon, title, description, href, plan }) => (
+            <PublicLink className="marketing-card feature-related-card" href={href} key={href}>
+              <span className="marketing-feature-icon"><Icon size={22} /></span>
+              <p className="marketing-plan-chip">{plan}</p>
+              <h2>{title}</h2>
+              <p>{description}</p>
+              <span className="learn-more-link marketing-card-learn-more"><span>Explore feature</span><ArrowRight size={15} aria-hidden="true" /></span>
+            </PublicLink>
+          ))}
+        </section>
+      </PublicLayout>
+    );
+  }
+
+  return (
+    <PublicLayout user={user} onLogout={onLogout} className="feature-detail-page">
+      <FeatureHero feature={feature} />
+      <FeatureBenefits feature={feature} />
+      <FeatureUseCases feature={feature} />
+      <FeatureCapabilities feature={feature} />
+      <FeatureWorkflow feature={feature} />
+      <FeaturePlanAvailability feature={feature} />
+      <FeatureCTA feature={feature} />
+      <RelatedFeatures features={relatedFeatures} />
+    </PublicLayout>
+  );
+}
+
+const publicPageContent = {
+  "/about": {
+    eyebrow: "About Loohar",
+    title: "A focused restaurant growth platform.",
+    description: "Loohar helps local food businesses own their digital ordering, delivery, customer relationships, loyalty, and daily operations without becoming dependent on third-party marketplaces.",
+    cards: [
+      ["Restaurant-owned channels", "Branded storefronts, direct ordering, and customer relationships stay connected to the restaurant."],
+      ["Operational clarity", "Menus, orders, delivery, kitchen workflow, staff, loyalty, coupons, and reporting are managed from one system."],
+      ["Food-commerce focus", "Loohar stays centered on restaurants, coffee shops, bakeries, food trucks, and local food retail."]
+    ]
+  },
+  "/security": {
+    eyebrow: "Security",
+    title: "Trustworthy by design for restaurants and customers.",
+    description: "The Loohar platform separates tenants, roles, subscriptions, restaurant operations, public storefronts, and payment responsibilities across the system.",
+    cards: [
+      ["Role-based access", "Platform owners, restaurant operators, kitchen staff, drivers, and customers receive separate access paths."],
+      ["Tenant isolation", "Restaurant-owned records are scoped to the assigned tenant across API workflows."],
+      ["Payment separation", "SaaS subscriptions and restaurant order payment foundations remain distinct."]
+    ]
+  },
+  "/support": {
+    eyebrow: "Support",
+    title: "Help for restaurant teams using Loohar.",
+    description: "For onboarding, account, billing, domain, or restaurant operations help, contact the Loohar team.",
+    cards: [
+      ["Email support", "Reach Loohar at support@loohar.com for account and product questions."],
+      ["Restaurant setup", "Get help with menus, branding, restaurant URLs, delivery settings, and launch readiness."],
+      ["Account recovery", "Use the password reset flow when a restaurant owner or platform user needs secure account recovery."]
+    ]
+  },
+  "/privacy": {
+    eyebrow: "Privacy",
+    title: "Restaurant and customer privacy matters.",
+    description: "Loohar is built to help restaurants manage customer relationships responsibly. Production privacy policy language should be reviewed before broad public launch.",
+    cards: [
+      ["Customer data", "Customer profiles, orders, loyalty, and delivery data belong inside the restaurant tenant experience."],
+      ["Limited access", "Roles and permissions limit who can view operational and customer records."],
+      ["Policy readiness", "Legal review should confirm final privacy language before large-scale commercialization."]
+    ]
+  },
+  "/terms": {
+    eyebrow: "Terms",
+    title: "Loohar platform terms.",
+    description: "Loohar provides restaurant-owned websites, ordering, delivery, loyalty, and operations software. Final legal terms should be reviewed before public launch.",
+    cards: [
+      ["Restaurant SaaS", "Plans provide access to restaurant ordering and operations features based on subscription entitlements."],
+      ["Merchant responsibility", "Restaurants are responsible for menu accuracy, fulfillment, customer service, and applicable local requirements."],
+      ["Launch readiness", "Terms and billing language should be finalized with counsel before full production rollout."]
+    ]
+  }
+};
+
+function PublicInfoPage({ path, user, onLogout }) {
+  const normalizedPath = path.startsWith("/resources") ? "/resources" : path;
+  const content = normalizedPath === "/resources"
+    ? {
+      eyebrow: "Resources",
+      title: "Guides for restaurant-owned digital growth.",
+      description: "Explore Loohar resources for direct ordering, restaurant onboarding, delivery operations, loyalty, and platform security.",
+      cards: [
+        ["Direct ordering", "Why restaurants build their own ordering channel alongside or instead of marketplace dependency."],
+        ["Delivery operations", "How driver assignment, delivery status, tips, and earnings fit into the restaurant workflow."],
+        ["Launch checklist", "Branding, menu setup, pickup, delivery, payment readiness, domains, and customer communication."]
+      ]
+    }
+    : publicPageContent[normalizedPath] || publicPageContent["/about"];
+
+  useEffect(() => {
+    applyMarketingSeo({
+      title: `Loohar | ${content.title.replace(/\.$/, "")}`,
+      description: content.description,
+      path: normalizedPath
+    });
+  }, [content.description, content.title, normalizedPath]);
+
+  return (
+    <PublicLayout user={user} onLogout={onLogout} className="public-info-page">
+      <section className="public-container public-info-hero">
+        <p className="marketing-eyebrow dark">{content.eyebrow}</p>
+        <h1>{content.title}</h1>
+        <p>{content.description}</p>
+        <div className="public-info-actions">
+          <PublicLink className="public-button primary" href="/register">Register Your Restaurant</PublicLink>
+          <PublicLink className="public-button secondary" href="/pricing">View Pricing</PublicLink>
+        </div>
+      </section>
+      <section className="public-container public-info-grid" aria-label={`${content.eyebrow} details`}>
+        {content.cards.map(([title, detail]) => (
+          <MarketingCard key={title}>
+            <h2>{title}</h2>
+            <p>{detail}</p>
+            <LearnMoreLink href={title === "Email support" ? "mailto:support@loohar.com" : "/register"}>{title === "Email support" ? "Contact support" : "Learn more"}</LearnMoreLink>
+          </MarketingCard>
+        ))}
+      </section>
+    </PublicLayout>
   );
 }
 
@@ -2298,7 +3144,7 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
         <p className="text-xs font-bold uppercase tracking-wide text-mint">Loohar pricing</p>
         <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-4xl font-black text-ink">Restaurant-owned ordering starts here.</h1>
+            <h1 className="public-page-title">Restaurant-owned ordering starts here.</h1>
             <p className="mt-3 max-w-2xl text-slate-500">Choose a SaaS plan for your restaurant website, pickup, delivery, loyalty, and operations. Checkout uses Loohar’s Stripe Billing account and stays separate from customer order payments.</p>
           </div>
           <div className="flex rounded-md border border-line bg-white p-1">
@@ -2324,9 +3170,9 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
           return (
             <div className="panel flex flex-col" key={plan.code}>
               <StatusPill tone={checkoutStatus.tone}>{checkoutStatus.label}</StatusPill>
-              <h2 className="mt-4 text-2xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
+              <h2 className="public-plan-title">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
               <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{plan.description}</p>
-              <p className="mt-5 text-4xl font-black text-ink">{money(planPrice(plan, billingInterval))}<span className="text-base font-semibold text-slate-500">/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
+              <p className="public-plan-price">{money(planPrice(plan, billingInterval))}<span>/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
               {plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
               <div className="mt-5 space-y-3">
                 {(plan.features || []).map((feature) => <p className="flex items-start gap-2 text-sm text-slate-600" key={feature}><CheckCircle2 className="mt-0.5 text-mint" size={16} />{feature}</p>)}
@@ -2506,7 +3352,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
     <RegistrationShell>
       <section className="panel">
         <p className="text-xs font-bold uppercase tracking-wide text-mint">Self-service setup</p>
-        <h1 className="mt-2 text-4xl font-black text-ink">Register your restaurant on Loohar.</h1>
+        <h1 className="public-page-title">Register your restaurant on Loohar.</h1>
         <p className="mt-3 max-w-3xl text-slate-500">Create the owner account, reserve your restaurant URL, choose a SaaS plan, and continue through secure Stripe-hosted checkout. Your tenant is created only after Loohar receives a verified Stripe webhook.</p>
         <div className="mt-5 grid gap-2 md:grid-cols-4">
           {registrationSteps.map((step, index) => (
@@ -2619,9 +3465,9 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
                 return (
                   <button className={`panel text-left ${selected ? "ring-2 ring-mint" : ""}`} key={plan.code} type="button" onClick={() => updateField("planCode", plan.code)}>
                     <StatusPill tone={checkoutStatus.tone}>{checkoutStatus.label}</StatusPill>
-                    <h3 className="mt-4 text-xl font-black text-ink">{plan.displayName || normalizePlanLabel(plan.code)}</h3>
+                    <h3 className="public-plan-title compact">{plan.displayName || normalizePlanLabel(plan.code)}</h3>
                     <p className="mt-2 text-sm text-slate-500">{plan.description}</p>
-                    <p className="mt-4 text-2xl font-black text-ink">{money(planPrice(plan, form.billingInterval))}<span className="text-sm font-semibold text-slate-500">/{form.billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
+                    <p className="public-plan-price compact">{money(planPrice(plan, form.billingInterval))}<span>/{form.billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
                   </button>
                 );
               })}
@@ -2644,7 +3490,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
               </div>
               <div className="rounded-md border border-line bg-slate-50 p-4">
                 <p className="text-sm font-bold uppercase text-slate-500">Due now</p>
-                <p className="mt-2 text-3xl font-black text-ink">{money(planPrice(selectedPlan, form.billingInterval))}</p>
+                <p className="public-plan-price compact">{money(planPrice(selectedPlan, form.billingInterval))}</p>
                 <p className="mt-2 text-sm text-slate-500">Plan price is resolved by the backend. The browser never submits an amount or Stripe Price ID.</p>
                 {planConfigIsPending ? <p className="mt-3 text-sm font-semibold text-slate-600" aria-live="polite">Checking secure checkout availability...</p> : null}
                 {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
@@ -2741,7 +3587,7 @@ function RegistrationStatusPage({ apiOnline }) {
     <RegistrationShell>
       <section className="panel mx-auto max-w-3xl">
         <p className="text-xs font-bold uppercase tracking-wide text-mint">Registration status</p>
-        <h1 className="mt-2 text-3xl font-black text-ink">{complete ? "Your restaurant workspace is ready." : failed ? "Registration needs attention." : "We are preparing your Loohar workspace."}</h1>
+        <h1 className="public-page-title compact">{complete ? "Your restaurant workspace is ready." : failed ? "Registration needs attention." : "We are preparing your Loohar workspace."}</h1>
         <p className="mt-3 text-slate-500">This page checks backend provisioning. Access is created only after the verified Stripe webhook completes tenant setup.</p>
         <InlineError message={error} />
         {!registration && !error ? <AppLoadingState title="Checking registration" detail="Waiting for payment and provisioning status." /> : null}
@@ -2777,7 +3623,7 @@ function RegistrationResultPage({ type }) {
     <RegistrationShell>
       <section className="panel mx-auto max-w-2xl text-center">
         <Shield className="mx-auto text-mint" size={36} />
-        <h1 className="mt-3 text-3xl font-black text-ink">{title}</h1>
+        <h1 className="public-page-title compact">{title}</h1>
         <p className="mt-3 text-slate-500">{detail}</p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           <a className="button-primary" href="/register">Continue registration</a>
@@ -3604,6 +4450,17 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const emailInputRef = useRef(null);
   const passwordInputRef = useRef(null);
   const issues = passwordIssues(newPassword);
+  const normalizedLoginEmail = email.trim().toLowerCase();
+  const loginEmailValid = emailPattern.test(normalizedLoginEmail);
+  const loginPasswordReady = password.length > 0;
+  const canSubmitLogin = loginEmailValid && loginPasswordReady && !loading;
+  const loginReadinessMessage = !email.trim()
+    ? "Enter your email address."
+    : !loginEmailValid
+      ? "Enter a valid email address."
+      : !loginPasswordReady
+        ? "Enter your password."
+        : "";
 
   function clearLoginFields() {
     setEmail("");
@@ -3675,11 +4532,15 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   async function submitLogin(event) {
     event.preventDefault();
     setError("");
+    if (!canSubmitLogin) {
+      setError(loginReadinessMessage || "Enter your email and password.");
+      return;
+    }
     setLoading(true);
     try {
       const payload = await api("/api/auth/login", {
         method: "POST",
-        body: { email: email.trim().toLowerCase(), password },
+        body: { email: normalizedLoginEmail, password },
         skipAuth: true,
         authRetry: false,
         clearOnUnauthorized: false
@@ -3746,17 +4607,11 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <header className="border-b border-line bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <BrandMark compact />
-          <a className="button-muted" href="/">Back to Loohar</a>
-        </div>
-      </header>
-      <main className="mx-auto grid max-w-6xl gap-6 px-4 py-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+    <PublicLayout compactNav className="public-auth-page">
+      <div className="public-container public-auth-grid">
         <section className="panel">
-          <p className="text-xs font-black uppercase tracking-wide text-mint">{appName} secure access</p>
-          <h1 className="mt-3 text-3xl font-black text-ink">{copy.title}</h1>
+          <p className="text-xs font-bold uppercase tracking-wide text-mint">{appName} secure access</p>
+          <h1 className="public-auth-title">{copy.title}</h1>
           <p className="mt-3 text-slate-500">{copy.detail}</p>
           <div className="mt-5 grid gap-2 text-sm text-slate-600">
             <div className="summary-line"><span>Live API</span><strong>{apiOnline ? "Connected" : "Unavailable"}</strong></div>
@@ -3766,7 +4621,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
         </section>
 
         {step === "login" ? (
-          <form className="panel grid gap-4" onSubmit={submitLogin}>
+          <form className="panel grid gap-4" noValidate onSubmit={submitLogin}>
             <h2 className="panel-title">Sign in</h2>
             <InlineError message={error} />
             <label className="text-sm font-semibold text-slate-600">
@@ -3775,7 +4630,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 ref={emailInputRef}
                 className="input mt-1"
                 type="email"
-                name="username"
+                name="email"
                 autoComplete="username"
                 value={email}
                 onKeyDown={markCredentialEntry}
@@ -3805,10 +4660,11 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 }}
               />
             </label>
-            <button className="button-primary justify-center" type="submit" disabled={loading || !apiOnline}><LogIn size={18} />{loading ? "Signing in" : "Login"}</button>
+            <button className="button-primary justify-center" type="submit" disabled={!canSubmitLogin}><LogIn size={18} />{loading ? "Signing in" : "Login"}</button>
             <a className="text-center text-sm font-bold text-mint" href="/forgot-password">Forgot password?</a>
-            {import.meta.env.DEV ? <button className="button-muted justify-center" type="button" disabled={loading || !apiOnline} onClick={submitDemoLogin}>Use seeded development account</button> : null}
-            {!apiOnline ? <p className="text-sm text-slate-500">Start the API before using secure login.</p> : null}
+            {import.meta.env.DEV ? <button className="button-muted justify-center" type="button" disabled={loading} onClick={submitDemoLogin}>Use seeded development account</button> : null}
+            {loginReadinessMessage && !error ? <p className="text-sm text-slate-500">{loginReadinessMessage}</p> : null}
+            {!apiOnline ? <p className="text-sm text-slate-500">Live API health is unavailable. You can still submit; network or credential errors will appear here.</p> : null}
           </form>
         ) : null}
 
@@ -3842,8 +4698,8 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
             <button className="button-primary mt-5" onClick={() => continueAfterAuth(session.user)}>Continue securely</button>
           </section>
         ) : null}
-      </main>
-    </div>
+      </div>
+    </PublicLayout>
   );
 }
 
@@ -3876,11 +4732,10 @@ function ForgotPasswordPage({ apiOnline }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <main className="mx-auto grid max-w-4xl gap-6 px-4 py-10">
-        <BrandMark />
+    <PublicLayout compactNav className="public-auth-page">
+      <div className="public-container public-auth-single">
         <form className="panel grid gap-4" onSubmit={submit}>
-          <h1 className="text-3xl font-black text-ink">Reset password</h1>
+          <h1 className="public-auth-title">Reset password</h1>
           <p className="text-sm text-slate-500">Enter the account email and Loohar will create a one-time reset link.</p>
           <InlineError message={error} />
           {message ? <div className="success-box">{message}</div> : null}
@@ -3890,8 +4745,8 @@ function ForgotPasswordPage({ apiOnline }) {
             <a className="button-muted" href="/login">Back to login</a>
           </div>
         </form>
-      </main>
-    </div>
+      </div>
+    </PublicLayout>
   );
 }
 
@@ -3930,11 +4785,10 @@ function ResetPasswordPage({ apiOnline, token: resetToken, onLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-      <main className="mx-auto grid max-w-4xl gap-6 px-4 py-10">
-        <BrandMark />
+    <PublicLayout compactNav className="public-auth-page">
+      <div className="public-container public-auth-single">
         <form className="panel grid gap-4" onSubmit={submit}>
-          <h1 className="text-3xl font-black text-ink">Create new password</h1>
+          <h1 className="public-auth-title">Create new password</h1>
           <InlineError message={error} />
           <input className="input" type="password" autoComplete="new-password" placeholder="New password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
           <input className="input" type="password" autoComplete="new-password" placeholder="Confirm password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
@@ -3946,8 +4800,8 @@ function ResetPasswordPage({ apiOnline, token: resetToken, onLogin }) {
           </div>
           <button className="button-primary justify-center" type="submit" disabled={loading}>{loading ? "Saving password" : "Save password and continue"}</button>
         </form>
-      </main>
-    </div>
+      </div>
+    </PublicLayout>
   );
 }
 
@@ -7325,6 +8179,8 @@ export default function App() {
   const appOrderMatch = initialPath.match(/^\/app\/order\/([^/]+)\/?$/);
   const isPricingRoute = initialPath === "/pricing";
   const isRegisterRoute = initialPath === "/register" || initialPath.startsWith("/register/");
+  const isFeatureRoute = initialPath === "/features" || initialPath.startsWith("/features/");
+  const isPublicInfoRoute = ["/about", "/security", "/support", "/privacy", "/terms", "/resources"].includes(initialPath) || initialPath.startsWith("/resources/");
   const isDriverHost = window.location.hostname.startsWith("driver.");
   const tenantHost = tenantHostRouteInfo();
   const isDriverRoute = initialPath === "/driver" || initialPath.startsWith("/driver/") || (isDriverHost && /^\/order\/[^/]+\/?$/.test(initialPath));
@@ -7335,7 +8191,7 @@ export default function App() {
   const isRestaurantOnboardingRoute = isRestaurantOnboardingPath(initialPath);
   const isCustomerRoute = initialPath === "/customer" || initialPath.startsWith("/customer/");
   const isSiteAdminRoute = /^\/sites\/[^/]+\/admin\/?$/.test(initialPath);
-  const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/") && !initialPath.startsWith("/register") && initialPath !== "/pricing";
+  const isTenantHostPublicPath = tenantHost.isTenantHost && !["/login", "/admin/login", "/restaurant/login", "/forgot-password"].includes(initialPath) && !initialPath.startsWith("/admin") && !initialPath.startsWith("/restaurant") && !initialPath.startsWith("/driver") && !initialPath.startsWith("/customer") && !initialPath.startsWith("/kitchen") && !initialPath.startsWith("/app/") && !initialPath.startsWith("/register") && !initialPath.startsWith("/features") && initialPath !== "/pricing";
   const isPathPublicSiteRoute = isPathBasedPublicRestaurantPath(initialPath);
   const isSiteRoute = ((initialPath === "/sites" || initialPath.startsWith("/sites/")) && !isSiteAdminRoute) || isTenantHostPublicPath || isPathPublicSiteRoute;
   const orderRouteSlug = initialPath.startsWith("/order/") ? initialPath.split("/")[2] : null;
@@ -7516,6 +8372,14 @@ export default function App() {
     if (initialPath === "/register/cancelled") return <RegistrationResultPage type="cancelled" />;
     if (initialPath === "/register/failed") return <RegistrationResultPage type="failed" />;
     return <RegistrationPage apiMode={apiMode} apiOnline={apiOnline} />;
+  }
+
+  if (isFeatureRoute) {
+    return <FeatureDetailPage path={initialPath} user={user} onLogout={logout} />;
+  }
+
+  if (isPublicInfoRoute) {
+    return <PublicInfoPage path={initialPath} user={user} onLogout={logout} />;
   }
 
   if (isLoginRoute) {
