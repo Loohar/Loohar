@@ -12,7 +12,16 @@ const router = Router();
 const orderItemSchema = z.object({
   menuItemId: z.string(),
   quantity: z.number().int().positive(),
-  options: z.array(z.object({ name: z.string(), priceCents: z.number().int() })).default([])
+  options: z.array(z.object({
+    id: z.string().optional(),
+    optionId: z.string().optional(),
+    groupId: z.string().optional(),
+    optionGroupId: z.string().optional(),
+    group: z.string().optional(),
+    groupName: z.string().optional(),
+    name: z.string(),
+    priceCents: z.number().int().optional()
+  })).default([])
 });
 
 const quoteSchema = z.object({
@@ -47,7 +56,8 @@ const refundSchema = z.object({
   body: z.object({
     orderId: z.string(),
     amountCents: z.number().int().positive().optional(),
-    reason: z.string().optional()
+    reason: z.string().optional(),
+    idempotencyKey: z.string().min(8).max(160).optional()
   })
 });
 
@@ -102,7 +112,7 @@ router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENAN
 
 router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), validate(refundSchema), async (req, res, next) => {
   try {
-    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user });
+    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, idempotencyKey: req.body.idempotencyKey, user: req.user });
     res.status(201).json({ refund });
   } catch (error) {
     next(error);

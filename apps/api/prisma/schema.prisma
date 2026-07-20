@@ -331,10 +331,12 @@ model Restaurant {
   platformSubscriptions PlatformSubscription[]
   merchantAccounts    RestaurantMerchantAccount[]
   orderPayments       RestaurantOrderPayment[]
+  paymentQuotes       PaymentQuote[]
   paymentEvents       RestaurantPaymentEvent[]
   refunds             RestaurantRefund[]
   disputes            RestaurantPaymentDispute[]
   payouts             RestaurantPayout[]
+  paymentReconciliationRecords PaymentReconciliationRecord[]
   taxConfigurations   TaxConfiguration[]
   deliveryFeeRules    DeliveryFeeRule[]
   driverEarningLedger DriverEarningLedger[]
@@ -849,6 +851,11 @@ model PlatformSubscription {
   stripeCustomerId         String?
   stripeSubscriptionId     String?
   stripeCheckoutSessionId  String?
+  stripeProductId          String?
+  stripePriceId            String?
+  billingInterval          String?
+  latestInvoiceStatus      String?
+  lastWebhookEventAt       DateTime?
   authorizeNetCustomerId   String?
   authorizeNetSubscriptionId String?
   currentPeriodStart       DateTime?
@@ -867,13 +874,14 @@ model PlatformSubscription {
   @@index([restaurantId])
   @@index([stripeCustomerId])
   @@index([stripeSubscriptionId])
+  @@index([stripePriceId])
 }
 
 model PlatformInvoice {
   id                    String               @id @default(cuid())
   subscriptionId        String
   provider              String               @default("stripe_platform")
-  providerInvoiceId     String?
+  providerInvoiceId     String?              @unique
   status                String               @default("draft")
   subtotalCents         Int                  @default(0)
   taxCents              Int                  @default(0)
@@ -889,7 +897,6 @@ model PlatformInvoice {
   updatedAt             DateTime             @updatedAt
 
   @@index([subscriptionId])
-  @@index([providerInvoiceId])
 }
 
 model PlatformBillingEvent {
@@ -969,24 +976,29 @@ model RestaurantMerchantAccount {
   stripeChargesEnabled       Boolean                  @default(false)
   stripePayoutsEnabled       Boolean                  @default(false)
   stripeDetailsSubmitted     Boolean                  @default(false)
+  accountType                String?
+  country                    String?
   authorizeNetMerchantId     String?
   defaultCurrency            String                   @default("usd")
   requirementsJson           Json?
   disabledReason             String?
   onboardingUrlExpiresAt     DateTime?
+  onboardingCompletedAt      DateTime?
+  lastSyncedAt               DateTime?
   enabledAt                  DateTime?
   restaurant                 Restaurant               @relation(fields: [restaurantId], references: [id])
   createdAt                  DateTime                 @default(now())
   updatedAt                  DateTime                 @updatedAt
 
   @@unique([restaurantId, provider])
-  @@index([stripeAccountId])
+  @@unique([stripeAccountId])
 }
 
 model RestaurantOrderPayment {
   id                         String             @id @default(cuid())
   restaurantId               String
   orderId                    String             @unique
+  paymentQuoteId             String?            @unique
   provider                   PaymentProvider    @default(STRIPE_CONNECT)
   status                     OrderPaymentStatus @default(REQUIRES_PAYMENT_METHOD)
   currency                   String             @default("usd")
@@ -1002,6 +1014,8 @@ model RestaurantOrderPayment {
   platformFeeCents           Int                @default(0)
   restaurantGrossCents       Int
   restaurantNetCents         Int
+  transferAmountCents        Int                @default(0)
+  stripeFeeCents             Int                @default(0)
   providerPaymentIntentId    String?
   providerChargeId           String?
   providerCustomerId         String?
@@ -1013,9 +1027,11 @@ model RestaurantOrderPayment {
   quoteJson                  Json?
   restaurant                 Restaurant         @relation(fields: [restaurantId], references: [id])
   order                      Order              @relation(fields: [orderId], references: [id])
+  paymentQuote               PaymentQuote?      @relation(fields: [paymentQuoteId], references: [id])
   refunds                    RestaurantRefund[]
   events                     RestaurantPaymentEvent[]
   disputes                   RestaurantPaymentDispute[]
+  reconciliationRecords      PaymentReconciliationRecord[]
   createdAt                  DateTime           @default(now())
   updatedAt                  DateTime           @updatedAt
 
@@ -1047,12 +1063,16 @@ model RestaurantRefund {
   restaurantId          String
   orderPaymentId        String
   provider              PaymentProvider         @default(STRIPE_CONNECT)
-  providerRefundId      String?
+  providerRefundId      String?                 @unique
+  idempotencyKey        String?                 @unique
   status                RefundStatus            @default(PENDING)
   amountCents           Int
+  applicationFeeRefundedCents Int               @default(0)
+  transferReversedCents Int                     @default(0)
   reason                String?
   requestedByUserId     String?
   processedAt           DateTime?
+  completedAt           DateTime?
   restaurant            Restaurant              @relation(fields: [restaurantId], references: [id])
   orderPayment          RestaurantOrderPayment  @relation(fields: [orderPaymentId], references: [id])
   createdAt             DateTime                @default(now())
@@ -1060,7 +1080,6 @@ model RestaurantRefund {
 
   @@index([restaurantId])
   @@index([orderPaymentId])
-  @@index([providerRefundId])
 }
 
 model RestaurantPaymentDispute {
@@ -1069,10 +1088,15 @@ model RestaurantPaymentDispute {
   orderPaymentId        String?
   provider              PaymentProvider        @default(STRIPE_CONNECT)
   providerDisputeId     String?                @unique
+  providerChargeId      String?
+  providerPaymentIntentId String?
   status                DisputeStatus          @default(NEEDS_RESPONSE)
   amountCents           Int
   currency              String                 @default("usd")
   reason                String?
+  metadataJson          Json?
+  openedAt              DateTime?
+  closedAt              DateTime?
   evidenceDueAt         DateTime?
   restaurant            Restaurant             @relation(fields: [restaurantId], references: [id])
   orderPayment          RestaurantOrderPayment? @relation(fields: [orderPaymentId], references: [id])
@@ -1081,6 +1105,8 @@ model RestaurantPaymentDispute {
 
   @@index([restaurantId])
   @@index([orderPaymentId])
+  @@index([providerChargeId])
+  @@index([providerPaymentIntentId])
 }
 
 model RestaurantPayout {
@@ -1094,11 +1120,65 @@ model RestaurantPayout {
   arrivalDate       DateTime?
   paidAt            DateTime?
   failureReason     String?
+  metadataJson       Json?
   restaurant        Restaurant      @relation(fields: [restaurantId], references: [id])
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
   @@index([restaurantId])
+}
+
+model PaymentQuote {
+  id                    String          @id @default(cuid())
+  restaurantId          String
+  provider              PaymentProvider @default(STRIPE_CONNECT)
+  currency              String          @default("usd")
+  subtotalCents         Int
+  discountCents         Int             @default(0)
+  taxableAmountCents    Int             @default(0)
+  taxCents              Int             @default(0)
+  deliveryFeeCents      Int             @default(0)
+  serviceFeeCents       Int             @default(0)
+  restaurantTipCents    Int             @default(0)
+  driverTipCents        Int             @default(0)
+  totalCents            Int
+  platformFeeCents      Int             @default(0)
+  restaurantGrossCents  Int
+  restaurantNetCents    Int
+  quoteJson             Json?
+  expiresAt             DateTime?
+  restaurant            Restaurant      @relation(fields: [restaurantId], references: [id])
+  orderPayment          RestaurantOrderPayment?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([restaurantId])
+  @@index([expiresAt])
+}
+
+model PaymentReconciliationRecord {
+  id                    String          @id @default(cuid())
+  restaurantId          String
+  orderPaymentId        String?
+  provider              PaymentProvider @default(STRIPE_CONNECT)
+  recordType            String
+  status                String          @default("PENDING")
+  expectedCents         Int             @default(0)
+  actualCents           Int             @default(0)
+  deltaCents            Int             @default(0)
+  providerObjectId      String?
+  providerEventId       String?
+  metadataJson          Json?
+  restaurant            Restaurant      @relation(fields: [restaurantId], references: [id])
+  orderPayment          RestaurantOrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([restaurantId])
+  @@index([orderPaymentId])
+  @@index([providerObjectId])
+  @@index([recordType])
+  @@index([status])
 }
 
 model OrderTaxSnapshot {

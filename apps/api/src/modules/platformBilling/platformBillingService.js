@@ -6,23 +6,23 @@ import { sendAccountSetupEmail } from "../../services/accountAccessService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
 import { DNS_TARGET } from "../../services/websiteService.js";
 import { normalizeEmail } from "../../utils/authSecurity.js";
-import { assertStripePlatformConfigured, stripeForm, stripeRequest } from "../paymentProviders/stripeRest.js";
+import { assertStripePlatformBillingEnabled, sanitizeStripePayload, stripeForm, stripeRequest } from "../paymentProviders/stripeRest.js";
 
 const PLAN_PRICE_ENV = {
   STARTER: {
-    MONTHLY: "STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID",
-    ANNUAL: "STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID",
-    LEGACY: "STRIPE_PLATFORM_PRICE_STARTER"
+    MONTHLY: ["STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID"],
+    ANNUAL: ["STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID"],
+    LEGACY: ["STRIPE_PLATFORM_PRICE_STARTER"]
   },
   PROFESSIONAL: {
-    MONTHLY: "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID",
-    ANNUAL: "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID",
-    LEGACY: "STRIPE_PLATFORM_PRICE_PROFESSIONAL"
+    MONTHLY: ["STRIPE_PLATFORM_PROFESSIONAL_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID"],
+    ANNUAL: ["STRIPE_PLATFORM_PROFESSIONAL_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID"],
+    LEGACY: ["STRIPE_PLATFORM_PRICE_PROFESSIONAL"]
   },
   ENTERPRISE: {
-    MONTHLY: "STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID",
-    ANNUAL: "STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID",
-    LEGACY: "STRIPE_PLATFORM_PRICE_ENTERPRISE"
+    MONTHLY: ["STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID"],
+    ANNUAL: ["STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID"],
+    LEGACY: ["STRIPE_PLATFORM_PRICE_ENTERPRISE"]
   }
 };
 
@@ -59,11 +59,32 @@ function normalizeBillingInterval(value) {
   return String(value || "MONTHLY").trim().toUpperCase() === "ANNUAL" ? "ANNUAL" : "MONTHLY";
 }
 
-function planPriceId(planCode, billingInterval = "MONTHLY") {
+function asArray(value) {
+  return Array.isArray(value) ? value : value ? [value] : [];
+}
+
+function planPriceEnvNames(planCode, billingInterval = "MONTHLY") {
   const code = normalizePlanCode(planCode);
   const interval = normalizeBillingInterval(billingInterval);
   const envs = PLAN_PRICE_ENV[code];
-  return process.env[envs[interval]] || (interval === "MONTHLY" ? process.env[envs.LEGACY] : "");
+  return [
+    ...asArray(envs[interval]),
+    ...(interval === "MONTHLY" ? asArray(envs.LEGACY) : [])
+  ];
+}
+
+function planPriceId(planCode, billingInterval = "MONTHLY") {
+  return planPriceEnvNames(planCode, billingInterval).map((envName) => process.env[envName]).find(Boolean) || "";
+}
+
+function planFromPriceId(priceId) {
+  if (!priceId) return null;
+  for (const planCode of ["STARTER", "PROFESSIONAL", "ENTERPRISE"]) {
+    for (const billingInterval of ["MONTHLY", "ANNUAL"]) {
+      if (planPriceId(planCode, billingInterval) === priceId) return { planCode, billingInterval };
+    }
+  }
+  return null;
 }
 
 function sanitizeRegistrationPayload(body = {}) {
@@ -119,6 +140,70 @@ function generatedAdminEmail(ownerEmail, slug) {
 
 function generateTemporaryPassword() {
   return `Temp-${crypto.randomBytes(9).toString("base64url")}1!`;
+}
+
+function stripeObjectId(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && typeof value.id === "string") return value.id;
+  return null;
+}
+
+function stripeSubscriptionPrimaryPrice(subscription = {}) {
+  return subscription.items?.data?.[0]?.price || subscription.plan || null;
+}
+
+function billingIntervalFromPrice(price = {}) {
+  const interval = String(price?.recurring?.interval || "").toLowerCase();
+  if (interval === "year") return "ANNUAL";
+  if (interval === "month") return "MONTHLY";
+  return null;
+}
+
+function validateCompletedCheckoutSession(object = {}) {
+  const status = String(object.status || "").toLowerCase();
+  const paymentStatus = String(object.payment_status || "").toLowerCase();
+  if (status && status !== "complete") {
+    const error = new Error("Stripe Checkout session is not complete.");
+    error.status = 402;
+    throw error;
+  }
+  if (paymentStatus && !["paid", "no_payment_required"].includes(paymentStatus)) {
+    const error = new Error("Stripe Checkout session payment is not verified.");
+    error.status = 402;
+    throw error;
+  }
+}
+
+async function upsertPlatformInvoiceFromStripe(object = {}, subscription = null) {
+  const providerInvoiceId = stripeObjectId(object);
+  if (!providerInvoiceId) return null;
+  let targetSubscription = subscription;
+  const stripeSubscriptionId = stripeObjectId(object.subscription);
+  if (!targetSubscription && stripeSubscriptionId) {
+    targetSubscription = await prisma.platformSubscription.findFirst({ where: { stripeSubscriptionId } });
+  }
+  if (!targetSubscription?.id) return null;
+  const totalCents = Number(object.total ?? object.amount_due ?? object.amount_paid ?? 0);
+  const data = {
+    subscriptionId: targetSubscription.id,
+    provider: "stripe_platform",
+    status: object.status || "draft",
+    subtotalCents: Number(object.subtotal ?? 0),
+    taxCents: Number(object.tax ?? object.total_tax_amounts?.reduce?.((sum, item) => sum + Number(item.amount || 0), 0) ?? 0),
+    totalCents: Number.isFinite(totalCents) ? totalCents : 0,
+    amountPaidCents: Number(object.amount_paid ?? 0),
+    currency: object.currency || "usd",
+    hostedInvoiceUrl: object.hosted_invoice_url || null,
+    invoicePdfUrl: object.invoice_pdf || null,
+    paidAt: dateFromUnix(object.status_transitions?.paid_at || object.paid_at),
+    dueAt: dateFromUnix(object.due_date)
+  };
+  return prisma.platformInvoice.upsert({
+    where: { providerInvoiceId },
+    create: { providerInvoiceId, ...data },
+    update: data
+  });
 }
 
 async function activatePaidRegistration({ pending, plan, stripeCustomerId, stripeSubscriptionId, stripeCheckoutSessionId }) {
@@ -376,7 +461,7 @@ export async function getPlatformPlans() {
 }
 
 export async function createPlatformCheckout({ body, user }) {
-  assertStripePlatformConfigured();
+  assertStripePlatformBillingEnabled();
   const billingInterval = normalizeBillingInterval(body.billingInterval);
   const requestedPlanCode = normalizePlanCode(body.planCode || body.plan);
   let pending;
@@ -403,7 +488,7 @@ export async function createPlatformCheckout({ body, user }) {
   }
   const priceId = planPriceId(planCode, billingInterval);
   if (!priceId) {
-    const envName = PLAN_PRICE_ENV[planCode][billingInterval] || PLAN_PRICE_ENV[planCode].LEGACY;
+    const envName = planPriceEnvNames(planCode, billingInterval)[0] || "STRIPE_PLATFORM_PRICE_ID";
     const error = new Error(`Missing Stripe platform price ID for ${planCode} ${billingInterval}. Set ${envName}.`);
     error.status = 503;
     throw error;
@@ -477,7 +562,12 @@ export async function createPlatformCheckout({ body, user }) {
     "metadata[planCode]": planCode,
     "metadata[billingInterval]": billingInterval
   });
-  const session = await stripeRequest({ secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY, path: "/checkout/sessions", body: form });
+  const session = await stripeRequest({
+    secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY,
+    path: "/checkout/sessions",
+    body: form,
+    idempotencyKey: `platform-checkout:${pending.id}:${planCode}:${billingInterval}`
+  });
   const updated = await prisma.pendingRegistration.update({
     where: { id: pending.id },
     data: {
@@ -491,7 +581,7 @@ export async function createPlatformCheckout({ body, user }) {
 }
 
 export async function createPlatformPortal({ user }) {
-  assertStripePlatformConfigured();
+  assertStripePlatformBillingEnabled();
   const subscription = await prisma.platformSubscription.findFirst({
     where: { restaurantId: user.restaurantId },
     orderBy: { createdAt: "desc" }
@@ -503,9 +593,15 @@ export async function createPlatformPortal({ user }) {
   }
   const form = stripeForm({
     customer: subscription.stripeCustomerId,
-    return_url: process.env.PLATFORM_BILLING_PORTAL_RETURN_URL || `${process.env.APP_URL || "https://loohar.com"}/restaurant/${user.restaurantSlug || ""}/settings/payments`
+    return_url: process.env.PLATFORM_BILLING_PORTAL_RETURN_URL || `${process.env.APP_URL || "https://loohar.com"}/restaurant/${user.restaurantSlug || ""}/settings/payments`,
+    configuration: process.env.STRIPE_PLATFORM_PORTAL_CONFIGURATION_ID || undefined
   });
-  const session = await stripeRequest({ secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY, path: "/billing_portal/sessions", body: form });
+  const session = await stripeRequest({
+    secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY,
+    path: "/billing_portal/sessions",
+    body: form,
+    idempotencyKey: `platform-portal:${subscription.id}:${user.id}`
+  });
   return { portalUrl: session.url };
 }
 
@@ -520,7 +616,7 @@ export async function getPlatformSubscription({ user }) {
 }
 
 export async function cancelPlatformSubscription({ user }) {
-  assertStripePlatformConfigured();
+  assertStripePlatformBillingEnabled();
   const subscription = await prisma.platformSubscription.findFirst({ where: { restaurantId: user.restaurantId }, orderBy: { createdAt: "desc" } });
   if (!subscription?.stripeSubscriptionId) {
     const error = new Error("No active Stripe subscription found");
@@ -528,7 +624,12 @@ export async function cancelPlatformSubscription({ user }) {
     throw error;
   }
   const form = stripeForm({ cancel_at_period_end: "true" });
-  const stripeSubscription = await stripeRequest({ secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY, path: `/subscriptions/${subscription.stripeSubscriptionId}`, body: form });
+  const stripeSubscription = await stripeRequest({
+    secretKey: process.env.STRIPE_PLATFORM_SECRET_KEY,
+    path: `/subscriptions/${subscription.stripeSubscriptionId}`,
+    body: form,
+    idempotencyKey: `platform-cancel:${subscription.id}`
+  });
   await recordAudit({
     actorUserId: user.id,
     restaurantId: user.restaurantId,
@@ -564,19 +665,28 @@ function dateFromUnix(value) {
 }
 
 export async function handleStripePlatformWebhook(payload = {}) {
+  assertStripePlatformBillingEnabled();
   const eventType = payload.type || payload.eventType || "unknown";
   const object = payload.data?.object || payload.object || {};
   const eventId = payload.id || payload.providerEventId;
   const providerEventId = eventId || `manual-${eventType}-${object.id || Date.now()}`;
+  const existingEvent = await prisma.platformBillingEvent.findUnique({ where: { providerEventId } });
+  if (existingEvent?.processedAt) {
+    return { received: true, duplicate: true, subscriptionId: existingEvent.subscriptionId || null };
+  }
   const pendingRegistrationId = object.metadata?.pendingRegistrationId;
   let subscription = null;
+  let invoice = null;
 
   if (eventType === "checkout.session.completed") {
+    validateCompletedCheckoutSession(object);
     const pending = pendingRegistrationId ? await prisma.pendingRegistration.findUnique({ where: { id: pendingRegistrationId } }) : null;
     if (pending) {
       const plan = await ensurePlatformPlan(pending.planCode);
-      const stripeCustomerId = typeof object.customer === "string" ? object.customer : null;
-      const stripeSubscriptionId = typeof object.subscription === "string" ? object.subscription : null;
+      const billingInterval = normalizeBillingInterval(object.metadata?.billingInterval || pending.billingInterval);
+      const stripePriceId = planPriceId(pending.planCode, billingInterval) || null;
+      const stripeCustomerId = stripeObjectId(object.customer);
+      const stripeSubscriptionId = stripeObjectId(object.subscription);
       subscription = await prisma.platformSubscription.findFirst({
         where: { stripeCheckoutSessionId: object.id }
       });
@@ -590,7 +700,24 @@ export async function handleStripePlatformWebhook(payload = {}) {
             stripeCustomerId,
             stripeSubscriptionId,
             stripeCheckoutSessionId: object.id,
-            metadataJson: { pendingRegistrationId: pending.id, slug: pending.slug }
+            stripePriceId,
+            billingInterval,
+            lastWebhookEventAt: new Date(),
+            metadataJson: sanitizeStripePayload({ pendingRegistrationId: pending.id, slug: pending.slug, checkoutSession: object })
+          }
+        });
+      } else {
+        subscription = await prisma.platformSubscription.update({
+          where: { id: subscription.id },
+          data: {
+            planId: plan.id,
+            status: subscription.status === "TRIALING" ? "TRIALING" : "ACTIVE",
+            stripeCustomerId: stripeCustomerId || subscription.stripeCustomerId,
+            stripeSubscriptionId: stripeSubscriptionId || subscription.stripeSubscriptionId,
+            stripePriceId,
+            billingInterval,
+            lastWebhookEventAt: new Date(),
+            metadataJson: sanitizeStripePayload({ ...(subscription.metadataJson || {}), pendingRegistrationId: pending.id, slug: pending.slug })
           }
         });
       }
@@ -614,9 +741,22 @@ export async function handleStripePlatformWebhook(payload = {}) {
       if (restaurant?.id && !subscription.restaurantId) {
         subscription = await prisma.platformSubscription.update({
           where: { id: subscription.id },
-          data: { restaurantId: restaurant.id }
+          data: { restaurantId: restaurant.id, lastWebhookEventAt: new Date() }
         });
       }
+    }
+  }
+
+  if (eventType?.startsWith("invoice.")) {
+    invoice = await upsertPlatformInvoiceFromStripe(object, subscription);
+    if (invoice) {
+      subscription = await prisma.platformSubscription.update({
+        where: { id: invoice.subscriptionId },
+        data: {
+          latestInvoiceStatus: invoice.status,
+          lastWebhookEventAt: new Date()
+        }
+      });
     }
   }
 
@@ -624,16 +764,26 @@ export async function handleStripePlatformWebhook(payload = {}) {
     const stripeSubscriptionId = object.id;
     const existing = await prisma.platformSubscription.findFirst({ where: { stripeSubscriptionId } });
     if (existing) {
+      const price = stripeSubscriptionPrimaryPrice(object);
+      const priceId = stripeObjectId(price);
+      const mappedPlan = planFromPriceId(priceId);
+      const mappedPlanRecord = mappedPlan ? await ensurePlatformPlan(mappedPlan.planCode) : null;
       subscription = await prisma.platformSubscription.update({
         where: { id: existing.id },
         data: {
+          ...(mappedPlanRecord ? { planId: mappedPlanRecord.id } : {}),
           status: statusFromStripe(object.status),
-          stripeCustomerId: typeof object.customer === "string" ? object.customer : existing.stripeCustomerId,
+          stripeCustomerId: stripeObjectId(object.customer) || existing.stripeCustomerId,
+          stripePriceId: priceId || existing.stripePriceId,
+          stripeProductId: stripeObjectId(price?.product) || existing.stripeProductId,
+          billingInterval: mappedPlan?.billingInterval || billingIntervalFromPrice(price) || existing.billingInterval,
           currentPeriodStart: dateFromUnix(object.current_period_start),
           currentPeriodEnd: dateFromUnix(object.current_period_end),
           trialEndsAt: dateFromUnix(object.trial_end),
           cancelAtPeriodEnd: Boolean(object.cancel_at_period_end),
-          canceledAt: dateFromUnix(object.canceled_at)
+          canceledAt: dateFromUnix(object.canceled_at),
+          lastWebhookEventAt: new Date(),
+          metadataJson: sanitizeStripePayload({ ...(existing.metadataJson || {}), latestSubscription: object })
         }
       });
     }
@@ -647,11 +797,16 @@ export async function handleStripePlatformWebhook(payload = {}) {
       provider: "stripe_platform",
       providerEventId,
       eventType,
-      payloadJson: payload,
+      payloadJson: sanitizeStripePayload(payload),
       processedAt: new Date()
     },
-    update: { processedAt: new Date() }
+    update: {
+      subscriptionId: subscription?.id || existingEvent?.subscriptionId || null,
+      eventType,
+      payloadJson: sanitizeStripePayload(payload),
+      processedAt: new Date()
+    }
   });
 
-  return { received: true, subscription };
+  return { received: true, subscription, invoice };
 }

@@ -9,9 +9,15 @@ function nonnegativeInt(value, fallback = 0) {
 }
 
 function platformFeeCents(totalCents) {
-  const bps = nonnegativeInt(process.env.ORDER_PAYMENT_PLATFORM_FEE_BPS, 0);
+  const bps = nonnegativeInt(process.env.STRIPE_CONNECT_PLATFORM_FEE_BPS || process.env.ORDER_PAYMENT_PLATFORM_FEE_BPS, 0);
   const fixed = nonnegativeInt(process.env.ORDER_PAYMENT_PLATFORM_FEE_FIXED_CENTS, 0);
   return Math.round((totalCents * bps) / 10000) + fixed;
+}
+
+function orderServiceFeeCents(subtotalCents) {
+  const bps = nonnegativeInt(process.env.ORDER_PAYMENT_SERVICE_FEE_BPS, 0);
+  const fixed = nonnegativeInt(process.env.ORDER_PAYMENT_SERVICE_FEE_FIXED_CENTS, 0);
+  return Math.round((subtotalCents * bps) / 10000) + fixed;
 }
 
 function defaultTaxRateBps() {
@@ -27,6 +33,49 @@ function activeCouponWhere({ restaurantId, couponCode }) {
     OR: [{ startsAt: null }, { startsAt: { lte: now } }],
     AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] }]
   };
+}
+
+function normalizeOptionName(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function resolveSelectedOptions(menuItem, submittedOptions = []) {
+  const options = menuItem.options || [];
+  const byId = new Map(options.map((option) => [option.id, option]));
+  const byName = new Map();
+  options.forEach((option) => {
+    const groupName = normalizeOptionName(option.optionGroup?.name);
+    const optionName = normalizeOptionName(option.name);
+    byName.set(optionName, option);
+    if (groupName) byName.set(`${groupName}:${optionName}`, option);
+    if (option.optionGroupId) byName.set(`${option.optionGroupId}:${optionName}`, option);
+  });
+
+  return submittedOptions.map((submitted) => {
+    const submittedId = submitted?.optionId || submitted?.id;
+    const submittedName = normalizeOptionName(submitted?.name);
+    const submittedGroup = normalizeOptionName(submitted?.group || submitted?.groupName);
+    const submittedGroupId = submitted?.groupId || submitted?.optionGroupId;
+    const matched = (submittedId && byId.get(submittedId))
+      || (submittedGroupId && byName.get(`${submittedGroupId}:${submittedName}`))
+      || (submittedGroup && byName.get(`${submittedGroup}:${submittedName}`))
+      || byName.get(submittedName);
+
+    if (!matched) {
+      const error = new Error(`Selected option "${submitted?.name || submittedId || "unknown"}" is unavailable for ${menuItem.name}`);
+      error.status = 400;
+      throw error;
+    }
+
+    return {
+      id: matched.id,
+      optionId: matched.id,
+      groupId: matched.optionGroupId || null,
+      group: matched.optionGroup?.name || submitted?.group || null,
+      name: matched.name,
+      priceCents: matched.priceCents
+    };
+  });
 }
 
 export async function calculateOrderQuote({ restaurantId, body }) {
@@ -52,7 +101,8 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     throw error;
   }
   const menuItems = await prisma.menuItem.findMany({
-    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true }
+    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true },
+    include: { options: { include: { optionGroup: true } } }
   });
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const missingItems = items.filter((item) => !menuById.has(item.menuItemId));
@@ -64,7 +114,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
 
   const quoteItems = items.map((item) => {
     const menuItem = menuById.get(item.menuItemId);
-    const selectedOptions = Array.isArray(item.options) ? item.options : [];
+    const selectedOptions = resolveSelectedOptions(menuItem, Array.isArray(item.options) ? item.options : []);
     const optionsTotalCents = selectedOptions.reduce((sum, option) => sum + nonnegativeInt(option.priceCents), 0);
     const quantity = nonnegativeInt(item.quantity, 1) || 1;
     const unitPriceCents = menuItem.priceCents + optionsTotalCents;
@@ -115,7 +165,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   const taxRateBps = restaurant.taxConfigurations?.[0]?.taxRateBps ?? defaultTaxRateBps();
   const taxCents = Math.round((taxableAmountCents * taxRateBps) / 10000);
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
-  const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
+  const serviceFeeCents = orderServiceFeeCents(subtotalCents);
   const totalCents = taxableAmountCents + deliveryFeeCents + taxCents + serviceFeeCents + tipBreakdown.tipCents;
   const feeCents = platformFeeCents(totalCents);
   const restaurantGrossCents = totalCents - (tipBreakdown.driverTipCents || 0);

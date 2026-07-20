@@ -75,16 +75,31 @@ const groups = {
     assertCheck(includesAll(platformRoutes, ['"/checkout"', '"/portal"', '"/change-plan"', '"/cancel"', '"/subscription"', '"/invoices"']), "Platform billing routes exist");
     assertCheck(platformService.includes('mode: "subscription"') && platformService.includes('path: "/checkout/sessions"'), "Platform billing uses Stripe subscription Checkout Sessions");
     assertCheck(!platformService.includes("transfer_data[destination]") && !platformService.includes("RestaurantOrderPayment"), "Platform billing service does not create restaurant order payments or destination charges");
+    assertCheck(platformService.includes("assertStripePlatformBillingEnabled") && apiEnv.includes("STRIPE_PLATFORM_BILLING_ENABLED=false"), "Platform billing is guarded by an explicit provider enablement flag");
+    assertCheck(platformService.includes("validateCompletedCheckoutSession") && platformService.includes("payment_status") && platformService.includes("PAYMENT_VERIFIED"), "Platform tenant provisioning requires verified Stripe Checkout completion");
+    assertCheck(platformService.includes("sanitizeStripePayload(payload)") && platformService.includes("existingEvent?.processedAt"), "Platform billing webhooks are sanitized and idempotent");
+    assertCheck(platformService.includes("STRIPE_PLATFORM_PROFESSIONAL_MONTHLY_PRICE_ID") && platformService.includes("STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID"), "Professional plan supports exact and legacy Stripe price env names");
+    assertCheck(platformService.includes("planFromPriceId") && platformService.includes("customer.subscription.") && platformService.includes("planId: mappedPlanRecord.id"), "Subscription plan changes are driven by Stripe subscription price IDs");
   },
   "order-payments": () => {
     assertCheck(includesAll(schema, ["model RestaurantMerchantAccount", "model RestaurantOrderPayment", "model RestaurantPaymentEvent", "model RestaurantRefund"]), "Restaurant order payment models are present");
     assertCheck(includesAll(orderRoutes, ['"/quote"', '"/create"', '"/confirm"', '"/refund"', '"/:orderId/status"', '"/:orderId/receipt"', '"/merchant-account/onboarding-link"']), "Restaurant order payment routes exist");
     assertCheck(orderService.includes("transfer_data[destination]") && orderService.includes("application_fee_amount"), "Restaurant order payments use Stripe Connect destination charges with platform fee");
     assertCheck(!orderService.includes('path: "/checkout/sessions"') && !orderService.includes('mode: "subscription"'), "Restaurant order payments do not use Stripe Billing Checkout Sessions");
+    assertCheck(orderService.includes("assertStripeOrderPaymentsEnabled") && apiEnv.includes("STRIPE_ORDER_PAYMENTS_ENABLED=false"), "Restaurant order payments are guarded by an explicit provider enablement flag");
+    assertCheck(orderService.includes("STRIPE_CONNECT_CHARGE_MODEL") && orderService.includes("destination_charge"), "Restaurant order payment charge model is explicitly locked to destination charges");
+    assertCheck(quoteService.includes("resolveSelectedOptions") && quoteService.includes("optionGroup") && !quoteService.includes("Number(body.serviceFeeCents"), "Order quote totals use database menu/options and server-owned service fees");
+  },
+  "stripe-platform-billing": () => {
+    groups["platform-billing"]();
+    assertCheck(apiEnv.includes("STRIPE_PLATFORM_PORTAL_CONFIGURATION_ID") && platformService.includes("STRIPE_PLATFORM_PORTAL_CONFIGURATION_ID"), "Stripe Billing portal configuration is isolated to platform billing");
+    assertCheck(platformService.includes("idempotencyKey: `platform-checkout:") && platformService.includes("idempotencyKey: `platform-portal:") && platformService.includes("idempotencyKey: `platform-cancel:"), "Platform billing checkout, portal, and cancel requests use Stripe idempotency keys");
+    assertCheck(platformService.includes("upsertPlatformInvoiceFromStripe") && schema.includes("model PlatformInvoice"), "Stripe invoice webhooks update platform invoice records");
+    assertCheck(!platformService.includes("STRIPE_CONNECT_SECRET_KEY") && !platformService.includes("STRIPE_CONNECT_WEBHOOK_SECRET"), "Platform billing service does not depend on Stripe Connect credentials");
   },
   "stripe-billing": () => {
     assertCheck(apiEnv.includes("STRIPE_PLATFORM_SECRET_KEY") && apiEnv.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Platform Stripe secret and webhook env vars are split");
-    assertCheck(includesAll(apiEnv, ["STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID"]), "Platform monthly and annual Stripe Price IDs are explicit");
+    assertCheck(includesAll(apiEnv, ["STRIPE_PLATFORM_STARTER_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_STARTER_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_PROFESSIONAL_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_PROFESSIONAL_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_PRO_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_PRO_ANNUAL_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_MONTHLY_PRICE_ID", "STRIPE_PLATFORM_ENTERPRISE_ANNUAL_PRICE_ID"]), "Platform monthly and annual Stripe Price IDs are explicit");
     assertCheck(apiEnv.includes("STRIPE_PLATFORM_PRICE_STARTER") && apiEnv.includes("STRIPE_PLATFORM_PRICE_PROFESSIONAL") && apiEnv.includes("STRIPE_PLATFORM_PRICE_ENTERPRISE"), "Legacy platform price ID env vars remain documented");
     assertCheck(webhooks.includes("STRIPE_PLATFORM_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-platform"), "Stripe platform webhook has its own route and secret");
   },
@@ -93,6 +108,10 @@ const groups = {
     assertCheck(webEnv.includes("VITE_STRIPE_CONNECT_PUBLIC_KEY"), "Frontend exposes only the Stripe Connect publishable key");
     assertCheck(webhooks.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-connect"), "Stripe Connect webhook has its own route and secret");
     assertCheck(orderService.includes('type: "express"') && orderService.includes("account_links"), "Merchant onboarding uses provider-hosted Stripe Express account links");
+    assertCheck(orderService.includes("stripeChargesEnabled") && orderService.includes("stripePayoutsEnabled") && orderService.includes("stripeDetailsSubmitted"), "Stripe Connect readiness requires charges, payouts, and completed details");
+    assertCheck(orderService.includes("idempotencyKey: `merchant-account:") && orderService.includes("idempotencyKey: `order-payment:"), "Stripe Connect account and PaymentIntent requests use idempotency keys");
+    assertCheck(orderService.includes("handleStripeConnectWebhook") && orderService.includes("existingEvent?.processedAt") && orderService.includes("sanitizeStripePayload(payload)"), "Stripe Connect webhooks are idempotent and sanitized");
+    assertCheck(!orderService.includes("STRIPE_PLATFORM_SECRET_KEY") && !orderService.includes("STRIPE_PLATFORM_WEBHOOK_SECRET"), "Restaurant order payments do not depend on platform billing credentials");
   },
   "authorize-net-platform": () => {
     assertCheck(apiEnv.includes("AUTHORIZE_NET_PLATFORM_ENABLED=false"), "Authorize.Net platform billing is disabled by default");
@@ -122,11 +141,29 @@ const groups = {
     assertCheck(schema.includes("model RestaurantRefund") && schema.includes("enum RefundStatus"), "Restaurant refunds have dedicated records and statuses");
     assertCheck(orderService.includes('path: "/refunds"') && orderRoutes.includes('"/refund"'), "Refund route and Stripe refund call exist");
     assertCheck(orderService.includes("requested_by_customer") && orderService.includes("refundNote"), "Refund reasons are provider-safe while retaining operator notes");
+    assertCheck(orderService.includes("reverse_transfer") && orderService.includes("refund_application_fee") && orderService.includes("remainingRefundableCents"), "Refunds reverse transfers/application fees and enforce remaining refundable balance");
+    assertCheck(schema.includes("idempotencyKey") && schema.includes("@unique") && orderRoutes.includes("idempotencyKey"), "Refunds support operator idempotency keys");
+  },
+  "payment-refunds": () => {
+    groups.refunds();
+    assertCheck(orderService.includes("STRIPE_CONNECT_REVERSE_TRANSFER_ON_REFUND") && orderService.includes("STRIPE_CONNECT_REFUND_APPLICATION_FEE"), "Refund reversal behavior is controlled by explicit Stripe Connect env flags");
+    assertCheck(schema.includes("applicationFeeRefundedCents") && schema.includes("transferReversedCents") && schema.includes("completedAt"), "Refund ledger stores fee refund, transfer reversal, and completion state");
+  },
+  "payment-disputes": () => {
+    assertCheck(includesAll(schema, ["model RestaurantPaymentDispute", "providerChargeId", "providerPaymentIntentId", "metadataJson", "openedAt", "closedAt"]), "Disputes store provider charge/payment intent IDs and lifecycle metadata");
+    assertCheck(orderService.includes("upsertDisputeFromStripe") && orderService.includes("charge.dispute") && orderService.includes('recordType: "DISPUTE"'), "Stripe dispute events upsert disputes and reconciliation records");
   },
   reconciliation: () => {
     assertCheck(includesAll(schema, ["model RestaurantPayout", "model RestaurantPaymentDispute", "model RestaurantPaymentEvent"]), "Payout, dispute, and payment event records are modeled");
     assertCheck(includesAll(orderService, ["PAYOUT", "DISPUTE", "MERCHANT_ACCOUNT", "RESTAURANT_ORDER_PAYMENT"]), "Restaurant payment events are domain-classified");
     assertCheck(schema.includes("platformFeeCents") && schema.includes("restaurantNetCents"), "Restaurant payment rows preserve platform fee and restaurant net amounts");
+    assertCheck(includesAll(schema, ["model PaymentQuote", "model PaymentReconciliationRecord"]), "Payment quote and reconciliation records are modeled");
+    assertCheck(orderService.includes("recordPaymentReconciliation") && includesAll(orderService, ['recordType: "PAYMENT_CAPTURE"', 'recordType: "REFUND"', 'recordType: "PAYOUT"', 'recordType: "DISPUTE"']), "Payment capture, refund, payout, and dispute events create reconciliation records");
+  },
+  "payment-reconciliation": () => {
+    groups.reconciliation();
+    assertCheck(orderService.includes("paymentQuote.create") && orderService.includes("paymentQuoteId"), "Order payments persist the trusted server quote used for payment intent creation");
+    assertCheck(schema.includes("expectedCents") && schema.includes("actualCents") && schema.includes("deltaCents"), "Reconciliation records store expected, actual, and delta cents");
   },
   "financial-separation": () => {
     groups.registration();

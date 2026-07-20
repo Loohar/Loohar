@@ -39,8 +39,15 @@ stripeConnectWebhookRouter.post("/", async (req, res, next) => {
 });
 
 function authorizeNetDisabled(req, res) {
-  res.status(process.env.AUTHORIZE_NET_ENABLED === "true" ? 501 : 503).json({
-    error: process.env.AUTHORIZE_NET_ENABLED === "true"
+  const enabled = [
+    "AUTHORIZE_NET_ENABLED",
+    "AUTHORIZE_NET_PLATFORM_ENABLED",
+    "AUTHORIZE_NET_PLATFORM_BILLING_ENABLED",
+    "AUTHORIZE_NET_ORDERS_ENABLED",
+    "AUTHORIZE_NET_ORDER_PAYMENTS_ENABLED"
+  ].some((name) => String(process.env[name] || "").trim().toLowerCase() === "true");
+  res.status(enabled ? 501 : 503).json({
+    error: enabled
       ? "Authorize.Net webhook handling is reserved for sandbox certification in a later phase."
       : "Authorize.Net is disabled. Enable only after sandbox testing passes.",
     provider: "authorize_net"

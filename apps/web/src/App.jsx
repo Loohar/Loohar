@@ -7475,7 +7475,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     return (selectedItem.optionGroups || []).flatMap((group) => {
       const key = group.id || group.name;
       const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key] : [selectedOptions[key]].filter(Boolean);
-      return (group.options || []).filter((option) => selected.includes(option.name)).map((option) => ({ group: group.name, name: option.name, priceCents: option.priceCents || 0 }));
+      return (group.options || []).filter((option) => selected.includes(option.name)).map((option) => ({ id: option.id, optionId: option.id, groupId: group.id, optionGroupId: group.id, group: group.name, name: option.name, priceCents: option.priceCents || 0 }));
     });
   }
 

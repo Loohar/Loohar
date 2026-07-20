@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { cancelPlatformSubscription, createPlatformCheckout, createPlatformPortal, getPlatformSubscription } from "../modules/platformBilling/platformBillingService.js";
+import { stripeProviderReadiness } from "../modules/paymentProviders/stripeRest.js";
 
 const router = Router();
 
@@ -36,6 +37,10 @@ router.post("/checkout", validate(checkoutSchema), async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/readiness", (req, res) => {
+  res.json({ stripe: stripeProviderReadiness() });
 });
 
 router.use(requireAuth);

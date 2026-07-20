@@ -3,15 +3,83 @@ import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
 import { createTrackingToken, customerTrackingUrls, hashToken, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
-import { assertStripeConnectConfigured, stripeConnectPublishableKey, stripeRequest, stripeForm } from "../paymentProviders/stripeRest.js";
+import { assertStripeOrderPaymentsEnabled, sanitizeStripePayload, stripeConnectPublishableKey, stripeRequest, stripeForm } from "../paymentProviders/stripeRest.js";
 import { calculateOrderQuote } from "./quoteService.js";
 
+function envFlag(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
 function merchantReady(merchant) {
-  return merchant?.provider === "STRIPE_CONNECT" && merchant.status === "ENABLED" && merchant.stripeAccountId && merchant.stripeChargesEnabled;
+  return merchant?.provider === "STRIPE_CONNECT"
+    && merchant.status === "ENABLED"
+    && merchant.stripeAccountId
+    && merchant.stripeChargesEnabled
+    && merchant.stripePayoutsEnabled
+    && merchant.stripeDetailsSubmitted;
 }
 
 function orderInclude() {
   return { items: true, customer: true, restaurant: { include: { domains: true } }, statusHistory: true };
+}
+
+function providerObjectId(value) {
+  if (!value) return null;
+  return typeof value === "string" ? value : value.id || null;
+}
+
+function eventDomainFor(eventType = "") {
+  if (eventType.startsWith("account.")) return "MERCHANT_ACCOUNT";
+  if (eventType.startsWith("payout.")) return "PAYOUT";
+  if (eventType.startsWith("charge.dispute")) return "DISPUTE";
+  return "RESTAURANT_ORDER_PAYMENT";
+}
+
+function refundStatusFromStripe(status = "") {
+  if (status === "succeeded") return "SUCCEEDED";
+  if (status === "failed") return "FAILED";
+  if (status === "canceled") return "CANCELED";
+  return "PENDING";
+}
+
+function disputeStatusFromStripe(status = "") {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "warning_needs_response") return "WARNING_NEEDS_RESPONSE";
+  if (normalized === "warning_under_review") return "WARNING_UNDER_REVIEW";
+  if (normalized === "warning_closed") return "WARNING_CLOSED";
+  if (normalized === "under_review") return "UNDER_REVIEW";
+  if (normalized === "won") return "WON";
+  if (normalized === "lost") return "LOST";
+  return "NEEDS_RESPONSE";
+}
+
+function payoutStatusFromStripe(status = "") {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "paid") return "PAID";
+  if (normalized === "failed") return "FAILED";
+  if (normalized === "canceled") return "CANCELED";
+  return "PENDING";
+}
+
+async function recordPaymentReconciliation({ restaurantId, orderPaymentId, recordType, expectedCents = 0, actualCents = 0, providerObjectId: objectId, providerEventId, metadata = {}, status }) {
+  if (!restaurantId) return null;
+  return prisma.paymentReconciliationRecord.create({
+    data: {
+      restaurantId,
+      orderPaymentId: orderPaymentId || null,
+      provider: "STRIPE_CONNECT",
+      recordType,
+      status: status || (expectedCents === actualCents ? "MATCHED" : "PENDING_REVIEW"),
+      expectedCents,
+      actualCents,
+      deltaCents: actualCents - expectedCents,
+      providerObjectId: objectId || null,
+      providerEventId: providerEventId || null,
+      metadataJson: metadata
+    }
+  }).catch(() => null);
 }
 
 export async function getMerchantAccount({ user }) {
@@ -34,7 +102,7 @@ export async function createMerchantOnboardingLink({ user }) {
     error.status = 403;
     throw error;
   }
-  assertStripeConnectConfigured();
+  assertStripeOrderPaymentsEnabled();
   const restaurant = await prisma.restaurant.findUnique({ where: { id: user.restaurantId } });
   const current = await prisma.restaurantMerchantAccount.findUnique({
     where: { restaurantId_provider: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT" } }
@@ -53,7 +121,8 @@ export async function createMerchantOnboardingLink({ user }) {
         "business_profile[name]": restaurant?.businessName || restaurant?.name || "Loohar restaurant",
         "metadata[restaurantId]": user.restaurantId,
         "metadata[domain]": "MERCHANT_ACCOUNT"
-      })
+      }),
+      idempotencyKey: `merchant-account:${user.restaurantId}`
     });
     stripeAccountId = account.id;
   }
@@ -76,11 +145,15 @@ export async function createMerchantOnboardingLink({ user }) {
       provider: "STRIPE_CONNECT",
       status: "ACTION_REQUIRED",
       stripeAccountId,
+      accountType: "express",
+      country: process.env.STRIPE_CONNECT_COUNTRY || "US",
       onboardingUrlExpiresAt: link.expires_at ? new Date(link.expires_at * 1000) : null
     },
     update: {
       status: current?.status === "ENABLED" ? "ENABLED" : "ACTION_REQUIRED",
       stripeAccountId,
+      accountType: current?.accountType || "express",
+      country: current?.country || process.env.STRIPE_CONNECT_COUNTRY || "US",
       onboardingUrlExpiresAt: link.expires_at ? new Date(link.expires_at * 1000) : null
     }
   });
@@ -89,7 +162,13 @@ export async function createMerchantOnboardingLink({ user }) {
 }
 
 async function createStripePaymentIntent({ quote, order, payment, merchant }) {
-  assertStripeConnectConfigured();
+  assertStripeOrderPaymentsEnabled();
+  const chargeModel = process.env.STRIPE_CONNECT_CHARGE_MODEL || "destination_charge";
+  if (chargeModel !== "destination_charge") {
+    const error = new Error("Only Stripe Connect destination charges are certified for restaurant order payments.");
+    error.status = 503;
+    throw error;
+  }
   const body = stripeForm({
     amount: quote.totalCents,
     currency: quote.currency,
@@ -105,11 +184,13 @@ async function createStripePaymentIntent({ quote, order, payment, merchant }) {
   return stripeRequest({
     secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
     path: "/payment_intents",
-    body
+    body,
+    idempotencyKey: `order-payment:${payment.id}`
   });
 }
 
 export async function createOrderPayment({ body }) {
+  assertStripeOrderPaymentsEnabled();
   const quote = await calculateOrderQuote({ restaurantId: body.restaurantId, body });
   const merchant = await prisma.restaurantMerchantAccount.findUnique({
     where: { restaurantId_provider: { restaurantId: quote.restaurant.id, provider: "STRIPE_CONNECT" } }
@@ -124,6 +205,32 @@ export async function createOrderPayment({ body }) {
   const initialTrackingToken = createTrackingToken();
   const orderNumber = `${Date.now().toString().slice(-6)}`;
   const created = await prisma.$transaction(async (tx) => {
+    const paymentQuote = await tx.paymentQuote.create({
+      data: {
+        restaurantId: quote.restaurant.id,
+        provider: "STRIPE_CONNECT",
+        currency: quote.currency,
+        subtotalCents: quote.subtotalCents,
+        discountCents: quote.discountCents,
+        taxableAmountCents: quote.taxableAmountCents,
+        taxCents: quote.taxCents,
+        deliveryFeeCents: quote.deliveryFeeCents,
+        serviceFeeCents: quote.serviceFeeCents,
+        restaurantTipCents: quote.restaurantTipCents,
+        driverTipCents: quote.driverTipCents,
+        totalCents: quote.totalCents,
+        platformFeeCents: quote.platformFeeCents,
+        restaurantGrossCents: quote.restaurantGrossCents,
+        restaurantNetCents: quote.restaurantNetCents,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        quoteJson: {
+          items: quote.items,
+          breakdown: quote.breakdown,
+          couponCode: quote.couponCode,
+          taxRateBps: quote.taxRateBps
+        }
+      }
+    });
     const order = await tx.order.create({
       data: {
         restaurantId: quote.restaurant.id,
@@ -168,6 +275,7 @@ export async function createOrderPayment({ body }) {
       data: {
         restaurantId: order.restaurantId,
         orderId: order.id,
+        paymentQuoteId: paymentQuote.id,
         provider: "STRIPE_CONNECT",
         status: "REQUIRES_PAYMENT_METHOD",
         currency: quote.currency,
@@ -183,6 +291,7 @@ export async function createOrderPayment({ body }) {
         platformFeeCents: quote.platformFeeCents,
         restaurantGrossCents: quote.restaurantGrossCents,
         restaurantNetCents: quote.restaurantNetCents,
+        transferAmountCents: Math.max(0, quote.totalCents - quote.platformFeeCents),
         quoteJson: {
           items: quote.items,
           breakdown: quote.breakdown,
@@ -211,7 +320,8 @@ export async function createOrderPayment({ body }) {
       data: {
         status: intent.status === "requires_confirmation" ? "REQUIRES_CONFIRMATION" : "REQUIRES_PAYMENT_METHOD",
         providerPaymentIntentId: intent.id,
-        providerClientSecret: intent.client_secret || null
+        providerClientSecret: intent.client_secret || null,
+        transferAmountCents: Math.max(0, quote.totalCents - quote.platformFeeCents)
       }
     });
     return {
@@ -254,11 +364,18 @@ async function issueLoyaltyPoints(order) {
 }
 
 export async function markOrderPaymentPaid({ payment, providerChargeId }) {
+  if (payment.status === "PAID") {
+    const current = await prisma.restaurantOrderPayment.findUnique({
+      where: { id: payment.id },
+      include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
+    });
+    return { payment: current, order: current?.order };
+  }
   const updatedPayment = await prisma.restaurantOrderPayment.update({
     where: { id: payment.id },
     data: {
       status: "PAID",
-      providerChargeId: providerChargeId || payment.providerChargeId,
+      providerChargeId: providerObjectId(providerChargeId) || payment.providerChargeId,
       paidAt: new Date(),
       failureReason: null
     },
@@ -271,6 +388,15 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
       statusHistory: { create: { status: "ACCEPTED", note: "Restaurant order payment succeeded" } }
     },
     include: { restaurant: true, customer: true, items: true, statusHistory: true }
+  });
+  await recordPaymentReconciliation({
+    restaurantId: order.restaurantId,
+    orderPaymentId: updatedPayment.id,
+    recordType: "PAYMENT_CAPTURE",
+    expectedCents: updatedPayment.totalCents,
+    actualCents: updatedPayment.totalCents,
+    providerObjectId: providerObjectId(providerChargeId) || updatedPayment.providerPaymentIntentId,
+    metadata: { platformFeeCents: updatedPayment.platformFeeCents, restaurantNetCents: updatedPayment.restaurantNetCents }
   });
   await issueLoyaltyPoints(order);
   if (order.couponCode) {
@@ -286,6 +412,7 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
 }
 
 export async function markOrderPaymentFailed({ payment, failureReason }) {
+  if (["PAID", "REFUNDED", "PARTIALLY_REFUNDED"].includes(payment.status)) return payment;
   const updatedPayment = await prisma.restaurantOrderPayment.update({
     where: { id: payment.id },
     data: { status: "FAILED", failureReason: failureReason || "Payment failed" },
@@ -295,8 +422,8 @@ export async function markOrderPaymentFailed({ payment, failureReason }) {
   return updatedPayment;
 }
 
-export async function refundOrderPayment({ orderId, amountCents, reason, user }) {
-  const payment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId }, include: { order: true, restaurant: true } });
+export async function refundOrderPayment({ orderId, amountCents, reason, idempotencyKey, user }) {
+  const payment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId }, include: { order: true, restaurant: true, refunds: true } });
   if (!payment) {
     const error = new Error("Order payment not found");
     error.status = 404;
@@ -307,37 +434,69 @@ export async function refundOrderPayment({ orderId, amountCents, reason, user })
     error.status = 403;
     throw error;
   }
-  const safeAmount = Math.min(Math.max(0, Number(amountCents || payment.totalCents)), payment.totalCents);
+  if (!payment.providerPaymentIntentId) {
+    const error = new Error("This order does not have a provider payment intent to refund.");
+    error.status = 409;
+    throw error;
+  }
+  assertStripeOrderPaymentsEnabled();
+  const completedOrPendingRefundCents = payment.refunds
+    .filter((refund) => ["PENDING", "SUCCEEDED"].includes(refund.status))
+    .reduce((sum, refund) => sum + refund.amountCents, 0);
+  const remainingRefundableCents = Math.max(0, payment.totalCents - completedOrPendingRefundCents);
+  const safeAmount = Math.min(Math.max(0, Number(amountCents || remainingRefundableCents)), remainingRefundableCents);
   if (!safeAmount) {
     const error = new Error("Refund amount must be greater than zero");
     error.status = 400;
     throw error;
   }
-  assertStripeConnectConfigured();
+  const safeIdempotencyKey = idempotencyKey || `refund:${payment.id}:${safeAmount}:${completedOrPendingRefundCents}`;
+  const existingRefund = await prisma.restaurantRefund.findUnique({ where: { idempotencyKey: safeIdempotencyKey } }).catch(() => null);
+  if (existingRefund) return existingRefund;
   const stripeRefundReasons = new Set(["duplicate", "fraudulent", "requested_by_customer"]);
   const providerReason = stripeRefundReasons.has(reason) ? reason : "requested_by_customer";
+  const reverseTransfer = envFlag("STRIPE_CONNECT_REVERSE_TRANSFER_ON_REFUND", true);
+  const refundApplicationFee = envFlag("STRIPE_CONNECT_REFUND_APPLICATION_FEE", true);
+  const proportionalPlatformFee = payment.totalCents > 0
+    ? Math.min(payment.platformFeeCents, Math.round((payment.platformFeeCents * safeAmount) / payment.totalCents))
+    : 0;
   const body = stripeForm({
     payment_intent: payment.providerPaymentIntentId,
     amount: safeAmount,
     reason: providerReason,
+    reverse_transfer: reverseTransfer ? "true" : undefined,
+    refund_application_fee: refundApplicationFee ? "true" : undefined,
     "metadata[domain]": "RESTAURANT_ORDER_PAYMENT",
     "metadata[orderPaymentId]": payment.id,
     "metadata[orderId]": payment.orderId,
     "metadata[refundNote]": reason || providerReason
   });
-  const refund = await stripeRequest({ secretKey: process.env.STRIPE_CONNECT_SECRET_KEY, path: "/refunds", body });
+  const refund = await stripeRequest({ secretKey: process.env.STRIPE_CONNECT_SECRET_KEY, path: "/refunds", body, idempotencyKey: safeIdempotencyKey });
   const restaurantRefund = await prisma.restaurantRefund.create({
     data: {
       restaurantId: payment.restaurantId,
       orderPaymentId: payment.id,
       provider: "STRIPE_CONNECT",
       providerRefundId: refund.id,
-      status: refund.status === "succeeded" ? "SUCCEEDED" : "PENDING",
+      idempotencyKey: safeIdempotencyKey,
+      status: refundStatusFromStripe(refund.status),
       amountCents: safeAmount,
+      applicationFeeRefundedCents: refundApplicationFee ? proportionalPlatformFee : 0,
+      transferReversedCents: reverseTransfer ? Math.max(0, safeAmount - proportionalPlatformFee) : 0,
       reason,
       requestedByUserId: user?.id,
-      processedAt: refund.status === "succeeded" ? new Date() : null
+      processedAt: refund.status === "succeeded" ? new Date() : null,
+      completedAt: refund.status === "succeeded" ? new Date() : null
     }
+  });
+  await recordPaymentReconciliation({
+    restaurantId: payment.restaurantId,
+    orderPaymentId: payment.id,
+    recordType: "REFUND",
+    expectedCents: safeAmount,
+    actualCents: refund.amount || safeAmount,
+    providerObjectId: refund.id,
+    metadata: { reverseTransfer, refundApplicationFee }
   });
   await recordAudit({ actorUserId: user?.id, restaurantId: payment.restaurantId, action: "order_payment.refund.requested", entityType: "RestaurantRefund", entityId: restaurantRefund.id, metadata: { amountCents: safeAmount } });
   return restaurantRefund;
@@ -373,36 +532,140 @@ export async function receiptForOrder({ orderId }) {
   };
 }
 
+async function upsertDisputeFromStripe({ object, payment, providerEventId }) {
+  const chargeId = providerObjectId(object.charge);
+  const paymentIntentId = providerObjectId(object.payment_intent) || payment?.providerPaymentIntentId || null;
+  const resolvedPayment = payment
+    || (chargeId ? await prisma.restaurantOrderPayment.findFirst({ where: { providerChargeId: chargeId } }) : null)
+    || (paymentIntentId ? await prisma.restaurantOrderPayment.findFirst({ where: { providerPaymentIntentId: paymentIntentId } }) : null);
+  const restaurantId = resolvedPayment?.restaurantId || object.metadata?.restaurantId;
+  if (!restaurantId || !object.id) return null;
+  const dispute = await prisma.restaurantPaymentDispute.upsert({
+    where: { providerDisputeId: object.id },
+    create: {
+      restaurantId,
+      orderPaymentId: resolvedPayment?.id || null,
+      provider: "STRIPE_CONNECT",
+      providerDisputeId: object.id,
+      providerChargeId: chargeId,
+      providerPaymentIntentId: paymentIntentId,
+      status: disputeStatusFromStripe(object.status),
+      amountCents: Number(object.amount || 0),
+      currency: String(object.currency || resolvedPayment?.currency || "usd").toLowerCase(),
+      reason: object.reason || null,
+      evidenceDueAt: object.evidence_details?.due_by ? new Date(Number(object.evidence_details.due_by) * 1000) : null,
+      openedAt: object.created ? new Date(Number(object.created) * 1000) : new Date(),
+      closedAt: ["won", "lost", "warning_closed"].includes(String(object.status || "").toLowerCase()) ? new Date() : null,
+      metadataJson: sanitizeStripePayload(object)
+    },
+    update: {
+      orderPaymentId: resolvedPayment?.id || null,
+      providerChargeId: chargeId,
+      providerPaymentIntentId: paymentIntentId,
+      status: disputeStatusFromStripe(object.status),
+      amountCents: Number(object.amount || 0),
+      reason: object.reason || null,
+      evidenceDueAt: object.evidence_details?.due_by ? new Date(Number(object.evidence_details.due_by) * 1000) : null,
+      closedAt: ["won", "lost", "warning_closed"].includes(String(object.status || "").toLowerCase()) ? new Date() : null,
+      metadataJson: sanitizeStripePayload(object)
+    }
+  });
+  await recordPaymentReconciliation({
+    restaurantId,
+    orderPaymentId: resolvedPayment?.id || null,
+    recordType: "DISPUTE",
+    expectedCents: resolvedPayment?.totalCents || Number(object.amount || 0),
+    actualCents: Number(object.amount || 0),
+    providerObjectId: object.id,
+    providerEventId,
+    metadata: { status: dispute.status, reason: dispute.reason }
+  });
+  return dispute;
+}
+
+async function upsertPayoutFromStripe({ payload, object, providerEventId }) {
+  const accountId = payload.account || object.destination || object.account || null;
+  const merchant = accountId ? await prisma.restaurantMerchantAccount.findFirst({ where: { stripeAccountId: accountId } }) : null;
+  if (!merchant?.restaurantId || !object.id) return null;
+  const payout = await prisma.restaurantPayout.upsert({
+    where: { providerPayoutId: object.id },
+    create: {
+      restaurantId: merchant.restaurantId,
+      provider: "STRIPE_CONNECT",
+      providerPayoutId: object.id,
+      status: payoutStatusFromStripe(object.status),
+      amountCents: Number(object.amount || 0),
+      currency: String(object.currency || merchant.defaultCurrency || "usd").toLowerCase(),
+      arrivalDate: object.arrival_date ? new Date(Number(object.arrival_date) * 1000) : null,
+      paidAt: object.status === "paid" ? new Date() : null,
+      failureReason: object.failure_message || object.failure_code || null,
+      metadataJson: sanitizeStripePayload(object)
+    },
+    update: {
+      status: payoutStatusFromStripe(object.status),
+      amountCents: Number(object.amount || 0),
+      arrivalDate: object.arrival_date ? new Date(Number(object.arrival_date) * 1000) : null,
+      paidAt: object.status === "paid" ? new Date() : null,
+      failureReason: object.failure_message || object.failure_code || null,
+      metadataJson: sanitizeStripePayload(object)
+    }
+  });
+  await recordPaymentReconciliation({
+    restaurantId: merchant.restaurantId,
+    recordType: "PAYOUT",
+    expectedCents: Number(object.amount || 0),
+    actualCents: Number(object.amount || 0),
+    providerObjectId: object.id,
+    providerEventId,
+    metadata: { status: payout.status, stripeAccountId: accountId }
+  });
+  return payout;
+}
+
 export async function handleStripeConnectWebhook(payload = {}) {
-  const eventType = payload.type || payload.eventType;
+  const eventType = payload.type || payload.eventType || "unknown";
   const object = payload.data?.object || payload.object || {};
   const eventId = payload.id || payload.providerEventId;
-  const providerEventId = eventId || `manual-${eventType || "unknown"}-${object.id || Date.now()}`;
-  const paymentIntentId = object.id || object.payment_intent;
+  const providerEventId = eventId || `manual-${eventType}-${object.id || Date.now()}`;
+  const existingEvent = eventId ? await prisma.restaurantPaymentEvent.findUnique({ where: { providerEventId } }) : null;
+  if (existingEvent?.processedAt) return { received: true, duplicate: true };
+
+  const paymentIntentId = providerObjectId(object.payment_intent) || (eventType.startsWith("payment_intent.") ? object.id : null);
   const orderPaymentId = object.metadata?.orderPaymentId;
   const orderId = object.metadata?.orderId;
   let payment = orderPaymentId ? await prisma.restaurantOrderPayment.findUnique({ where: { id: orderPaymentId } }) : null;
   if (!payment && paymentIntentId) payment = await prisma.restaurantOrderPayment.findFirst({ where: { providerPaymentIntentId: paymentIntentId } });
+  if (!payment && object.latest_charge) payment = await prisma.restaurantOrderPayment.findFirst({ where: { providerChargeId: providerObjectId(object.latest_charge) } });
   if (!payment && orderId) payment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId } });
 
-  await prisma.restaurantPaymentEvent.upsert({
+  const eventRecord = await prisma.restaurantPaymentEvent.upsert({
     where: { providerEventId },
     create: {
       restaurantId: payment?.restaurantId || object.metadata?.restaurantId || null,
       paymentId: payment?.id || null,
-      eventDomain: eventType?.startsWith("account.") ? "MERCHANT_ACCOUNT" : eventType?.startsWith("payout.") ? "PAYOUT" : eventType?.startsWith("charge.dispute") ? "DISPUTE" : "RESTAURANT_ORDER_PAYMENT",
+      eventDomain: eventDomainFor(eventType),
       provider: "stripe_connect",
       providerEventId,
-      eventType: eventType || "unknown",
-      payloadJson: payload,
-      processedAt: new Date()
+      eventType,
+      payloadJson: sanitizeStripePayload(payload),
+      processedAt: null
     },
-    update: { processedAt: new Date() }
+    update: {
+      restaurantId: payment?.restaurantId || object.metadata?.restaurantId || existingEvent?.restaurantId || null,
+      paymentId: payment?.id || existingEvent?.paymentId || null,
+      eventType,
+      payloadJson: sanitizeStripePayload(payload)
+    }
   });
+
+  const finish = async (result) => {
+    await prisma.restaurantPaymentEvent.update({ where: { id: eventRecord.id }, data: { processedAt: new Date() } });
+    return result;
+  };
 
   if (eventType === "account.updated") {
     const accountId = object.id;
-    const status = object.charges_enabled && object.payouts_enabled ? "ENABLED" : object.details_submitted ? "PENDING_VERIFICATION" : "ACTION_REQUIRED";
+    const status = object.charges_enabled && object.payouts_enabled && object.details_submitted ? "ENABLED" : object.details_submitted ? "PENDING_VERIFICATION" : "ACTION_REQUIRED";
     await prisma.restaurantMerchantAccount.updateMany({
       where: { stripeAccountId: accountId },
       data: {
@@ -410,29 +673,60 @@ export async function handleStripeConnectWebhook(payload = {}) {
         stripeChargesEnabled: Boolean(object.charges_enabled),
         stripePayoutsEnabled: Boolean(object.payouts_enabled),
         stripeDetailsSubmitted: Boolean(object.details_submitted),
+        accountType: object.type || null,
+        country: object.country || null,
         disabledReason: object.requirements?.disabled_reason || null,
-        requirementsJson: object.requirements || {}
+        requirementsJson: object.requirements || {},
+        onboardingCompletedAt: object.details_submitted ? new Date() : null,
+        enabledAt: status === "ENABLED" ? new Date() : null,
+        lastSyncedAt: new Date()
       }
     });
-    return { received: true, merchantAccountUpdated: true };
+    return finish({ received: true, merchantAccountUpdated: true });
   }
-  if (!payment) return { received: true, ignored: true, reason: "payment_not_found" };
+
+  if (eventType.startsWith("charge.dispute")) {
+    const dispute = await upsertDisputeFromStripe({ object, payment, providerEventId });
+    return finish({ received: true, disputeUpdated: Boolean(dispute) });
+  }
+
+  if (eventType.startsWith("payout.")) {
+    const payout = await upsertPayoutFromStripe({ payload, object, providerEventId });
+    return finish({ received: true, payoutUpdated: Boolean(payout) });
+  }
+
+  if (!payment) return finish({ received: true, ignored: true, reason: "payment_not_found" });
+
   if (["payment_intent.succeeded", "payment.succeeded"].includes(eventType)) {
-    return { received: true, ...(await markOrderPaymentPaid({ payment, providerChargeId: object.latest_charge })) };
+    return finish({ received: true, ...(await markOrderPaymentPaid({ payment, providerChargeId: object.latest_charge })) });
   }
+
   if (["payment_intent.payment_failed", "payment.failed"].includes(eventType)) {
-    return { received: true, payment: await markOrderPaymentFailed({ payment, failureReason: object.last_payment_error?.message }) };
+    return finish({ received: true, payment: await markOrderPaymentFailed({ payment, failureReason: object.last_payment_error?.message }) });
   }
+
   if (eventType === "charge.refunded") {
     const refundedAmount = Number(object.amount_refunded || 0);
     await prisma.restaurantOrderPayment.update({
       where: { id: payment.id },
       data: {
         status: refundedAmount >= payment.totalCents ? "REFUNDED" : "PARTIALLY_REFUNDED",
+        providerChargeId: object.id || payment.providerChargeId,
         refundedAt: new Date()
       }
     });
-    return { received: true, refunded: true };
+    await recordPaymentReconciliation({
+      restaurantId: payment.restaurantId,
+      orderPaymentId: payment.id,
+      recordType: "REFUND_WEBHOOK",
+      expectedCents: refundedAmount,
+      actualCents: refundedAmount,
+      providerObjectId: object.id,
+      providerEventId,
+      metadata: { paymentIntentId: payment.providerPaymentIntentId }
+    });
+    return finish({ received: true, refunded: true });
   }
-  return { received: true, ignored: true };
+
+  return finish({ received: true, ignored: true });
 }
