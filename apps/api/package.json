@@ -14,6 +14,7 @@
     "auth:audit": "node prisma/auth-audit.js",
     "auth:verify-login": "node prisma/auth-verify-login.js",
     "bootstrap:admin": "node prisma/bootstrap-admin.js",
+    "bootstrap:dev-owner": "node prisma/bootstrap-dev-owner.js",
     "auth:repair-owner": "node prisma/repair-owner.js",
     "seed": "node prisma/seed.js",
     "prisma:seed": "node prisma/seed.js",

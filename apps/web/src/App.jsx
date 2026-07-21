@@ -123,6 +123,21 @@ const onboardingSteps = [
   { id: "payments", label: "Payments" },
   { id: "review", label: "Review" }
 ];
+const restaurantSettingsLinks = [
+  { id: "profile", label: "Profile", detail: "Business name, phone, address, and public restaurant identity.", href: "#settings-profile", status: "Available" },
+  { id: "website-branding", label: "Website & Branding", detail: "Homepage copy, logo, hero image, colors, fonts, and section visibility.", href: "#settings-website-branding", status: "Available" },
+  { id: "menu-catalog", label: "Menu & Catalog", detail: "Categories, food items, pricing, photos, featured items, and availability.", href: "#settings-menu-catalog", status: "Available" },
+  { id: "gallery-social", label: "Gallery & Social", detail: "Public gallery photos and social profile links.", href: "#settings-gallery-social", status: "Available" },
+  { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order handling, kitchen flow, and ticket printing.", href: "#settings-ordering", status: "Available" },
+  { id: "delivery", label: "Delivery", detail: "Delivery zones, fees, minimums, drivers, and dispatch settings.", href: "#settings-delivery", status: "Available" },
+  { id: "domains-seo", label: "Domains & SEO", detail: "Loohar subdomain, custom domain, canonical URL, SSL, and search metadata.", href: "#settings-domains-seo", status: "Available" },
+  { id: "payments", label: "Payments", detail: "Payment provider onboarding and restaurant payout readiness.", href: "#settings-payments", status: "Onboarding" },
+  { id: "staff-access", label: "Staff & Access", detail: "Managers, cashiers, kitchen staff, drivers, roles, and access status.", href: "#settings-staff-access", status: "Available" },
+  { id: "notifications", label: "Notifications", detail: "Customer SMS and email events for orders, receipts, resets, and welcome flows.", href: "#settings-notifications", status: "Available" },
+  { id: "billing", label: "Billing", detail: "Subscription plan and account billing status.", href: "#settings-billing", status: "Foundation" },
+  { id: "security", label: "Security", detail: "Password policy, session controls, audit trails, and account protection.", href: "#settings-security", status: "Foundation" },
+  { id: "advanced", label: "Advanced", detail: "Multi-location foundation and future operational controls.", href: "#settings-advanced", status: "Foundation" }
+];
 const socialPlatformLabels = {
   facebook: "Facebook",
   instagram: "Instagram",
@@ -545,10 +560,8 @@ function restaurantOperationsNavigation(user, restaurantSlug, path) {
     { label: "Dashboard", icon: LayoutDashboard, href: base, active: path === base || path === "/restaurant" },
     { label: "Orders", icon: ReceiptText, href: `${base}#orders` },
     canUseKitchen ? { label: "Kitchen", icon: ReceiptText, href: kitchenSlug ? `/kitchen/${kitchenSlug}` : "/kitchen", active: path.startsWith("/kitchen") } : null,
-    { label: "Menu", icon: MenuIcon, href: `${base}#menu` },
-    { label: "Drivers", icon: Truck, href: `${base}#drivers` },
     { label: "Customers", icon: Users, href: `${base}#customers` },
-    { label: "Website", icon: Store, href: `${base}#website` },
+    { label: "Drivers", icon: Truck, href: `${base}#drivers` },
     { label: "Reports", icon: Activity, href: `${base}#reports` },
     { label: "Settings", icon: UserCog, href: `${base}#settings` }
   ];
@@ -6608,6 +6621,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const hasLock = (feature) => Boolean(lockFor(feature));
   const entitlementSummary = profile.entitlements || {};
   const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY") || (lockFor("PRINTING") ? { ...lockFor("PRINTING"), featureLabel: featureLabels.KITCHEN_DISPLAY, requiredPlan: featureRequiredPlans.KITCHEN_DISPLAY } : null);
+  const restaurantBasePath = profile.slug ? `/restaurant/${profile.slug}` : restaurantId ? `/restaurant/${restaurantId}` : "/restaurant";
+  const settingsCenterLinks = restaurantSettingsLinks.map((item) => item.id === "payments" ? { ...item, href: `${restaurantBasePath}/onboarding#payments` } : item);
 
   return (
     <div className="space-y-6">
@@ -6627,7 +6642,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         <Stat icon={TicketPercent} label="Orders today" value={stats.ordersToday ?? orders.length} detail="Pickup and delivery" />
       </div>
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="panel" id="orders">
+        <div className="panel" id="settings-menu-catalog">
           <h3 className="panel-title">Menu management</h3>
           <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={createCategory}>
             <input className="input" placeholder="New category" value={categoryName} onChange={(event) => setCategoryName(event.target.value)} />
@@ -6739,7 +6754,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>
         </div>
-        <div className="panel">
+        <div className="panel" id="orders">
           <h3 className="panel-title">Live orders</h3>
           <div className="mt-4 space-y-3">
             {orders.length === 0 ? <EmptyState title="No orders yet" detail="Customer orders will appear here in real time." /> : orders.map((order) => (
@@ -6830,8 +6845,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>}
         </div>
       </div>
-      <div className="grid gap-5 xl:grid-cols-2" id="website">
-        <div className="panel">
+      <div className="grid gap-5 xl:grid-cols-2">
+        <div className="panel" id="settings-website-branding">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
               <h3 className="panel-title">Website Builder</h3>
@@ -6917,7 +6932,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>
           <button className="button-primary mt-4" onClick={saveWebsiteBuilder} disabled={websiteSaveState === "saving"}><Store size={16} />{websiteButtonLabel()}</button>
         </div>
-        <div className="panel">
+        <div className="panel" id="settings-domains-seo">
           <h3 className="panel-title">Domain Management</h3>
           {hasLock("CUSTOM_DOMAIN") ? <div className="mt-4"><UpgradeRequired feature="CUSTOM_DOMAIN" lock={lockFor("CUSTOM_DOMAIN")} /></div> : <>
           <div className="mt-4 space-y-2 text-sm text-slate-600">
@@ -6938,7 +6953,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <button className="button-muted" type="button" onClick={() => saveDomain({ ...domain, customDomain: "", canonicalDomain: domain.primaryDomain || `${domain.defaultSubdomain || profile.slug}.${tenantRootDomain}`, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" })} disabled={savingAction === "domain:save"}>Remove Custom Domain</button>
           </div>
           </>}
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="mt-5 grid gap-4 md:grid-cols-2" id="settings-gallery-social">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <h4 className="font-bold text-ink">Gallery</h4>
@@ -7015,7 +7030,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>}
         </div>
-        <div className="panel">
+        <div className="panel" id="settings-ordering">
           <h3 className="panel-title">Receipt and ticket printing</h3>
           {hasLock("PRINTING") ? <div className="mt-4"><UpgradeRequired feature="PRINTING" lock={lockFor("PRINTING")} /></div> : <>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -7037,7 +7052,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="panel" id="drivers">
+        <div className="panel" id="settings-staff-access">
           <h3 className="panel-title">Employees</h3>
           {hasLock("EMPLOYEE_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="EMPLOYEE_MANAGEMENT" lock={lockFor("EMPLOYEE_MANAGEMENT")} /></div> : <>
           <form className="mt-4 form-grid" onSubmit={createEmployee}>
@@ -7066,7 +7081,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>
           </>}
         </div>
-        <div className="panel">
+        <div className="panel" id="drivers">
           <h3 className="panel-title">Driver Dispatch Center</h3>
           {hasLock("DRIVER_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="DRIVER_MANAGEMENT" lock={lockFor("DRIVER_MANAGEMENT")} /></div> : <>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -7097,7 +7112,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-3">
-        <div className="panel">
+        <div className="panel" id="settings-delivery">
           <h3 className="panel-title">Delivery Zones</h3>
           {hasLock("DELIVERY_ZONES") ? <div className="mt-4"><UpgradeRequired feature="DELIVERY_ZONES" lock={lockFor("DELIVERY_ZONES")} /></div> : <>
           <form className="mt-4 grid gap-2" onSubmit={createDeliveryZone}>
@@ -7143,7 +7158,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           <p className="mt-3 text-xs font-semibold text-slate-500">Automatic depletion from orders is a future inventory phase.</p>
           </>}
         </div>
-        <div className="panel">
+        <div className="panel" id="settings-notifications">
           <h3 className="panel-title">Notifications</h3>
           {hasLock("NOTIFICATIONS") ? <div className="mt-4"><UpgradeRequired feature="NOTIFICATIONS" lock={lockFor("NOTIFICATIONS")} /></div> : <>
           <div className="mt-4 grid gap-2">
@@ -7205,13 +7220,58 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </>}
       </div>
       <div className="grid gap-5 xl:grid-cols-2" id="settings">
-        <div className="panel">
-          <h3 className="panel-title">Branding and settings</h3>
-          <p className="mt-2 text-sm text-slate-500">Logo, hero image, brand colors, social links, contact info, and store hours are saved to the live restaurant profile and website records.</p>
-          <button className="button-primary mt-4" onClick={saveWebsiteBuilder}><Store size={16} />Save branding</button>
+        <div className="panel xl:col-span-2">
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <h3 className="panel-title">Settings center</h3>
+              <p className="mt-2 text-sm text-slate-500">Configuration and editing tools live here, keeping the top navigation focused on daily restaurant operations.</p>
+            </div>
+            <a className="button-muted" href={publicPreviewPath} target="_blank" rel="noreferrer"><Store size={16} />Preview website</a>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {settingsCenterLinks.map((item) => (
+              <a className="rounded-md border border-line bg-white p-4 transition hover:border-mint hover:shadow-soft" href={item.href} key={item.id}>
+                <span className="text-xs font-black uppercase tracking-wide text-mint">{item.status}</span>
+                <strong className="mt-2 block text-lg text-ink">{item.label}</strong>
+                <span className="mt-1 block text-sm text-slate-500">{item.detail}</span>
+              </a>
+            ))}
+          </div>
         </div>
-        <div className="panel">
-          <h3 className="panel-title">Multi-location foundation</h3>
+        <div className="panel" id="settings-profile">
+          <h3 className="panel-title">Restaurant profile</h3>
+          <p className="mt-2 text-sm text-slate-500">Business name, public contact details, address, and restaurant identity are edited in Website & Branding and saved to the live restaurant profile.</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600">
+            <div className="summary-line"><span>Restaurant</span><strong>{profile.businessName || profile.name || "Restaurant"}</strong></div>
+            <div className="summary-line"><span>Phone</span><strong>{profile.phone || "Not set"}</strong></div>
+            <div className="summary-line"><span>Location</span><strong>{[profile.city, profile.state].filter(Boolean).join(", ") || "Not set"}</strong></div>
+          </div>
+          <a className="button-primary mt-4" href="#settings-website-branding"><Store size={16} />Edit profile</a>
+        </div>
+        <div className="panel" id="settings-payments">
+          <h3 className="panel-title">Payments</h3>
+          <p className="mt-2 text-sm text-slate-500">Restaurant payment provider onboarding and payout readiness are managed through the secure onboarding flow.</p>
+          <a className="button-primary mt-4" href={`${restaurantBasePath}/onboarding#payments`}><CreditCard size={16} />Open payment setup</a>
+        </div>
+        <div className="panel" id="settings-billing">
+          <h3 className="panel-title">Billing</h3>
+          <p className="mt-2 text-sm text-slate-500">Subscription plan and account billing state are enforced server-side by Loohar entitlements.</p>
+          <div className="mt-4 space-y-2 text-sm text-slate-600">
+            <div className="summary-line"><span>Plan</span><strong>{readable(entitlementSummary.planCode || "STARTER")}</strong></div>
+            <div className="summary-line"><span>Status</span><strong>{readable(entitlementSummary.subscriptionStatus || "ACTIVE")}</strong></div>
+          </div>
+        </div>
+        <div className="panel" id="settings-security">
+          <h3 className="panel-title">Security</h3>
+          <p className="mt-2 text-sm text-slate-500">Password policy, role-based access, session checks, and audit logging protect tenant operations.</p>
+          <div className="mt-4 grid gap-2">
+            <StatusPill tone="good">RBAC active</StatusPill>
+            <StatusPill tone="good">Tenant isolation active</StatusPill>
+            <StatusPill tone="neutral">Audit logs retained</StatusPill>
+          </div>
+        </div>
+        <div className="panel" id="settings-advanced">
+          <h3 className="panel-title">Advanced</h3>
           {hasLock("MULTI_LOCATION") ? <div className="mt-4"><UpgradeRequired feature="MULTI_LOCATION" lock={lockFor("MULTI_LOCATION")} /></div> : <p className="mt-2 text-sm text-slate-500">{locations.length} configured location records. Future support will separate menus, drivers, and reporting by location.</p>}
         </div>
       </div>

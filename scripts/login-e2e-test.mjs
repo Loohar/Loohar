@@ -50,7 +50,7 @@ async function resolveBaseUrl() {
   return waitForServer(serverProcess);
 }
 
-async function runLoginScenario(browserType, baseUrl) {
+async function runLoginScenario(browserName, browserType, baseUrl) {
   const browser = await browserType.launch();
   try {
     const context = await browser.newContext({
@@ -128,6 +128,7 @@ async function runLoginScenario(browserType, baseUrl) {
     if (counters.health === 0) throw new Error("Login scenario did not exercise API health polling.");
     if (counters.login !== 1) throw new Error(`Expected one /api/auth/login request, received ${counters.login}.`);
     if (counters.me < 1) throw new Error("Login did not verify the authenticated session with /api/auth/me.");
+    console.log(`PASS ${browserName} login remains usable when health is unavailable`);
     await context.close();
   } finally {
     await browser.close();
@@ -137,8 +138,8 @@ async function runLoginScenario(browserType, baseUrl) {
 const playwright = await loadPlaywright();
 const baseUrl = await resolveBaseUrl();
 try {
-  await runLoginScenario(playwright.chromium, baseUrl);
-  console.log("PASS chromium login remains usable when health is unavailable");
+  await runLoginScenario("chromium", playwright.chromium, baseUrl);
+  await runLoginScenario("webkit", playwright.webkit, baseUrl);
   console.log("login-e2e passed.");
 } finally {
   if (serverProcess) serverProcess.kill("SIGTERM");
