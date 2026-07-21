@@ -593,6 +593,10 @@ textarea {
     justify-content: center;
   }
 
+  .public-nav-center-spacer {
+    min-width: 0;
+  }
+
   .public-nav-actions {
     justify-content: flex-end;
     gap: 0.55rem;
@@ -2056,6 +2060,7 @@ textarea {
     }
 
     .public-nav-center,
+    .public-nav-center-spacer,
     .public-nav-actions {
       display: none;
     }

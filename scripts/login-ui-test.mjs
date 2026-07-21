@@ -29,6 +29,9 @@ const publicNavbar = sliceBetween(app, "function PublicNavbar(", "\nfunction Pub
 
 assertCheck(authPage.includes("<PublicLayout compactNav") && authPage.includes('className="public-auth-page"'), "Login pages use compact public layout");
 assertCheck(forgotPasswordPage.includes("<PublicLayout compactNav") && resetPasswordPage.includes("<PublicLayout compactNav"), "Password recovery pages use compact public layout");
+assertCheck(publicNavbar.includes("const isLoginPath = isAuthPagePath(currentPath);"), "Shared public navbar knows when compact auth routes should omit Sign In");
+assertCheck(/<button ref=\{mobileTriggerRef\} className="public-mobile-trigger"/.test(publicNavbar) && publicNavbar.includes('className={`public-mobile-layer ${mobileOpen ? "open" : ""}`}'), "Compact auth header reuses the public mobile hamburger and drawer");
+assertCheck(publicNavbar.includes(": !isLoginPath ? <PublicLink className=\"public-button ghost\" href=\"/login\""), "Login mobile drawer does not render a redundant Sign In action");
 assertCheck(authPage.includes('const [password, setPassword] = useState("");'), "Login password state initializes empty");
 assertCheck(!/useState\(["'][^"']*(Owner|Admin|Welcome|ChangeMe|2026|password)[^"']*["']\)/i.test(authPage), "Login state does not seed passwords");
 assertCheck(authPage.includes('type="email"') && authPage.includes('name="email"') && authPage.includes('autoComplete="username"'), "Login email field uses secure username autocomplete");

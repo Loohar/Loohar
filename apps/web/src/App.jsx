@@ -1867,6 +1867,7 @@ function PublicNavbar({ compact = false, user, onLogout }) {
   const aboutActive = currentPath.startsWith("/about");
   const productActive = currentPath === "/" || currentPath.startsWith("/features");
   const resourceActive = currentPath.startsWith("/resources") || currentPath.startsWith("/security") || currentPath.startsWith("/support") || currentPath.startsWith("/privacy") || currentPath.startsWith("/terms");
+  const isLoginPath = isAuthPagePath(currentPath);
 
   function closeNavigation() {
     setOpenDropdown("");
@@ -1933,56 +1934,52 @@ function PublicNavbar({ compact = false, user, onLogout }) {
             <PublicDropdown id="resources" label="Resources" links={publicResourceLinks} openDropdown={openDropdown} setOpenDropdown={setOpenDropdown} onNavigate={closeNavigation} active={resourceActive} />
             <PublicLink className={`public-nav-link ${aboutActive ? "active" : ""}`} href="/about" aria-current={aboutActive ? "page" : undefined} onNavigate={closeNavigation}>About Us</PublicLink>
           </nav>
-        ) : <div />}
+        ) : <div className="public-nav-center-spacer" aria-hidden="true" />}
         <div className="public-nav-actions">
           {!compact ? <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink> : null}
           {!compact ? <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink> : null}
           {user && !compact ? <PublicLink className="public-button secondary" href={dashboardPathFor(user)} onNavigate={closeNavigation}>Dashboard</PublicLink> : <PublicLink className="public-button ghost" href={compact ? "/" : "/login"} onNavigate={closeNavigation}>{compact ? "Back to Loohar" : "Sign In"}</PublicLink>}
           {user && !compact ? <button className="public-button ghost" type="button" onClick={onLogout}>Logout</button> : null}
         </div>
-        {!compact ? (
-          <button ref={mobileTriggerRef} className="public-mobile-trigger" type="button" aria-label="Open navigation menu" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={openMobileNavigation}>
-            <MenuIcon size={22} aria-hidden="true" />
-          </button>
-        ) : null}
+        <button ref={mobileTriggerRef} className="public-mobile-trigger" type="button" aria-label="Open navigation menu" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={openMobileNavigation}>
+          <MenuIcon size={22} aria-hidden="true" />
+        </button>
       </div>
-      {!compact ? (
-        <div className={`public-mobile-layer ${mobileOpen ? "open" : ""}`} aria-hidden={!mobileOpen}>
-          <button className="public-mobile-backdrop" type="button" tabIndex={mobileOpen ? 0 : -1} aria-label="Close menu" onClick={closeNavigation} />
-          <div ref={mobileDrawerRef} className="public-mobile-drawer" id="public-mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile public navigation" onKeyDown={handleMobileDrawerKeyDown}>
-            <div className="public-mobile-head">
-              <LooharPlatformBrand size="compact" />
-              <button ref={mobileCloseRef} className="public-mobile-close" type="button" onClick={closeNavigation} aria-label="Close menu"><X size={20} /></button>
-            </div>
-            <nav className="public-mobile-nav-list" aria-label="Mobile public navigation links">
-              <PublicLink href="/" onNavigate={closeNavigation}>Home</PublicLink>
-              {[
-                ["product", "Product", publicProductLinks],
-                ["resources", "Resources", publicResourceLinks]
-              ].map(([groupId, groupLabel, links]) => (
-                <div className={`public-mobile-group ${mobileGroup === groupId ? "open" : ""}`} key={groupId}>
-                  <button type="button" onClick={() => setMobileGroup((open) => open === groupId ? "" : groupId)} aria-expanded={mobileGroup === groupId}>
-                    <span>{groupLabel}</span>
-                    <ChevronDown size={16} aria-hidden="true" />
-                  </button>
-                  <div>
-                    {links.map((link) => <PublicLink href={link.href} key={link.href} onNavigate={closeNavigation}>{link.label}</PublicLink>)}
-                  </div>
+      <div className={`public-mobile-layer ${mobileOpen ? "open" : ""}`} aria-hidden={!mobileOpen}>
+        <button className="public-mobile-backdrop" type="button" tabIndex={mobileOpen ? 0 : -1} aria-label="Close menu" onClick={closeNavigation} />
+        <div ref={mobileDrawerRef} className="public-mobile-drawer" id="public-mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile public navigation" onKeyDown={handleMobileDrawerKeyDown}>
+          <div className="public-mobile-head">
+            <LooharPlatformBrand size="compact" />
+            <button ref={mobileCloseRef} className="public-mobile-close" type="button" onClick={closeNavigation} aria-label="Close menu"><X size={20} /></button>
+          </div>
+          <nav className="public-mobile-nav-list" aria-label="Mobile public navigation links">
+            <PublicLink href="/" onNavigate={closeNavigation}>Home</PublicLink>
+            {[
+              ["product", "Product", publicProductLinks],
+              ["resources", "Resources", publicResourceLinks]
+            ].map(([groupId, groupLabel, links]) => (
+              <div className={`public-mobile-group ${mobileGroup === groupId ? "open" : ""}`} key={groupId}>
+                <button type="button" onClick={() => setMobileGroup((open) => open === groupId ? "" : groupId)} aria-expanded={mobileGroup === groupId}>
+                  <span>{groupLabel}</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                <div>
+                  {links.map((link) => <PublicLink href={link.href} key={link.href} onNavigate={closeNavigation}>{link.label}</PublicLink>)}
                 </div>
-              ))}
-              <PublicLink href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
-              <PublicLink href="/pricing" onNavigate={closeNavigation}>Pricing</PublicLink>
-              <PublicLink href="/about" onNavigate={closeNavigation}>About Us</PublicLink>
-            </nav>
-            <div className="public-mobile-actions">
-              <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink>
-              <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink>
-              {user ? <PublicLink className="public-button ghost" href={dashboardPathFor(user)} onNavigate={closeNavigation}>Dashboard</PublicLink> : <PublicLink className="public-button ghost" href="/login" onNavigate={closeNavigation}>Sign In</PublicLink>}
-              {user ? <button className="public-button ghost" type="button" onClick={() => { closeNavigation(); onLogout?.(); }}>Logout</button> : null}
-            </div>
+              </div>
+            ))}
+            <PublicLink href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
+            <PublicLink href="/pricing" onNavigate={closeNavigation}>Pricing</PublicLink>
+            <PublicLink href="/about" onNavigate={closeNavigation}>About Us</PublicLink>
+          </nav>
+          <div className="public-mobile-actions">
+            <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink>
+            <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink>
+            {user ? <PublicLink className="public-button ghost" href={dashboardPathFor(user)} onNavigate={closeNavigation}>Dashboard</PublicLink> : !isLoginPath ? <PublicLink className="public-button ghost" href="/login" onNavigate={closeNavigation}>Sign In</PublicLink> : null}
+            {user ? <button className="public-button ghost" type="button" onClick={() => { closeNavigation(); onLogout?.(); }}>Logout</button> : null}
           </div>
         </div>
-      ) : null}
+      </div>
     </header>
   );
 }
