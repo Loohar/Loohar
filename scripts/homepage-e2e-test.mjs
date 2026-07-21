@@ -62,6 +62,77 @@ async function assertNoHorizontalOverflow(page) {
   if (overflow > 1) throw new Error(`Homepage horizontally overflows by ${overflow}px.`);
 }
 
+async function assertHeroLayout(page, viewport) {
+  const metrics = await page.evaluate(() => {
+    const hero = document.querySelector(".marketing-hero");
+    const content = document.querySelector(".marketing-hero-content");
+    const copy = document.querySelector(".marketing-hero-copy");
+    const heading = document.querySelector("#homepage-hero-title");
+    const paragraph = document.querySelector(".marketing-hero-copy p:not(.marketing-eyebrow)");
+    const actions = Array.from(document.querySelectorAll(".marketing-hero-actions a"));
+    const badges = Array.from(document.querySelectorAll(".marketing-hero-badges span"));
+    if (!hero || !content || !copy || !heading || !paragraph) return null;
+
+    const heroRect = hero.getBoundingClientRect();
+    const contentRect = content.getBoundingClientRect();
+    const copyRect = copy.getBoundingClientRect();
+    const headingRect = heading.getBoundingClientRect();
+    const paragraphRect = paragraph.getBoundingClientRect();
+    const computedHeading = window.getComputedStyle(heading);
+    const computedParagraph = window.getComputedStyle(paragraph);
+    const computedContent = window.getComputedStyle(content);
+
+    return {
+      heroHeight: heroRect.height,
+      contentLeft: contentRect.left,
+      contentRight: contentRect.right,
+      copyLeft: copyRect.left,
+      copyWidth: copyRect.width,
+      headingLeft: headingRect.left,
+      paragraphLeft: paragraphRect.left,
+      headingFontSize: Number.parseFloat(computedHeading.fontSize),
+      paragraphFontSize: Number.parseFloat(computedParagraph.fontSize),
+      contentTextAlign: computedContent.textAlign,
+      actionRects: actions.map((action) => {
+        const rect = action.getBoundingClientRect();
+        return { top: rect.top, width: rect.width, height: rect.height };
+      }),
+      badgeRects: badges.map((badge) => {
+        const rect = badge.getBoundingClientRect();
+        return { top: rect.top, width: rect.width, height: rect.height };
+      })
+    };
+  });
+
+  if (!metrics) throw new Error("Homepage hero elements were not rendered.");
+  if (metrics.contentTextAlign !== "left") throw new Error("Hero content is not left-aligned.");
+  if (Math.abs(metrics.headingLeft - metrics.paragraphLeft) > 2) throw new Error("Hero heading and paragraph do not share a left edge.");
+  if (metrics.headingFontSize > 49) throw new Error(`Hero heading is too large at ${metrics.headingFontSize}px.`);
+  if (metrics.paragraphFontSize > 17.7) throw new Error(`Hero supporting text is too large at ${metrics.paragraphFontSize}px.`);
+  if (metrics.copyWidth > 622) throw new Error(`Hero copy is too wide at ${metrics.copyWidth}px.`);
+  if (metrics.actionRects.length < 2) throw new Error("Hero CTA buttons are missing.");
+  if (metrics.badgeRects.length < 3) throw new Error("Hero trust badges are missing.");
+  if (metrics.actionRects.some((rect) => rect.width < 44 || rect.height < 44)) throw new Error("Hero CTA buttons are below the minimum touch target.");
+  if (metrics.badgeRects.some((rect) => rect.width < 44 || rect.height < 36)) throw new Error("Hero trust badges are not visibly rendered.");
+  if (viewport.width >= 1200 && metrics.badgeRects.some((rect) => Math.abs(rect.top - metrics.badgeRects[0].top) > 4)) {
+    throw new Error("Hero trust badges should stay on one row on desktop and large laptop screens.");
+  }
+  if (viewport.width >= 1024 && (metrics.heroHeight < 560 || metrics.heroHeight > 680)) {
+    throw new Error(`Desktop hero height ${metrics.heroHeight}px is outside the approved range.`);
+  }
+  if (viewport.width >= 768 && Math.abs(metrics.actionRects[0].top - metrics.actionRects[1].top) > 4) {
+    throw new Error("Hero CTA buttons should remain inline on tablet and desktop.");
+  }
+
+  const minimumLeftInset = viewport.width <= 360 ? 18 : viewport.width < 768 ? 20 : viewport.width < 1024 ? 40 : 48;
+  if (metrics.copyLeft < minimumLeftInset || metrics.headingLeft < minimumLeftInset) {
+    throw new Error(`Hero copy is too close to the viewport edge: ${Math.min(metrics.copyLeft, metrics.headingLeft)}px.`);
+  }
+  if (metrics.contentRight > viewport.width + 1) {
+    throw new Error("Hero content extends beyond the viewport.");
+  }
+}
+
 async function installNetworkGuards(context, counters) {
   await context.route("**/*", async (route) => {
     const request = route.request();
@@ -97,6 +168,7 @@ async function runScenario(browserType, viewport, baseUrl) {
 
     const heroLoaded = await page.locator(".marketing-hero-image").evaluate((img) => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
     if (!heroLoaded) throw new Error("Hero image did not load.");
+    await assertHeroLayout(page, viewport);
 
     const pricingHref = await page.getByRole("link", { name: "View Pricing" }).first().getAttribute("href");
     const registerHref = await page.getByRole("link", { name: "Register Your Restaurant" }).first().getAttribute("href");

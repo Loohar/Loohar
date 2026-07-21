@@ -43,6 +43,10 @@ assertCheck(app.includes('"/about", "/security", "/support", "/privacy", "/terms
 assertCheck(app.indexOf("if (isPublicInfoRoute)") > -1 && app.indexOf("if (isSiteRoute)") > -1 && app.indexOf("if (isPublicInfoRoute)") < app.indexOf("if (isSiteRoute)"), "Public platform routes resolve before tenant restaurant catch-all routes");
 assertCheck(siteRouteBlock.includes("<PremiumRestaurantSite") && !siteRouteBlock.includes("<PublicLayout"), "Tenant restaurant websites are not wrapped in PublicLayout");
 assertCheck(styles.includes("--public-content-max-width") && styles.includes("--public-content-padding") && styles.includes(".public-container"), "Public layout tokens and container are defined");
+assertCheck(styles.includes("scrollbar-gutter: stable;"), "Root layout reserves a stable scrollbar gutter across short and tall public pages");
+assertCheck(styles.includes("*,\n*::before,\n*::after") && styles.includes("box-sizing: inherit;"), "Global box sizing reset includes pseudo elements");
+assertCheck(styles.includes("html,\nbody") && styles.includes("padding: 0;"), "HTML and body reset margin and padding");
+assertCheck(styles.includes("max-width: calc(var(--public-content-max-width) + (2 * var(--public-content-padding)));") && styles.includes("padding-inline: var(--public-content-padding);"), "Public container uses one padded max-width standard");
 assertCheck(styles.includes(".public-footer-grid") && styles.includes(".public-info-grid") && styles.includes(".public-auth-grid"), "Footer, info pages, and auth pages share responsive grid rules");
 assertCheck(styles.includes("@media (prefers-reduced-motion: reduce)") && styles.includes(".public-page-transition"), "Public layout respects reduced motion preferences");
 assertCheck(!styles.includes(".marketing-header") && !styles.includes(".marketing-footer"), "Old homepage-specific header/footer styles were removed");

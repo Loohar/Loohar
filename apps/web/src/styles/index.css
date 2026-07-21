@@ -2,12 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
+html {
   box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -409,7 +421,7 @@ textarea {
     --font-size-card-title: 1.12rem;
     --font-size-section-title: 2.35rem;
     --font-size-page-title: 2.85rem;
-    --font-size-hero: 4.65rem;
+    --font-size-hero: 3rem;
     --font-weight-regular: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 650;
@@ -469,8 +481,10 @@ textarea {
   }
 
   .public-container {
-    width: min(calc(100% - (2 * var(--public-content-padding))), var(--public-content-max-width));
+    width: 100%;
+    max-width: calc(var(--public-content-max-width) + (2 * var(--public-content-padding)));
     margin-inline: auto;
+    padding-inline: var(--public-content-padding);
   }
 
   .public-main {
@@ -1181,7 +1195,7 @@ textarea {
   .marketing-hero {
     position: relative;
     width: 100%;
-    min-height: 42rem;
+    min-height: 40rem;
     margin: 0;
     overflow: hidden;
     border-radius: 0;
@@ -1198,12 +1212,13 @@ textarea {
 
   .marketing-hero-image {
     object-fit: cover;
+    object-position: 60% center;
   }
 
   .marketing-hero-overlay {
     background:
-      linear-gradient(90deg, rgba(8, 13, 22, 0.94) 0%, rgba(8, 13, 22, 0.74) 38%, rgba(8, 13, 22, 0.12) 100%),
-      linear-gradient(180deg, rgba(8, 13, 22, 0.08) 0%, rgba(8, 13, 22, 0.42) 100%);
+      linear-gradient(90deg, rgba(2, 8, 20, 0.94) 0%, rgba(2, 8, 20, 0.82) 34%, rgba(2, 8, 20, 0.42) 60%, rgba(2, 8, 20, 0.12) 100%),
+      linear-gradient(180deg, rgba(2, 8, 20, 0.06) 0%, rgba(2, 8, 20, 0.28) 100%);
   }
 
   .marketing-hero-content {
@@ -1211,18 +1226,26 @@ textarea {
     z-index: 1;
     display: flex;
     min-height: inherit;
-    max-width: none;
+    max-width: 80rem;
+    margin-inline: auto;
     flex-direction: column;
     justify-content: center;
-    padding: 5rem 0 4rem;
+    padding: 4.5rem clamp(2rem, 4vw, 4.5rem) 3.75rem clamp(3rem, 7vw, 8.5rem);
     color: #ffffff;
+    text-align: left;
+  }
+
+  .marketing-hero-copy {
+    width: 100%;
+    max-width: 38.75rem;
   }
 
   .marketing-eyebrow {
     margin: 0;
     color: #10b981;
-    font-size: 0.86rem;
-    font-weight: var(--font-weight-semibold);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
@@ -1231,49 +1254,63 @@ textarea {
   }
 
   .marketing-hero h1 {
-    max-width: 42rem;
-    margin: 1rem 0 0;
+    max-width: 100%;
+    margin: 0.95rem 0 0;
     color: #ffffff;
     font-size: var(--font-size-hero);
-    font-weight: var(--font-weight-semibold);
-    line-height: 1.02;
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    letter-spacing: 0;
   }
 
   .marketing-hero p:not(.marketing-eyebrow) {
-    max-width: 43rem;
-    margin: 1.25rem 0 0;
+    max-width: 36rem;
+    margin: 1.15rem 0 0;
     color: rgba(255, 255, 255, 0.88);
-    font-size: 1.08rem;
+    font-size: 1.03rem;
     font-weight: var(--font-weight-medium);
-    line-height: 1.55;
+    line-height: 1.6;
   }
 
   .marketing-hero-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.85rem;
-    margin-top: 2rem;
+    gap: 0.75rem;
+    margin-top: 1.9rem;
+  }
+
+  .marketing-hero-actions .public-button {
+    min-height: 3.05rem;
+    padding-inline: 1.35rem;
+    font-size: 0.96rem;
   }
 
   .marketing-hero-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 3rem;
+    display: grid;
+    width: min(46rem, calc(100vw - 6rem));
+    grid-template-columns: max-content max-content minmax(20rem, 1fr);
+    align-items: center;
+    gap: 1rem;
+    margin-top: 2.65rem;
   }
 
   .marketing-hero-badges span {
-    display: inline-flex;
-    min-height: 2.75rem;
+    display: flex;
+    min-height: 3.25rem;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.625rem;
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.08);
-    padding: 0 0.9rem;
+    padding: 0 1.25rem;
     color: #ffffff;
-    font-size: 0.85rem;
-    font-weight: var(--font-weight-semibold);
+    font-size: 0.84rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .marketing-hero-badges span:nth-child(3) {
+    min-width: 20rem;
   }
 
   .marketing-feature-grid,
@@ -2027,6 +2064,28 @@ textarea {
       display: inline-grid;
     }
 
+    .marketing-hero {
+      min-height: 38rem;
+    }
+
+    .marketing-hero-content {
+      padding: 4.25rem clamp(2rem, 4vw, 3rem) 3.5rem clamp(2.5rem, 6vw, 4.5rem);
+    }
+
+    .marketing-hero-badges {
+      width: min(46rem, calc(100vw - 5rem));
+      grid-template-columns: max-content max-content minmax(18rem, 1fr);
+      gap: 0.75rem;
+    }
+
+    .marketing-hero-badges span:nth-child(3) {
+      min-width: 18rem;
+    }
+
+    .marketing-hero h1 {
+      font-size: 2.75rem;
+    }
+
     .marketing-feature-grid,
     .marketing-security-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2082,7 +2141,7 @@ textarea {
     }
 
     .marketing-hero {
-      min-height: 43rem;
+      min-height: 40rem;
       border-radius: 0;
     }
 
@@ -2092,15 +2151,20 @@ textarea {
     }
 
     .marketing-hero-content {
-      padding: 4rem 0 3rem;
+      padding: 3.5rem 1.25rem 2.8rem;
+    }
+
+    .marketing-eyebrow {
+      font-size: 0.76rem;
     }
 
     .marketing-hero h1 {
-      font-size: 3.35rem;
+      font-size: 2.45rem;
     }
 
     .marketing-hero p:not(.marketing-eyebrow) {
-      font-size: 1rem;
+      font-size: 0.96rem;
+      line-height: 1.55;
     }
 
     .marketing-hero-actions,
@@ -2109,12 +2173,32 @@ textarea {
     }
 
     .marketing-hero-badges {
+      width: 100%;
+      grid-template-columns: 1fr;
+      gap: 0.7rem;
       margin-top: 2rem;
     }
 
     .marketing-hero-badges span {
       width: 100%;
-      justify-content: center;
+      justify-content: flex-start;
+      font-size: 0.84rem;
+    }
+
+    .marketing-hero-badges span:nth-child(3) {
+      min-width: 0;
+    }
+
+    .marketing-hero-badges span svg {
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 360px) {
+      .marketing-hero-badges span {
+        gap: 0.45rem;
+        padding-inline: 0.75rem;
+        font-size: 0.8rem;
+      }
     }
 
     .marketing-feature-grid {

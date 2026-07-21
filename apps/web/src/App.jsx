@@ -2780,20 +2780,22 @@ function PublicHome({ user, onLogout }) {
   return (
     <PublicLayout user={user} onLogout={onLogout} className="marketing-page">
         <section className="marketing-hero" aria-labelledby="homepage-hero-title">
-          <img className="marketing-hero-image" src="/marketing/loohar-restaurant-hero.png" alt="Premium restaurant interior with dining room and order counter" width="1792" height="1024" fetchPriority="high" />
+          <img className="marketing-hero-image" src="/marketing/loohar-restaurant-hero.png" alt="Premium restaurant interior with dining room and order counter" width="1792" height="1024" fetchpriority="high" />
           <div className="marketing-hero-overlay" />
           <div className="public-container marketing-hero-content">
-            <p className="marketing-eyebrow">Restaurant direct ordering platform</p>
-            <h1 id="homepage-hero-title">Loohar</h1>
-            <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
-            <div className="marketing-hero-actions">
-              <PublicLink className="public-button primary large" href="/register"><LogIn size={18} />Get Started</PublicLink>
-              <PublicLink className="public-button inverse large" href="/pricing"><CreditCard size={18} />View Pricing</PublicLink>
-            </div>
-            <div className="marketing-hero-badges" aria-label="Loohar launch benefits">
-              <span><Shield size={16} />No setup fees</span>
-              <span><Clock size={16} />Launch in minutes</span>
-              <span><Users size={16} />Restaurant-owned customer relationships</span>
+            <div className="marketing-hero-copy">
+              <p className="marketing-eyebrow">Restaurant direct ordering platform</p>
+              <h1 id="homepage-hero-title">Loohar</h1>
+              <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
+              <div className="marketing-hero-actions">
+                <PublicLink className="public-button primary large" href="/register"><LogIn size={18} />Get Started</PublicLink>
+                <PublicLink className="public-button inverse large" href="/pricing"><CreditCard size={18} />View Pricing</PublicLink>
+              </div>
+              <div className="marketing-hero-badges" aria-label="Loohar launch benefits">
+                <span><Shield size={16} />No setup fees</span>
+                <span><Clock size={16} />Launch in minutes</span>
+                <span><Users size={16} />Restaurant-owned customer relationships</span>
+              </div>
             </div>
           </div>
         </section>
