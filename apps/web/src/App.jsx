@@ -1922,7 +1922,7 @@ function PublicNavbar({ compact = false, user, onLogout }) {
         </div>
         {!compact ? (
           <button ref={mobileTriggerRef} className="public-mobile-trigger" type="button" aria-label="Open navigation menu" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={openMobileNavigation}>
-            <MenuIcon size={20} aria-hidden="true" />
+            <MenuIcon size={22} aria-hidden="true" />
           </button>
         ) : null}
       </div>
