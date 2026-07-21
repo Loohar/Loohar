@@ -26,13 +26,16 @@ function sliceBetween(content, startNeedle, endNeedle) {
 const publicNavbar = sliceBetween(app, "function PublicNavbar(", "\nfunction PublicFooter");
 const appHeader = sliceBetween(app, "function AppHeader(", "\nfunction LoginStrip");
 const tenantSiteHeader = sliceBetween(app, '<header className="site-header premium">', "\n      </header>");
-const brandMark = sliceBetween(app, "function BrandMark(", "\nconst publicProductLinks");
-const publicBrandIndex = publicNavbar.indexOf("<LooharBrand compact={compact} />");
+const looharPlatformBrand = sliceBetween(app, "function LooharPlatformBrand(", "\nconst focusableSelector");
+const publicBrandIndex = publicNavbar.indexOf('<LooharPlatformBrand size="default" />');
 const publicMobileTriggerIndex = publicNavbar.indexOf('className="public-mobile-trigger"');
+const hasLegacyLogoSizeRule = /(^|\n)\s*(width:\s*2\.125rem|height:\s*2\.5rem|font-size:\s*1\.48rem);/.test(styles);
 
 assertCheck(packageJson.scripts?.["test:mobile-nav"] === "node scripts/mobile-nav-test.mjs", "Mobile nav test script is registered");
 assertCheck(app.includes("function focusableElements(") && app.includes("function trapFocus(") && app.includes("focusableSelector"), "Shared focus-trap helpers exist");
-assertCheck(brandMark.includes("<LooharBrand compact={compact} variant=\"authenticated\" />") && !brandMark.includes("app-brand-icon"), "Authenticated brand uses LooharBrand instead of the shield placeholder");
+assertCheck(appHeader.includes('<LooharPlatformBrand size="default" />') && appHeader.includes('<LooharPlatformBrand size="compact" />') && !appHeader.includes("app-brand-icon"), "Authenticated brand uses LooharPlatformBrand instead of the shield placeholder");
+assertCheck(looharPlatformBrand.includes('size = "default"') && looharPlatformBrand.includes('variant = "full"') && looharPlatformBrand.includes('theme = "light"'), "LooharPlatformBrand uses the explicit shared size, variant, and theme API");
+assertCheck(!app.includes("function BrandMark(") && !app.includes("function LooharBrand(") && !looharPlatformBrand.includes('width={compact ?'), "Platform brand does not use legacy BrandMark, LooharBrand, or compact boolean dimensions");
 assertCheck(publicBrandIndex >= 0 && publicMobileTriggerIndex > publicBrandIndex, "Public hamburger is rendered after the brand instead of inside it");
 assertCheck(publicNavbar.includes("mobileTriggerRef") && publicNavbar.includes("previousMobileFocusRef"), "Public drawer stores trigger focus for restoration");
 assertCheck(publicNavbar.includes('aria-label="Open navigation menu"') && publicNavbar.includes('aria-expanded={mobileOpen}') && publicNavbar.includes('aria-controls="public-mobile-menu"'), "Public hamburger has accessible label and state");
@@ -55,8 +58,9 @@ assertCheck(styles.includes("@media (max-width: 1180px)") && styles.includes("di
 assertCheck(/@media \(max-width: 1180px\)[\s\S]*\.public-navbar-grid\s*\{[\s\S]*grid-template-columns: minmax\(0, auto\) auto;[\s\S]*justify-content: space-between;/.test(styles), "Collapsed public navbar uses a true left-brand/right-menu layout");
 assertCheck(styles.includes("justify-self: end;") && styles.includes("margin-left: auto;"), "Public hamburger is pinned to the right edge");
 assertCheck(styles.includes("width: 2.75rem;") && styles.includes("height: 2.75rem;"), "Public hamburger preserves a 44px touch target");
-assertCheck(/@media \(max-width: 767px\)[\s\S]*\.loohar-brand\s*\{[\s\S]*font-size: 1\.2rem;/.test(styles), "Mobile Loohar wordmark is in the approved smaller range");
-assertCheck(/@media \(max-width: 767px\)[\s\S]*\.loohar-brand img\s*\{[\s\S]*width: 1\.62rem;[\s\S]*height: 1\.95rem;/.test(styles), "Mobile Loohar mark is in the approved smaller range");
+assertCheck(styles.includes("--loohar-platform-mark-compact: 25px;") && styles.includes("--loohar-platform-mark-default: 28px;") && styles.includes("--loohar-platform-wordmark-default: 20px;"), "Loohar platform brand sizes use shared design tokens");
+assertCheck(/\.loohar-platform-brand--default\s*\{[\s\S]*--loohar-platform-brand-mark-width: var\(--loohar-platform-mark-default\);[\s\S]*--loohar-platform-brand-mark-height: var\(--loohar-platform-mark-height-default\);[\s\S]*--loohar-platform-brand-wordmark-size: var\(--loohar-platform-wordmark-default\);/.test(styles), "Default Loohar platform brand is in the approved compact range");
+assertCheck(!hasLegacyLogoSizeRule, "Old oversized header logo dimensions were removed");
 
 if (failures.length) {
   console.error(`mobile-nav-test failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}.`);

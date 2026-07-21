@@ -57,7 +57,7 @@ assertCheck(featureRoutes.every((route) => app.includes(`href: "${route}"`)), "A
 assertCheck(publicHome.includes("marketing-feature-link-card") && publicHome.includes("href={href}") && publicHome.includes("marketing-card-learn-more"), "Homepage feature cards click through to matching detail pages");
 const featureGrid = sliceBetween(publicHome, '<section className="marketing-feature-grid"', "\n        </section>");
 assertCheck(!featureGrid.includes('href="/pricing"') && featureGrid.includes("href={href}"), "Homepage feature cards do not route directly to pricing");
-assertCheck(!publicHome.includes("<BrandMark") && app.includes("function LooharBrand("), "Homepage no longer uses the old shield brand mark");
+assertCheck(!publicHome.includes("<BrandMark") && app.includes("function LooharPlatformBrand("), "Homepage uses the shared LooharPlatformBrand instead of the old shield brand mark");
 assertCheck(!publicHome.includes("dangerouslySetInnerHTML"), "Homepage does not inject raw HTML");
 assertCheck(packageJson.scripts?.["test:homepage-ui"] === "node scripts/homepage-ui-test.mjs", "Homepage UI test script is registered");
 

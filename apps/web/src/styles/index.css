@@ -76,14 +76,6 @@ textarea {
     @apply flex min-w-0 shrink-0 items-center;
   }
 
-  .app-brand-icon {
-    @apply grid h-11 w-11 shrink-0 place-items-center rounded-md bg-ink text-white;
-  }
-
-  .app-brand-copy {
-    @apply min-w-0;
-  }
-
   .app-menu-toggle {
     @apply grid h-11 w-11 shrink-0 place-items-center rounded-md border border-line bg-white text-ink transition hover:border-mint hover:text-mint focus:outline-none focus:ring-2 focus:ring-mint/25 lg:hidden;
   }
@@ -435,6 +427,18 @@ textarea {
     --public-z-dropdown: 50;
     --public-z-overlay: 60;
     --public-z-drawer: 70;
+    --loohar-platform-mark-compact: 25px;
+    --loohar-platform-mark-height-compact: 30px;
+    --loohar-platform-mark-default: 28px;
+    --loohar-platform-mark-height-default: 34px;
+    --loohar-platform-mark-large: 34px;
+    --loohar-platform-mark-height-large: 41px;
+    --loohar-platform-wordmark-compact: 18px;
+    --loohar-platform-wordmark-default: 20px;
+    --loohar-platform-wordmark-large: 24px;
+    --loohar-platform-brand-gap: 8px;
+    --loohar-platform-wordmark-weight: 700;
+    --loohar-platform-brand-line-height: 1;
   }
 
   @media (max-width: 1023px) {
@@ -505,40 +509,60 @@ textarea {
     gap: 1rem;
   }
 
-  .loohar-brand {
+  .loohar-platform-brand {
     display: inline-flex;
-    min-height: 2.65rem;
+    --loohar-platform-brand-mark-width: var(--loohar-platform-mark-default);
+    --loohar-platform-brand-mark-height: var(--loohar-platform-mark-height-default);
+    --loohar-platform-brand-wordmark-size: var(--loohar-platform-wordmark-default);
+    min-height: var(--loohar-platform-brand-mark-height);
     align-items: center;
-    gap: 0.7rem;
+    gap: var(--loohar-platform-brand-gap);
     color: var(--public-text);
-    font-size: 1.48rem;
-    font-weight: 700;
-    line-height: 1;
+    font-size: var(--loohar-platform-brand-wordmark-size);
+    font-weight: var(--loohar-platform-wordmark-weight);
+    line-height: var(--loohar-platform-brand-line-height);
     text-decoration: none;
     white-space: nowrap;
   }
 
-  .loohar-brand img {
-    width: 2.125rem;
-    height: 2.5rem;
+  .loohar-platform-brand--compact {
+    --loohar-platform-brand-mark-width: var(--loohar-platform-mark-compact);
+    --loohar-platform-brand-mark-height: var(--loohar-platform-mark-height-compact);
+    --loohar-platform-brand-wordmark-size: var(--loohar-platform-wordmark-compact);
+  }
+
+  .loohar-platform-brand--default {
+    --loohar-platform-brand-mark-width: var(--loohar-platform-mark-default);
+    --loohar-platform-brand-mark-height: var(--loohar-platform-mark-height-default);
+    --loohar-platform-brand-wordmark-size: var(--loohar-platform-wordmark-default);
+  }
+
+  .loohar-platform-brand--large {
+    --loohar-platform-brand-mark-width: var(--loohar-platform-mark-large);
+    --loohar-platform-brand-mark-height: var(--loohar-platform-mark-height-large);
+    --loohar-platform-brand-wordmark-size: var(--loohar-platform-wordmark-large);
+  }
+
+  .loohar-platform-brand img {
+    width: var(--loohar-platform-brand-mark-width);
+    height: var(--loohar-platform-brand-mark-height);
     flex: 0 0 auto;
     object-fit: contain;
   }
 
-  .loohar-brand.compact {
-    font-size: 1.34rem;
+  .loohar-platform-brand--mark-only {
+    gap: 0;
   }
 
-  .loohar-brand.compact img {
-    width: 1.78rem;
-    height: 2.14rem;
+  .loohar-platform-brand--dark {
+    color: #ffffff;
   }
 
-  .loohar-brand.authenticated {
+  .loohar-platform-brand--light {
     color: #111827;
   }
 
-  .loohar-brand:focus-visible {
+  .loohar-platform-brand:focus-visible {
     border-radius: 10px;
     outline: 2px solid rgba(15, 143, 120, 0.45);
     outline-offset: 4px;
@@ -1990,7 +2014,7 @@ textarea {
       justify-content: space-between;
     }
 
-    .public-navbar-grid .loohar-brand {
+    .public-navbar-grid .loohar-platform-brand {
       min-width: 0;
     }
 
@@ -2018,24 +2042,10 @@ textarea {
       min-height: 4rem;
     }
 
-    .loohar-brand {
-      min-height: 2.25rem;
-      gap: 0.5rem;
-      font-size: 1.2rem;
-    }
-
-    .loohar-brand img {
-      width: 1.62rem;
-      height: 1.95rem;
-    }
-
-    .loohar-brand.compact {
-      font-size: 1.14rem;
-    }
-
-    .loohar-brand.compact img {
-      width: 1.5rem;
-      height: 1.82rem;
+    .loohar-platform-brand--large {
+      --loohar-platform-brand-mark-width: var(--loohar-platform-mark-default);
+      --loohar-platform-brand-mark-height: var(--loohar-platform-mark-height-default);
+      --loohar-platform-brand-wordmark-size: var(--loohar-platform-wordmark-default);
     }
 
     .public-button,

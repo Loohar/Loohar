@@ -25,11 +25,19 @@ function sliceBetween(content, startNeedle, endNeedle) {
 
 const publicNavbar = sliceBetween(app, "function PublicNavbar(", "\nfunction PublicFooter");
 const publicDropdown = sliceBetween(app, "function PublicDropdown(", "\nfunction PublicNavbar");
+const publicFooter = sliceBetween(app, "function PublicFooter(", "\nfunction PublicLayout");
 const publicLayout = sliceBetween(app, "function PublicLayout(", "\nfunction AppHeader");
+const looharPlatformBrand = sliceBetween(app, "function LooharPlatformBrand(", "\nconst focusableSelector");
+const hasLegacyLogoSizeRule = /(^|\n)\s*(width:\s*2\.125rem|height:\s*2\.5rem|font-size:\s*1\.48rem);/.test(styles);
 
 assertCheck(app.match(/function PublicNavbar\(/g)?.length === 1, "One global PublicNavbar component exists");
 assertCheck(app.match(/function PublicFooter\(/g)?.length === 1, "One global PublicFooter component exists");
-assertCheck(app.includes("function LooharBrand(") && app.includes("/marketing/loohar-mark.svg") && !sliceBetween(app, "function LooharBrand(", "\nfunction internalNavigationTarget").includes("BrandMark"), "Public brand uses the approved Loohar L mark, not the old shield mark");
+assertCheck(app.includes("function LooharPlatformBrand(") && app.includes("/marketing/loohar-mark.svg") && !app.includes("function LooharBrand("), "Public brand uses the approved LooharPlatformBrand component and L mark");
+assertCheck(looharPlatformBrand.includes('size = "default"') && looharPlatformBrand.includes('variant = "full"') && looharPlatformBrand.includes('theme = "light"') && looharPlatformBrand.includes('href = "/"'), "LooharPlatformBrand exposes one shared size, variant, theme, and href API");
+assertCheck(publicNavbar.includes('<LooharPlatformBrand size="default" />'), "Public navbar uses the shared default platform brand");
+assertCheck(publicFooter.includes('<LooharPlatformBrand size="compact" />'), "Public footer uses the shared compact Loohar platform brand");
+assertCheck(styles.includes("--loohar-platform-mark-compact: 25px;") && styles.includes("--loohar-platform-mark-default: 28px;") && styles.includes("--loohar-platform-wordmark-compact: 18px;") && styles.includes("--loohar-platform-wordmark-default: 20px;"), "Logo dimensions are controlled by shared platform-brand tokens");
+assertCheck(!app.includes("function BrandMark(") && !looharPlatformBrand.includes('width={compact ?') && !hasLegacyLogoSizeRule, "Legacy BrandMark and arbitrary compact/oversized logo dimensions were removed");
 assertCheck(publicNavbar.includes("publicProductLinks") && publicNavbar.includes("publicResourceLinks"), "Navbar uses centralized Product and Resources link groups");
 assertCheck(publicNavbar.includes("PublicDropdown") && publicDropdown.includes("ChevronDown"), "Desktop dropdowns use a standard chevron affordance");
 assertCheck(publicDropdown.includes('aria-haspopup="menu"') && publicDropdown.includes('role="menu"') && publicDropdown.includes('role="menuitem"'), "Dropdowns expose accessible menu semantics");

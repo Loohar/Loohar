@@ -25,6 +25,7 @@ function sliceBetween(content, startNeedle, endNeedle) {
 const authPage = sliceBetween(app, "function AuthPage(", "\nfunction ForgotPasswordPage");
 const forgotPasswordPage = sliceBetween(app, "function ForgotPasswordPage(", "\nfunction ResetPasswordPage");
 const resetPasswordPage = sliceBetween(app, "function ResetPasswordPage(", "\nfunction AdminCreateBusinessPage");
+const publicNavbar = sliceBetween(app, "function PublicNavbar(", "\nfunction PublicFooter");
 
 assertCheck(authPage.includes("<PublicLayout compactNav") && authPage.includes('className="public-auth-page"'), "Login pages use compact public layout");
 assertCheck(forgotPasswordPage.includes("<PublicLayout compactNav") && resetPasswordPage.includes("<PublicLayout compactNav"), "Password recovery pages use compact public layout");
@@ -40,6 +41,7 @@ assertCheck(authPage.includes("/api/auth/login") && authPage.includes("Authoriza
 assertCheck(authPage.includes("/api/auth/demo-login") && authPage.includes("body: { role:"), "Development demo login uses backend role-based demo endpoint");
 assertCheck(!authPage.includes("disabled={loading || !apiOnline}") && authPage.includes("disabled={loading} onClick={submitDemoLogin}"), "Development demo login is routed through the backend and not disabled by health polling");
 assertCheck(authPage.includes("clearLoginFields") && authPage.includes("pageshow") && authPage.includes("setPassword(\"\")"), "Login page clears stale password autofill state on mount/pageshow");
+assertCheck(app.includes("function LooharPlatformBrand(") && publicNavbar.includes('<LooharPlatformBrand size="default" />'), "Public auth pages receive the shared default LooharPlatformBrand through PublicLayout");
 assertCheck(!authPage.includes("BrandMark") && !forgotPasswordPage.includes("BrandMark") && !resetPasswordPage.includes("BrandMark"), "Public auth pages do not render the old shield brand mark");
 assertCheck(!/(localStorage|sessionStorage)\.(getItem|setItem|removeItem)\(\s*["'][^"']*password/i.test(app), "Frontend does not store passwords in browser storage");
 assertCheck(packageJson.scripts?.["test:login-ui"] === "node scripts/login-ui-test.mjs", "Login UI test script is registered");

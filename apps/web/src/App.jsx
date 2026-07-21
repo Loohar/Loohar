@@ -1637,14 +1637,6 @@ function PremiumRestaurantSite({ apiOnline }) {
   );
 }
 
-function BrandMark({ compact = false } = {}) {
-  return (
-    <div className="app-brand">
-      <LooharBrand compact={compact} variant="authenticated" />
-    </div>
-  );
-}
-
 const publicProductLinks = [
   { label: "Restaurant websites", detail: "Branded direct-ordering storefronts.", href: "/features/restaurant-website" },
   { label: "Direct ordering", detail: "Pickup and online ordering without marketplace dependency.", href: "/features/direct-online-ordering" },
@@ -1659,12 +1651,40 @@ const publicResourceLinks = [
   { label: "Terms and privacy", detail: "Review platform policies.", href: "/terms" }
 ];
 
-function LooharBrand({ compact = false, variant = "public", tone = "light" }) {
+const looharPlatformBrandDimensions = {
+  compact: { width: 25, height: 30 },
+  default: { width: 28, height: 34 },
+  large: { width: 34, height: 41 }
+};
+
+const looharPlatformBrandSizeClasses = {
+  compact: "loohar-platform-brand--compact",
+  default: "loohar-platform-brand--default",
+  large: "loohar-platform-brand--large"
+};
+
+const looharPlatformBrandVariantClasses = {
+  full: "loohar-platform-brand--full",
+  "mark-only": "loohar-platform-brand--mark-only"
+};
+
+const looharPlatformBrandThemeClasses = {
+  light: "loohar-platform-brand--light",
+  dark: "loohar-platform-brand--dark"
+};
+
+function LooharPlatformBrand({ size = "default", variant = "full", theme = "light", href = "/", className = "" }) {
+  const safeSize = looharPlatformBrandDimensions[size] ? size : "default";
+  const dimensions = looharPlatformBrandDimensions[safeSize];
+  const safeVariant = looharPlatformBrandVariantClasses[variant] ? variant : "full";
+  const safeTheme = looharPlatformBrandThemeClasses[theme] ? theme : "light";
+  const showWordmark = safeVariant !== "mark-only";
+  const Component = href ? "a" : "span";
   return (
-    <a className={`loohar-brand ${compact ? "compact" : "full"} ${variant} ${tone}`} href="/" aria-label="Loohar home">
-      <img src="/marketing/loohar-mark.svg" alt="" width={compact ? "28" : "34"} height={compact ? "34" : "40"} />
-      <span>{appName}</span>
-    </a>
+    <Component className={`loohar-platform-brand ${looharPlatformBrandSizeClasses[safeSize]} ${looharPlatformBrandVariantClasses[safeVariant]} ${looharPlatformBrandThemeClasses[safeTheme]} ${className}`.trim()} href={href || undefined} aria-label={href ? "Loohar home" : "Loohar"}>
+      <img src="/marketing/loohar-mark.svg" alt="" width={dimensions.width} height={dimensions.height} />
+      {showWordmark ? <span>{appName}</span> : null}
+    </Component>
   );
 }
 
@@ -1904,7 +1924,7 @@ function PublicNavbar({ compact = false, user, onLogout }) {
   return (
     <header className={`public-navbar ${compact ? "compact" : ""} ${scrolled ? "scrolled" : ""}`}>
       <div className="public-container public-navbar-grid" ref={navRef}>
-        <LooharBrand compact={compact} />
+        <LooharPlatformBrand size="default" />
         {!compact ? (
           <nav className="public-nav-center" aria-label="Primary public navigation">
             <PublicDropdown id="product" label="Product" links={publicProductLinks} openDropdown={openDropdown} setOpenDropdown={setOpenDropdown} onNavigate={closeNavigation} active={productActive} />
@@ -1931,7 +1951,7 @@ function PublicNavbar({ compact = false, user, onLogout }) {
           <button className="public-mobile-backdrop" type="button" tabIndex={mobileOpen ? 0 : -1} aria-label="Close menu" onClick={closeNavigation} />
           <div ref={mobileDrawerRef} className="public-mobile-drawer" id="public-mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile public navigation" onKeyDown={handleMobileDrawerKeyDown}>
             <div className="public-mobile-head">
-              <LooharBrand compact />
+              <LooharPlatformBrand size="compact" />
               <button ref={mobileCloseRef} className="public-mobile-close" type="button" onClick={closeNavigation} aria-label="Close menu"><X size={20} /></button>
             </div>
             <nav className="public-mobile-nav-list" aria-label="Mobile public navigation links">
@@ -1981,7 +2001,7 @@ function PublicFooter({ compact = false }) {
     <footer className="public-footer">
       <div className="public-container public-footer-grid">
         <div className="public-footer-brand">
-          <LooharBrand />
+          <LooharPlatformBrand size="compact" />
           <p>Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.</p>
         </div>
         <nav aria-label="Footer product links">
@@ -2069,7 +2089,9 @@ function AppHeader({ navItems = [] }) {
   return (
     <header className="app-header">
       <div className="app-header-inner">
-        <BrandMark compact />
+        <div className="app-brand">
+          <LooharPlatformBrand size="default" />
+        </div>
         <button ref={menuTriggerRef} className="app-menu-toggle" type="button" aria-label="Open dashboard navigation" aria-expanded={menuOpen} aria-controls="app-mobile-menu" onClick={openMenu}>
           <MenuIcon size={21} aria-hidden="true" />
         </button>
@@ -2085,7 +2107,9 @@ function AppHeader({ navItems = [] }) {
         <button className="app-mobile-backdrop" type="button" tabIndex={menuOpen ? 0 : -1} aria-label="Close dashboard navigation" onClick={closeMenu} />
         <div ref={menuDrawerRef} className="app-mobile-drawer" id="app-mobile-menu" role="dialog" aria-modal="true" aria-label="Dashboard navigation" onKeyDown={handleMenuDrawerKeyDown}>
           <div className="app-mobile-head">
-            <BrandMark compact />
+            <div className="app-brand">
+              <LooharPlatformBrand size="compact" />
+            </div>
             <button ref={menuCloseRef} className="app-mobile-close" type="button" aria-label="Close dashboard navigation" onClick={closeMenu}><X size={20} /></button>
           </div>
           <nav className="app-mobile-nav" aria-label="Authorized dashboard links">

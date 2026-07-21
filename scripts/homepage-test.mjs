@@ -56,7 +56,7 @@ assertCheck(publicHome.includes("Restaurant-owned ordering") && publicHome.inclu
 assertCheck(!fakeMetricPatterns.some((pattern) => pattern.test(publicHome)), "Homepage does not include fake scale metrics or unsupported 24/7 support claims");
 assertCheck(!publicHome.includes("images.unsplash.com") && !app.includes("images.unsplash.com"), "Homepage and fallback images do not depend on external Unsplash hotlinks");
 assertCheck(publicHome.includes("/marketing/loohar-restaurant-hero.png") && publicHome.includes('width="1792"') && publicHome.includes('height="1024"'), "Hero image is a committed asset with explicit dimensions");
-assertCheck(app.includes("function LooharBrand(") && app.includes("/marketing/loohar-mark.svg"), "Public layout uses the provided Loohar logo asset");
+assertCheck(app.includes("function LooharPlatformBrand(") && app.includes("/marketing/loohar-mark.svg"), "Public layout uses the provided Loohar platform logo asset");
 assertCheck(existsSync(heroPath) && statSync(heroPath).size > 100_000, "Committed hero image asset exists");
 assertCheck(existsSync(logoPath) && readFileSync(logoPath, "utf8").includes("<svg"), "Committed Loohar logo SVG exists");
 assertCheck(homeSeo.includes("Loohar | Restaurant Websites, Direct Ordering and Delivery SaaS") && homeSeo.includes("https://loohar.com/"), "Runtime homepage SEO sets title and canonical URL");
