@@ -1559,8 +1559,10 @@ function PremiumRestaurantSite({ apiOnline }) {
             <span>{website.tagline || website.cuisineType || "Restaurant-owned ordering"}</span>
           </div>
         </a>
-        <button className="site-menu-toggle" onClick={() => setMenuOpen((open) => !open)}>Menu</button>
-        <nav className={`site-navs ${menuOpen ? "open" : ""}`}>
+        <button className="site-menu-toggle" type="button" aria-label="Toggle restaurant navigation" aria-expanded={menuOpen} aria-controls="tenant-site-navigation" onClick={() => setMenuOpen((open) => !open)}>
+          <MenuIcon size={18} aria-hidden="true" />
+        </button>
+        <nav id="tenant-site-navigation" className={`site-navs ${menuOpen ? "open" : ""}`}>
           {navLink("home", "Home")}
           {navLink("menu", "Menu")}
           {navLink("order", "Order Online")}
@@ -1635,13 +1637,10 @@ function PremiumRestaurantSite({ apiOnline }) {
   );
 }
 
-function BrandMark() {
+function BrandMark({ compact = false } = {}) {
   return (
     <div className="app-brand">
-      <div className="app-brand-icon"><Shield size={22} /></div>
-      <div className="app-brand-copy">
-        <strong className="block text-xl font-black text-ink">{appName}</strong>
-      </div>
+      <LooharBrand compact={compact} variant="authenticated" />
     </div>
   );
 }
@@ -1660,13 +1659,49 @@ const publicResourceLinks = [
   { label: "Terms and privacy", detail: "Review platform policies.", href: "/terms" }
 ];
 
-function LooharBrand({ compact = false }) {
+function LooharBrand({ compact = false, variant = "public", tone = "light" }) {
   return (
-    <a className={`loohar-brand ${compact ? "compact" : ""}`} href="/" aria-label="Loohar home">
-      <img src="/marketing/loohar-mark.svg" alt="" width="30" height="36" />
+    <a className={`loohar-brand ${compact ? "compact" : "full"} ${variant} ${tone}`} href="/" aria-label="Loohar home">
+      <img src="/marketing/loohar-mark.svg" alt="" width={compact ? "28" : "34"} height={compact ? "34" : "40"} />
       <span>{appName}</span>
     </a>
   );
+}
+
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
+
+function focusableElements(container) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll(focusableSelector)).filter((element) => {
+    const style = window.getComputedStyle(element);
+    return style.visibility !== "hidden" && style.display !== "none";
+  });
+}
+
+function trapFocus(event, container, fallback) {
+  if (event.key !== "Tab") return;
+  const items = focusableElements(container);
+  if (!items.length) {
+    event.preventDefault();
+    fallback?.focus();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 function internalNavigationTarget(href = "") {
@@ -1803,7 +1838,10 @@ function PublicNavbar({ compact = false, user, onLogout }) {
   const [mobileGroup, setMobileGroup] = useState("");
   const [scrolled, setScrolled] = useState(false);
   const navRef = useRef(null);
+  const mobileTriggerRef = useRef(null);
+  const mobileDrawerRef = useRef(null);
   const mobileCloseRef = useRef(null);
+  const previousMobileFocusRef = useRef(null);
   const currentPath = window.location.pathname;
   const pricingActive = currentPath.startsWith("/pricing");
   const aboutActive = currentPath.startsWith("/about");
@@ -1814,6 +1852,16 @@ function PublicNavbar({ compact = false, user, onLogout }) {
     setOpenDropdown("");
     setMobileOpen(false);
     setMobileGroup("");
+  }
+
+  function openMobileNavigation() {
+    previousMobileFocusRef.current = document.activeElement;
+    setOpenDropdown("");
+    setMobileOpen(true);
+  }
+
+  function handleMobileDrawerKeyDown(event) {
+    trapFocus(event, mobileDrawerRef.current, mobileCloseRef.current);
   }
 
   useEffect(() => {
@@ -1848,6 +1896,8 @@ function PublicNavbar({ compact = false, user, onLogout }) {
     window.setTimeout(() => mobileCloseRef.current?.focus(), 0);
     return () => {
       document.body.style.overflow = previousOverflow;
+      const restoreTarget = previousMobileFocusRef.current?.isConnected ? previousMobileFocusRef.current : mobileTriggerRef.current;
+      window.setTimeout(() => restoreTarget?.focus(), 0);
     };
   }, [mobileOpen]);
 
@@ -1871,43 +1921,46 @@ function PublicNavbar({ compact = false, user, onLogout }) {
           {user && !compact ? <button className="public-button ghost" type="button" onClick={onLogout}>Logout</button> : null}
         </div>
         {!compact ? (
-          <button className="public-mobile-trigger" type="button" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={() => setMobileOpen(true)}>
-            <MenuIcon size={20} aria-hidden="true" />
-            <span>Menu</span>
+          <button ref={mobileTriggerRef} className="public-mobile-trigger" type="button" aria-label="Open navigation menu" aria-expanded={mobileOpen} aria-controls="public-mobile-menu" onClick={openMobileNavigation}>
+            <MenuIcon size={22} aria-hidden="true" />
           </button>
         ) : null}
       </div>
       {!compact ? (
         <div className={`public-mobile-layer ${mobileOpen ? "open" : ""}`} aria-hidden={!mobileOpen}>
           <button className="public-mobile-backdrop" type="button" tabIndex={mobileOpen ? 0 : -1} aria-label="Close menu" onClick={closeNavigation} />
-          <nav className="public-mobile-drawer" id="public-mobile-menu" aria-label="Mobile public navigation">
+          <div ref={mobileDrawerRef} className="public-mobile-drawer" id="public-mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile public navigation" onKeyDown={handleMobileDrawerKeyDown}>
             <div className="public-mobile-head">
               <LooharBrand compact />
               <button ref={mobileCloseRef} className="public-mobile-close" type="button" onClick={closeNavigation} aria-label="Close menu"><X size={20} /></button>
             </div>
-            {[
-              ["product", "Product", publicProductLinks],
-              ["resources", "Resources", publicResourceLinks]
-            ].map(([groupId, groupLabel, links]) => (
-              <div className={`public-mobile-group ${mobileGroup === groupId ? "open" : ""}`} key={groupId}>
-                <button type="button" onClick={() => setMobileGroup((open) => open === groupId ? "" : groupId)} aria-expanded={mobileGroup === groupId}>
-                  <span>{groupLabel}</span>
-                  <ChevronDown size={16} aria-hidden="true" />
-                </button>
-                <div>
-                  {links.map((link) => <PublicLink href={link.href} key={link.href} onNavigate={closeNavigation}>{link.label}</PublicLink>)}
+            <nav className="public-mobile-nav-list" aria-label="Mobile public navigation links">
+              <PublicLink href="/" onNavigate={closeNavigation}>Home</PublicLink>
+              {[
+                ["product", "Product", publicProductLinks],
+                ["resources", "Resources", publicResourceLinks]
+              ].map(([groupId, groupLabel, links]) => (
+                <div className={`public-mobile-group ${mobileGroup === groupId ? "open" : ""}`} key={groupId}>
+                  <button type="button" onClick={() => setMobileGroup((open) => open === groupId ? "" : groupId)} aria-expanded={mobileGroup === groupId}>
+                    <span>{groupLabel}</span>
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </button>
+                  <div>
+                    {links.map((link) => <PublicLink href={link.href} key={link.href} onNavigate={closeNavigation}>{link.label}</PublicLink>)}
+                  </div>
                 </div>
-              </div>
-            ))}
-            <PublicLink href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
-            <PublicLink href="/pricing" onNavigate={closeNavigation}>Pricing</PublicLink>
-            <PublicLink href="/about" onNavigate={closeNavigation}>About Us</PublicLink>
+              ))}
+              <PublicLink href="/#features" onNavigate={closeNavigation}>Features</PublicLink>
+              <PublicLink href="/pricing" onNavigate={closeNavigation}>Pricing</PublicLink>
+              <PublicLink href="/about" onNavigate={closeNavigation}>About Us</PublicLink>
+            </nav>
             <div className="public-mobile-actions">
               <PublicLink className="public-button secondary" href="/pricing" onNavigate={closeNavigation}>View Pricing</PublicLink>
               <PublicLink className="public-button primary" href="/register" onNavigate={closeNavigation}>Register Your Restaurant</PublicLink>
-              <PublicLink className="public-button ghost" href="/login" onNavigate={closeNavigation}>Sign In</PublicLink>
+              {user ? <PublicLink className="public-button ghost" href={dashboardPathFor(user)} onNavigate={closeNavigation}>Dashboard</PublicLink> : <PublicLink className="public-button ghost" href="/login" onNavigate={closeNavigation}>Sign In</PublicLink>}
+              {user ? <button className="public-button ghost" type="button" onClick={() => { closeNavigation(); onLogout?.(); }}>Logout</button> : null}
             </div>
-          </nav>
+          </div>
         </div>
       ) : null}
     </header>
@@ -1971,20 +2024,78 @@ function PublicLayout({ children, compactNav = false, user, onLogout, className 
 
 function AppHeader({ navItems = [] }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuTriggerRef = useRef(null);
+  const menuCloseRef = useRef(null);
+  const menuDrawerRef = useRef(null);
+  const previousMenuFocusRef = useRef(null);
+
+  function openMenu() {
+    previousMenuFocusRef.current = document.activeElement;
+    setMenuOpen(true);
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  function handleMenuDrawerKeyDown(event) {
+    trapFocus(event, menuDrawerRef.current, menuCloseRef.current);
+  }
+
+  useEffect(() => {
+    function handleEscape(event) {
+      if (event.key === "Escape") closeMenu();
+    }
+    window.addEventListener("loohar:navigate", closeMenu);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("loohar:navigate", closeMenu);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => menuCloseRef.current?.focus(), 0);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      const restoreTarget = previousMenuFocusRef.current?.isConnected ? previousMenuFocusRef.current : menuTriggerRef.current;
+      window.setTimeout(() => restoreTarget?.focus(), 0);
+    };
+  }, [menuOpen]);
+
   return (
     <header className="app-header">
       <div className="app-header-inner">
         <BrandMark compact />
-        <button className="app-menu-toggle" type="button" onClick={() => setMenuOpen((open) => !open)}>
-          <MenuIcon size={18} />Menu
+        <button ref={menuTriggerRef} className="app-menu-toggle" type="button" aria-label="Open dashboard navigation" aria-expanded={menuOpen} aria-controls="app-mobile-menu" onClick={openMenu}>
+          <MenuIcon size={21} aria-hidden="true" />
         </button>
-        <nav className={`app-nav ${menuOpen ? "open" : ""}`}>
+        <nav className="app-nav" aria-label="Dashboard navigation">
           {navItems.map(({ href, label, icon: Icon, active, target, rel }) => (
             <a className={`nav-tab ${active ? "active" : ""}`} href={href} target={target} rel={rel} key={`${label}-${href}`}>
               {Icon ? <Icon size={17} /> : null}{label}
             </a>
           ))}
         </nav>
+      </div>
+      <div className={`app-mobile-layer ${menuOpen ? "open" : ""}`} aria-hidden={!menuOpen}>
+        <button className="app-mobile-backdrop" type="button" tabIndex={menuOpen ? 0 : -1} aria-label="Close dashboard navigation" onClick={closeMenu} />
+        <div ref={menuDrawerRef} className="app-mobile-drawer" id="app-mobile-menu" role="dialog" aria-modal="true" aria-label="Dashboard navigation" onKeyDown={handleMenuDrawerKeyDown}>
+          <div className="app-mobile-head">
+            <BrandMark compact />
+            <button ref={menuCloseRef} className="app-mobile-close" type="button" aria-label="Close dashboard navigation" onClick={closeMenu}><X size={20} /></button>
+          </div>
+          <nav className="app-mobile-nav" aria-label="Authorized dashboard links">
+            {navItems.map(({ href, label, icon: Icon, active, target, rel }) => (
+              <a className={`nav-tab ${active ? "active" : ""}`} href={href} target={target} rel={rel} key={`mobile-${label}-${href}`} onClick={closeMenu}>
+                {Icon ? <Icon size={17} /> : null}{label}
+              </a>
+            ))}
+          </nav>
+        </div>
       </div>
     </header>
   );

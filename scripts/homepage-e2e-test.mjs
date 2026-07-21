@@ -5,7 +5,8 @@ const browsers = ["chromium", "webkit"];
 const viewports = [
   { name: "desktop", width: 1440, height: 950 },
   { name: "ipad", width: 820, height: 1180, hasTouch: true },
-  { name: "iphone", width: 390, height: 844, isMobile: true, hasTouch: true }
+  { name: "iphone", width: 390, height: 844, isMobile: true, hasTouch: true },
+  { name: "narrow-phone", width: 320, height: 568, isMobile: true, hasTouch: true }
 ];
 let serverProcess;
 
