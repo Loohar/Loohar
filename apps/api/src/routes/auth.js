@@ -174,15 +174,26 @@ function demoEmailForRole(role) {
 }
 
 function demoFallbackEmailsForRole(role) {
+  const devOwnerEmails = process.env.ENABLE_DEV_OWNER_FIXTURE === "true"
+    ? [normalizeEmail(process.env.DEV_OWNER_EMAIL || "development@loohar.com")]
+    : [];
   return {
-    TENANT_OWNER: ["rowner@loohar.com", "owner@northsidetacos.local"],
-    RESTAURANT_ADMIN: ["rowner@loohar.com", "archie+admin@gmail.com"],
-    RESTAURANT_OWNER: ["owner@northsidetacos.local", "rowner@loohar.com"],
+    TENANT_OWNER: [...devOwnerEmails, "rowner@loohar.com", "owner@northsidetacos.local"],
+    RESTAURANT_ADMIN: [...devOwnerEmails, "rowner@loohar.com", "archie+admin@gmail.com"],
+    RESTAURANT_OWNER: [...devOwnerEmails, "owner@northsidetacos.local", "rowner@loohar.com"],
     RESTAURANT_MANAGER: ["manager@demobistro.local"],
     CASHIER: ["cashier@demobistro.local"],
     KITCHEN_STAFF: ["kitchen@loohar.com"],
     DRIVER: ["driver@loohar.com", "driver@northsidetacos.local"]
   }[role] || [];
+}
+
+function demoLoginEmailForRequest({ role, mode }) {
+  const fixtureRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER"];
+  if (process.env.ENABLE_DEV_OWNER_FIXTURE === "true" && fixtureRoles.includes(role)) {
+    return null;
+  }
+  return demoEmailForRole(role) || demoEmailForMode(mode);
 }
 
 function userEmailWhere(email) {
@@ -272,7 +283,7 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
 router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, res, next) => {
   try {
     if (!demoLoginEnabled()) return res.status(404).json({ error: "Demo login is disabled." });
-    const email = demoEmailForRole(req.body.role) || demoEmailForMode(req.body.mode);
+    const email = demoLoginEmailForRequest(req.body);
     const user = await findDemoUser({ email, role: req.body.role });
     if (!demoUserAvailable(user)) return res.status(404).json({ error: "Seeded development account is unavailable." });
     const updatedUser = await prisma.user.update({

@@ -28,6 +28,7 @@ function sliceBetween(content, startNeedle, endNeedle) {
 const publicNavbar = sliceBetween(app, "function PublicNavbar(", "\nfunction PublicFooter");
 const publicDropdown = sliceBetween(app, "function PublicDropdown(", "\nfunction PublicNavbar");
 const appHeader = sliceBetween(app, "function AppHeader(", "\nfunction LoginStrip");
+const restaurantAppShell = sliceBetween(app, "function RestaurantAppShell(", "\nfunction LoginStrip");
 const faviconDir = join(root, "apps/web/public/favicon");
 const faviconAssets = [
   "favicon.ico",
@@ -53,8 +54,12 @@ assertCheck(publicDropdown.includes('aria-haspopup="menu"') && publicDropdown.in
 assertCheck(publicDropdown.includes("ArrowDown") && publicDropdown.includes("ArrowUp") && publicDropdown.includes("Escape"), "Desktop dropdowns support keyboard navigation");
 assertCheck(publicNavbar.includes('aria-label="Open navigation menu"') && publicNavbar.includes('aria-modal="true"') && publicNavbar.includes("trapFocus"), "Public drawer has accessible controls and focus trap");
 assertCheck(appHeader.includes('aria-label="Open dashboard navigation"') && appHeader.includes('aria-modal="true"') && appHeader.includes("trapFocus"), "Authenticated drawer has accessible controls and focus trap");
+assertCheck(restaurantAppShell.includes("<aside") && restaurantAppShell.includes("<header") && restaurantAppShell.includes("<main"), "Restaurant shell uses semantic aside, header, and main regions");
+assertCheck(restaurantAppShell.includes('aria-label="Open restaurant navigation"') && restaurantAppShell.includes('aria-modal="true"') && restaurantAppShell.includes("trapFocus"), "Restaurant drawer has accessible controls and focus trap");
+assertCheck(restaurantAppShell.includes('aria-label="Restaurant operations navigation"') && restaurantAppShell.includes('aria-current={active ? "page" : undefined}'), "Restaurant sidebar exposes active route semantics");
+assertCheck(restaurantAppShell.includes("previousFocusRef") && restaurantAppShell.includes('document.body.style.overflow = "hidden"'), "Restaurant drawer restores focus and locks background scroll");
 assertCheck(styles.includes(":focus-visible") && styles.includes("focus:ring-2") && styles.includes("box-shadow: 0 0 0 3px"), "Navigation controls retain visible focus indicators");
-assertCheck(styles.includes("@media (prefers-reduced-motion: reduce)") && styles.includes(".public-mobile-drawer") && styles.includes(".app-mobile-drawer"), "Reduced-motion mode disables drawer transitions");
+assertCheck(styles.includes("@media (prefers-reduced-motion: reduce)") && styles.includes(".public-mobile-drawer") && styles.includes(".app-mobile-drawer") && styles.includes(".restaurant-shell-mobile-drawer"), "Reduced-motion mode disables drawer transitions");
 assertCheck(styles.includes("scroll-margin-top") && styles.includes("--public-nav-height"), "Sticky navbar leaves room for anchored sections");
 assertCheck(!/letter-spacing\s*:\s*-[^;]+/.test(styles), "Navigation CSS does not use negative letter spacing");
 assertCheck(!/font-size\s*:\s*clamp\([^;]*(vw|vh)/i.test(styles), "Navigation CSS does not scale type directly with viewport width");

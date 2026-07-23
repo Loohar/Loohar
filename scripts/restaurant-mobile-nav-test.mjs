@@ -9,19 +9,21 @@ function assert(condition, message) {
   }
 }
 
-const appHeaderMatch = appSource.match(/function AppHeader[\s\S]*?function LoginStrip/);
-assert(appHeaderMatch, "AppHeader component was not found.");
+const shellMatch = appSource.match(/function RestaurantAppShell[\s\S]*?function LoginStrip/);
+assert(shellMatch, "RestaurantAppShell component was not found.");
 
-const appHeaderSource = appHeaderMatch[0];
+const shellSource = shellMatch[0];
 
-assert(appHeaderSource.includes('className="app-menu-toggle"'), "Mobile/tablet menu trigger is missing.");
-assert(appHeaderSource.includes('aria-label="Open dashboard navigation"'), "Mobile menu trigger needs an accessible label.");
-assert(appHeaderSource.includes("<MenuIcon"), "Hamburger icon should only exist as the mobile/tablet drawer trigger.");
-assert(appHeaderSource.includes('className="app-mobile-drawer"'), "Responsive dashboard drawer is missing.");
-assert(appHeaderSource.includes('aria-modal="true"'), "Mobile drawer should be modal for assistive technology.");
-assert(appHeaderSource.includes("navItems.map"), "Mobile drawer should reuse the role-aware navItems list.");
-assert(cssSource.includes(".app-menu-toggle") && cssSource.includes("lg:hidden"), "Mobile menu trigger must hide on desktop.");
-assert(cssSource.includes(".app-nav") && cssSource.includes("lg:flex"), "Desktop nav must appear only at the desktop breakpoint.");
-assert(cssSource.includes(".app-mobile-layer.open"), "Mobile drawer open state is missing.");
+assert(shellSource.includes('className="restaurant-shell-drawer-trigger"'), "Restaurant mobile/tablet menu trigger is missing.");
+assert(shellSource.includes('aria-label="Open restaurant navigation"'), "Restaurant mobile menu trigger needs an accessible label.");
+assert(shellSource.includes("<MenuIcon"), "Hamburger icon should exist as the restaurant drawer trigger.");
+assert(shellSource.includes('className="restaurant-shell-mobile-drawer"'), "Restaurant responsive drawer is missing.");
+assert(shellSource.includes('aria-modal="true"'), "Restaurant drawer should be modal for assistive technology.");
+assert(shellSource.includes("renderSidebarNav(closeDrawer)"), "Restaurant drawer should reuse the sidebar nav source of truth.");
+assert(shellSource.includes("trapFocus(event, drawerRef.current, drawerCloseRef.current)"), "Restaurant drawer should trap focus.");
+assert(shellSource.includes("document.body.style.overflow = \"hidden\""), "Restaurant drawer should lock background scroll.");
+assert(cssSource.includes(".restaurant-shell-drawer-trigger") && cssSource.includes("@media (min-width: 1024px)"), "Restaurant drawer trigger must hide at the desktop breakpoint.");
+assert(cssSource.includes(".restaurant-shell-mobile-layer.open"), "Restaurant mobile drawer open state is missing.");
+assert(cssSource.includes("width: min(88vw, 360px)"), "Restaurant mobile drawer must fit narrow devices.");
 
 console.log("Restaurant mobile navigation contract passed.");
