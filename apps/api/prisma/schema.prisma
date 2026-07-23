@@ -56,11 +56,15 @@ enum BusinessModule {
   COUPONS
   DELIVERY_ZONES
   FOOD_CATALOG
+  POS_REGISTER
+  POS_KIOSK_MODE
 }
 
 enum OrderType {
   PICKUP
   DELIVERY
+  DINE_IN
+  WALK_IN
 }
 
 enum OrderStatus {
@@ -127,6 +131,58 @@ enum MerchantOnboardingStatus {
   ENABLED
   RESTRICTED
   DISABLED
+}
+
+enum PosDeviceType {
+  MAIN_TERMINAL
+  POS_KIOSK
+  APPROVED_MOBILE
+  KITCHEN_DISPLAY
+  MANAGER_DEVICE
+}
+
+enum PosDeviceStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum PosShiftStatus {
+  OPEN
+  PAUSED
+  CLOSED
+  FORCE_CLOSED
+}
+
+enum CashDrawerStatus {
+  OPEN
+  CLOSED
+  SUSPENDED
+}
+
+enum PosOrderSessionStatus {
+  ACTIVE
+  HELD
+  SUBMITTED
+  VOIDED
+}
+
+enum PosPaymentChannel {
+  CASH
+  CARD
+}
+
+enum PosReceiptKind {
+  CUSTOMER_RECEIPT
+  KITCHEN_TICKET
+}
+
+enum PosReceiptStatus {
+  CREATED
+  PRINTED
+  SENT
+  FAILED
 }
 
 enum OrderPaymentStatus {
@@ -338,6 +394,15 @@ model Restaurant {
   taxConfigurations   TaxConfiguration[]
   deliveryFeeRules    DeliveryFeeRule[]
   driverEarningLedger DriverEarningLedger[]
+  posDevices          PosDevice[]
+  posRegisters        PosRegister[]
+  cashDrawers         CashDrawer[]
+  employeeShifts      EmployeeShift[]
+  cashDrawerSessions  CashDrawerSession[]
+  cashLedgerEntries   CashLedgerEntry[]
+  posOrderSessions    PosOrderSession[]
+  orderQuotes         OrderQuote[]
+  posReceipts         PosReceipt[]
   printerSettings     RestaurantPrinterSettings?
   notificationSettings RestaurantNotificationSettings?
   deliveryZones       DeliveryZone[]
@@ -652,6 +717,15 @@ model RestaurantLocation {
   settingsJson Json?
   active       Boolean    @default(true)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  posDevices   PosDevice[]
+  posRegisters PosRegister[]
+  cashDrawers  CashDrawer[]
+  employeeShifts EmployeeShift[]
+  cashDrawerSessions CashDrawerSession[]
+  cashLedgerEntries CashLedgerEntry[]
+  posOrderSessions PosOrderSession[]
+  orderQuotes  OrderQuote[]
+  posReceipts  PosReceipt[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 }
@@ -1167,6 +1241,252 @@ model TaxConfiguration {
   updatedAt      DateTime   @updatedAt
 
   @@unique([restaurantId, provider])
+}
+
+model PosDevice {
+  id                    String            @id @default(cuid())
+  restaurantId          String
+  locationId            String?
+  name                  String
+  deviceType            PosDeviceType     @default(POS_KIOSK)
+  deviceFingerprintHash String?
+  registrationTokenHash String?
+  status                PosDeviceStatus   @default(PENDING)
+  kioskModeEnabled      Boolean           @default(false)
+  kioskExitPinHash      String?
+  kioskExitPinUpdatedAt DateTime?
+  cashDrawerId          String?
+  cardPaymentsEnabled   Boolean           @default(false)
+  lastSeenAt            DateTime?
+  registeredByUserId    String?
+  revokedAt             DateTime?
+  settingsJson          Json?
+  restaurant            Restaurant        @relation(fields: [restaurantId], references: [id])
+  location              RestaurantLocation? @relation(fields: [locationId], references: [id])
+  register              PosRegister?
+  shifts                EmployeeShift[]
+  orderSessions         PosOrderSession[]
+  quotes                OrderQuote[]
+  receipts              PosReceipt[]
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@unique([restaurantId, deviceFingerprintHash])
+  @@index([restaurantId, status])
+  @@index([restaurantId, deviceType])
+  @@index([locationId])
+}
+
+model PosRegister {
+  id           String     @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  deviceId     String?    @unique
+  cashDrawerId String?
+  name         String
+  active       Boolean    @default(true)
+  settingsJson Json?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  device       PosDevice? @relation(fields: [deviceId], references: [id])
+  cashDrawer   CashDrawer? @relation(fields: [cashDrawerId], references: [id])
+  shifts       EmployeeShift[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([restaurantId, active])
+  @@index([locationId])
+}
+
+model CashDrawer {
+  id           String           @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  name         String
+  status       CashDrawerStatus @default(CLOSED)
+  currentBalanceCents Int       @default(0)
+  active       Boolean          @default(true)
+  restaurant   Restaurant       @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  registers    PosRegister[]
+  sessions     CashDrawerSession[]
+  shifts       EmployeeShift[]
+  ledgerEntries CashLedgerEntry[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([restaurantId, status])
+  @@index([locationId])
+}
+
+model EmployeeShift {
+  id           String         @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  employeeUserId String
+  deviceId     String?
+  registerId   String?
+  cashDrawerId String?
+  status       PosShiftStatus @default(OPEN)
+  openedAt     DateTime       @default(now())
+  pausedAt     DateTime?
+  closedAt     DateTime?
+  openingCashCents Int        @default(0)
+  closingCashCents Int?
+  expectedCashCents Int?
+  discrepancyCents Int?
+  notes        String?
+  restaurant   Restaurant     @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  device       PosDevice?     @relation(fields: [deviceId], references: [id])
+  register     PosRegister?   @relation(fields: [registerId], references: [id])
+  cashDrawer   CashDrawer?    @relation(fields: [cashDrawerId], references: [id])
+  cashDrawerSessions CashDrawerSession[]
+  ledgerEntries CashLedgerEntry[]
+  orderSessions PosOrderSession[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([restaurantId, employeeUserId, status])
+  @@index([restaurantId, status])
+  @@index([locationId])
+}
+
+model CashDrawerSession {
+  id           String     @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  cashDrawerId String
+  shiftId      String?
+  openedByUserId String
+  closedByUserId String?
+  openedAt     DateTime   @default(now())
+  closedAt     DateTime?
+  openingCashCents Int    @default(0)
+  closingCashCents Int?
+  expectedCashCents Int?
+  discrepancyCents Int?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  cashDrawer   CashDrawer @relation(fields: [cashDrawerId], references: [id])
+  shift        EmployeeShift? @relation(fields: [shiftId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([restaurantId, cashDrawerId, closedAt])
+  @@index([locationId])
+}
+
+model CashLedgerEntry {
+  id           String     @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  cashDrawerId String
+  shiftId      String?
+  orderId      String?
+  paymentId    String?
+  actorUserId  String
+  amountCents  Int
+  entryType    String
+  note         String?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  cashDrawer   CashDrawer @relation(fields: [cashDrawerId], references: [id])
+  shift        EmployeeShift? @relation(fields: [shiftId], references: [id])
+  createdAt    DateTime   @default(now())
+
+  @@index([restaurantId, cashDrawerId, createdAt])
+  @@index([restaurantId, orderId])
+  @@index([locationId])
+}
+
+model PosOrderSession {
+  id           String                @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  deviceId     String?
+  shiftId      String?
+  orderId      String?
+  quoteId      String?
+  name         String?
+  status       PosOrderSessionStatus @default(ACTIVE)
+  orderType    OrderType             @default(WALK_IN)
+  cartJson     Json
+  quoteJson    Json?
+  customerJson Json?
+  heldAt       DateTime?
+  submittedAt  DateTime?
+  voidedAt     DateTime?
+  createdByUserId String
+  updatedByUserId String?
+  restaurant   Restaurant            @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation?   @relation(fields: [locationId], references: [id])
+  device       PosDevice?            @relation(fields: [deviceId], references: [id])
+  shift        EmployeeShift?        @relation(fields: [shiftId], references: [id])
+  quotes       OrderQuote[]
+  receipts     PosReceipt[]
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([restaurantId, status, updatedAt])
+  @@index([restaurantId, orderId])
+  @@index([locationId])
+}
+
+model OrderQuote {
+  id           String     @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  deviceId     String?
+  sessionId    String?
+  createdByUserId String
+  orderType    OrderType  @default(WALK_IN)
+  lineItemsJson Json
+  subtotalCents Int
+  discountCents Int       @default(0)
+  deliveryFeeCents Int    @default(0)
+  taxCents     Int        @default(0)
+  tipCents     Int        @default(0)
+  totalCents   Int
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  voidedAt     DateTime?
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  device       PosDevice? @relation(fields: [deviceId], references: [id])
+  session      PosOrderSession? @relation(fields: [sessionId], references: [id])
+  createdAt    DateTime   @default(now())
+
+  @@index([restaurantId, expiresAt])
+  @@index([restaurantId, sessionId])
+  @@index([locationId])
+}
+
+model PosReceipt {
+  id           String           @id @default(cuid())
+  restaurantId String
+  locationId   String?
+  deviceId     String?
+  sessionId    String?
+  orderId      String?
+  receiptNumber String
+  kind         PosReceiptKind   @default(CUSTOMER_RECEIPT)
+  status       PosReceiptStatus @default(CREATED)
+  payloadJson  Json
+  printedAt    DateTime?
+  sentAt       DateTime?
+  failedReason String?
+  createdByUserId String
+  restaurant   Restaurant       @relation(fields: [restaurantId], references: [id])
+  location     RestaurantLocation? @relation(fields: [locationId], references: [id])
+  device       PosDevice?       @relation(fields: [deviceId], references: [id])
+  session      PosOrderSession? @relation(fields: [sessionId], references: [id])
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([restaurantId, receiptNumber])
+  @@index([restaurantId, orderId])
+  @@index([locationId])
 }
 
 model AuditLog {

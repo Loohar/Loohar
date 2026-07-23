@@ -63,7 +63,7 @@ const strongPasswordChecks = [
 ];
 
 const businessTypes = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"];
-const businessModules = ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"];
+const businessModules = ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG", "POS_REGISTER", "POS_KIOSK_MODE"];
 const planCodes = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
 const featureLabels = {
   CUSTOMER_CRM: "Customer CRM",
@@ -78,6 +78,13 @@ const featureLabels = {
   DELIVERY_ZONES: "Delivery zones",
   INVENTORY: "Inventory foundation",
   PRINTING: "Receipt and ticket printing",
+  POS_REGISTER: "POS register",
+  POS_KIOSK_MODE: "POS kiosk mode",
+  POS_DEVICE_MANAGEMENT: "POS device management",
+  POS_CASH_PAYMENTS: "POS cash payments",
+  POS_CARD_PAYMENTS: "POS card payments",
+  POS_SHIFTS: "POS shifts",
+  POS_RECEIPTS: "POS receipts",
   NOTIFICATIONS: "SMS and email notifications",
   REPORTS: "Advanced reports",
   MULTI_LOCATION: "Multi-location"
@@ -92,6 +99,13 @@ const featureRequiredPlans = {
   DELIVERY_ZONES: "PROFESSIONAL",
   INVENTORY: "PROFESSIONAL",
   PRINTING: "PROFESSIONAL",
+  POS_REGISTER: "PROFESSIONAL",
+  POS_KIOSK_MODE: "PROFESSIONAL",
+  POS_DEVICE_MANAGEMENT: "PROFESSIONAL",
+  POS_CASH_PAYMENTS: "PROFESSIONAL",
+  POS_CARD_PAYMENTS: "PROFESSIONAL",
+  POS_SHIFTS: "PROFESSIONAL",
+  POS_RECEIPTS: "PROFESSIONAL",
   NOTIFICATIONS: "PROFESSIONAL",
   ANALYTICS: "ENTERPRISE",
   MENU_INSIGHTS: "ENTERPRISE",
@@ -560,6 +574,12 @@ const restaurantPageDefinitions = {
     title: "Restaurant dashboard",
     description: "Track the most important operational signals and jump into focused workflows."
   },
+  pos: {
+    label: "POS",
+    icon: CreditCard,
+    title: "POS register",
+    description: "Create in-store orders, manage register devices, shifts, cash controls, and kiosk mode."
+  },
   orders: {
     label: "Orders",
     icon: ReceiptText,
@@ -598,7 +618,7 @@ const restaurantPageDefinitions = {
   }
 };
 
-const restaurantPageOrder = ["dashboard", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
+const restaurantPageOrder = ["dashboard", "pos", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
 const restaurantSettingsChildRoutes = new Set([
   "account",
   "profile",
@@ -633,6 +653,7 @@ function restaurantPageFromPath(path = "") {
   if (maybePage === "dashboard" && typeof window !== "undefined") {
     const legacyHashPages = {
       "#orders": "orders",
+      "#pos": "pos",
       "#customers": "customers",
       "#drivers": "drivers",
       "#reports": "reports",
@@ -5892,6 +5913,602 @@ function RestaurantDashboardPage({ children }) {
   return <div className="restaurant-owner-page restaurant-owner-page-dashboard">{children}</div>;
 }
 
+const posDeviceTypes = [
+  { value: "POS_KIOSK", label: "POS kiosk" },
+  { value: "MAIN_TERMINAL", label: "Main terminal" },
+  { value: "APPROVED_MOBILE", label: "Approved mobile" },
+  { value: "KITCHEN_DISPLAY", label: "Kitchen display" },
+  { value: "MANAGER_DEVICE", label: "Manager device" }
+];
+
+const posOrderTypes = [
+  { value: "WALK_IN", label: "Walk-in" },
+  { value: "DINE_IN", label: "Dine-in" },
+  { value: "PICKUP", label: "Pickup" },
+  { value: "DELIVERY", label: "Delivery" }
+];
+
+function posDeviceFingerprint() {
+  if (typeof window === "undefined") return "";
+  const storageKey = "loohar-pos-device-fingerprint";
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) return existing;
+  const randomPart = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const fingerprint = `browser-${randomPart}`;
+  window.localStorage.setItem(storageKey, fingerprint);
+  return fingerprint;
+}
+
+function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile, fallbackCategories = [], fallbackItems = [], onRefresh }) {
+  const restaurantKey = restaurantSlug || profile.slug || user?.restaurantSlug || restaurantId;
+  const posBasePath = restaurantKey ? `/api/restaurants/${restaurantKey}/pos` : "";
+  const deviceStorageKey = restaurantId ? `loohar-pos-device-id:${restaurantId}` : "loohar-pos-device-id";
+  const [fingerprint, setFingerprint] = useState("");
+  const [deviceId, setDeviceId] = useState("");
+  const [config, setConfig] = useState(null);
+  const [menuCategories, setMenuCategories] = useState([]);
+  const [heldOrders, setHeldOrders] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [cart, setCart] = useState([]);
+  const [quote, setQuote] = useState(null);
+  const [lastOrder, setLastOrder] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [deviceForm, setDeviceForm] = useState({ name: "Front counter POS", deviceType: "POS_KIOSK", cardPaymentsEnabled: false });
+  const [openingCashCents, setOpeningCashCents] = useState(10000);
+  const [kioskPin, setKioskPin] = useState("");
+  const [exitPin, setExitPin] = useState("");
+  const [customer, setCustomer] = useState({ name: "Walk-in guest", phone: "", email: "" });
+  const [orderType, setOrderType] = useState("WALK_IN");
+  const [tipCents, setTipCents] = useState(0);
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    setFingerprint(posDeviceFingerprint());
+    if (typeof window !== "undefined") {
+      setDeviceId(window.localStorage.getItem(deviceStorageKey) || "");
+    }
+  }, [deviceStorageKey]);
+
+  const deviceHeaders = useMemo(() => ({
+    ...(deviceId ? { "x-loohar-device-id": deviceId } : {}),
+    ...(fingerprint ? { "x-loohar-device-fingerprint": fingerprint } : {})
+  }), [deviceId, fingerprint]);
+
+  async function posApi(path, options = {}) {
+    if (!posBasePath) throw new Error("Restaurant POS route is not available yet.");
+    return api(`${posBasePath}${path}`, {
+      ...options,
+      token,
+      headers: {
+        ...deviceHeaders,
+        ...(options.headers || {})
+      }
+    });
+  }
+
+  async function loadPos() {
+    if (!apiOnline || !token || !posBasePath) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [configPayload, menuPayload, heldPayload] = await Promise.all([
+        posApi("/config"),
+        posApi("/menu"),
+        posApi("/held-orders")
+      ]);
+      setConfig(configPayload);
+      setMenuCategories(menuPayload.categories || []);
+      setHeldOrders(heldPayload.heldOrders || []);
+      if (configPayload.device?.id) {
+        setDeviceId(configPayload.device.id);
+        if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
+      }
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPos();
+  }, [apiOnline, token, posBasePath, deviceId, fingerprint]);
+
+  const categoriesForRegister = menuCategories.length ? menuCategories : fallbackCategories;
+  const itemsForRegister = categoriesForRegister.length
+    ? categoriesForRegister.flatMap((category) => (category.items || []).map((item) => ({ ...item, categoryName: category.name, categoryId: category.id })))
+    : fallbackItems;
+  const visibleItems = selectedCategory === "all" ? itemsForRegister : itemsForRegister.filter((item) => item.categoryId === selectedCategory || item.category?.id === selectedCategory);
+  const activeDevice = config?.device;
+  const activeShift = config?.shift;
+  const firstCashDrawer = config?.cashDrawers?.[0];
+  const currentCashDrawer = config?.cashDrawers?.find((drawer) => drawer.id === activeShift?.cashDrawerId) || firstCashDrawer;
+  const canAcceptCash = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.deviceType === "MAIN_TERMINAL" && activeShift?.status === "OPEN" && currentCashDrawer?.status === "OPEN" && (config?.permissions || []).includes("POS_ACCEPT_CASH"));
+  const canAcceptCard = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.cardPaymentsEnabled && (config?.permissions || []).includes("POS_ACCEPT_CARD"));
+  const cartTotalCents = cart.reduce((sum, line) => sum + (line.priceCents || 0) * line.quantity, 0);
+  const cashDisabledReason = !activeDevice
+    ? "Register this device before accepting payments."
+    : activeDevice.deviceType !== "MAIN_TERMINAL"
+      ? "Cash is allowed only on a main terminal."
+      : !activeShift
+        ? "Open a shift before accepting cash."
+        : currentCashDrawer?.status !== "OPEN"
+          ? "Open cash drawer required."
+          : "";
+
+  function addToCart(item) {
+    setQuote(null);
+    setLastOrder(null);
+    setCart((current) => {
+      const existing = current.find((line) => line.menuItemId === item.id);
+      if (existing) {
+        return current.map((line) => line.menuItemId === item.id ? { ...line, quantity: line.quantity + 1 } : line);
+      }
+      return [...current, {
+        menuItemId: item.id,
+        name: item.name,
+        priceCents: item.priceCents || 0,
+        quantity: 1,
+        specialInstructions: ""
+      }];
+    });
+  }
+
+  function updateCartLine(menuItemId, changes) {
+    setQuote(null);
+    setCart((current) => current
+      .map((line) => line.menuItemId === menuItemId ? { ...line, ...changes, quantity: Math.max(1, Number(changes.quantity ?? line.quantity) || 1) } : line)
+      .filter((line) => line.quantity > 0));
+  }
+
+  function removeCartLine(menuItemId) {
+    setQuote(null);
+    setCart((current) => current.filter((line) => line.menuItemId !== menuItemId));
+  }
+
+  async function registerDevice(event) {
+    event.preventDefault();
+    setSaving("device");
+    setError("");
+    setNotice("");
+    try {
+      const payload = await posApi("/devices", {
+        method: "POST",
+        body: {
+          ...deviceForm,
+          fingerprint,
+          cashDrawerId: deviceForm.deviceType === "MAIN_TERMINAL" ? firstCashDrawer?.id || null : null,
+          status: "ACTIVE"
+        }
+      });
+      setDeviceId(payload.device.id);
+      if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, payload.device.id);
+      setNotice("POS device registered for this restaurant.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function openRegisterShift() {
+    setSaving("shift");
+    setError("");
+    setNotice("");
+    try {
+      await posApi("/shifts/clock-in", {
+        method: "POST",
+        body: {
+          cashDrawerId: activeDevice?.deviceType === "MAIN_TERMINAL" ? firstCashDrawer?.id || null : null,
+          openingCashCents
+        }
+      });
+      setNotice("POS shift opened.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function closeRegisterShift() {
+    if (!activeShift?.id) return;
+    setSaving("shift-close");
+    setError("");
+    setNotice("");
+    try {
+      await posApi(`/shifts/${activeShift.id}/clock-out`, {
+        method: "POST",
+        body: { closingCashCents: currentCashDrawer?.currentBalanceCents || openingCashCents }
+      });
+      setNotice("POS shift closed.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function calculateQuote() {
+    if (!cart.length) {
+      setError("Add at least one menu item before calculating a quote.");
+      return null;
+    }
+    setSaving("quote");
+    setError("");
+    setNotice("");
+    try {
+      const payload = await posApi("/quotes", {
+        method: "POST",
+        body: {
+          orderType,
+          tipCents,
+          lineItems: cart.map((line) => ({
+            menuItemId: line.menuItemId,
+            quantity: line.quantity,
+            optionIds: line.optionIds || [],
+            specialInstructions: line.specialInstructions || ""
+          }))
+        }
+      });
+      setQuote(payload.quote);
+      setNotice("Server quote recalculated.");
+      return payload.quote;
+    } catch (posError) {
+      setError(posError.message);
+      return null;
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function holdOrder() {
+    if (!cart.length) return setError("Add items before holding this order.");
+    setSaving("hold");
+    setError("");
+    setNotice("");
+    try {
+      await posApi("/held-orders", {
+        method: "POST",
+        body: {
+          name: customer.name || "Held POS order",
+          orderType,
+          customer,
+          cart: {
+            lineItems: cart.map((line) => ({
+              menuItemId: line.menuItemId,
+              quantity: line.quantity,
+              optionIds: line.optionIds || [],
+              specialInstructions: line.specialInstructions || ""
+            }))
+          }
+        }
+      });
+      setCart([]);
+      setQuote(null);
+      setNotice("Order held for later.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function submitOrder() {
+    setSaving("submit");
+    setError("");
+    setNotice("");
+    try {
+      const activeQuote = quote || await calculateQuote();
+      if (!activeQuote) return;
+      const payload = await posApi("/orders", {
+        method: "POST",
+        body: {
+          quoteId: activeQuote.id,
+          customer,
+          notes
+        }
+      });
+      setLastOrder(payload.order);
+      setCart([]);
+      setQuote(null);
+      setNotice("Order sent to the kitchen queue.");
+      await onRefresh?.();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function acceptCashPayment() {
+    if (!lastOrder?.id) return setError("Submit an order before accepting payment.");
+    setSaving("cash");
+    setError("");
+    setNotice("");
+    try {
+      await posApi("/payments/cash", {
+        method: "POST",
+        body: {
+          orderId: lastOrder.id,
+          amountCents: lastOrder.totalCents
+        }
+      });
+      setNotice("Cash payment accepted and receipt recorded.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function requestCardPayment() {
+    if (!lastOrder?.id) return setError("Submit an order before requesting card payment.");
+    setSaving("card");
+    setError("");
+    setNotice("");
+    try {
+      const payload = await posApi("/payments/card", {
+        method: "POST",
+        body: { orderId: lastOrder.id }
+      });
+      setNotice(payload.message || "Hosted card payment request created.");
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function setKiosk(enabled) {
+    if (!activeDevice?.id) return setError("Register this device before enabling kiosk mode.");
+    setSaving(enabled ? "kiosk" : "kiosk-exit");
+    setError("");
+    setNotice("");
+    try {
+      const path = enabled ? `/devices/${activeDevice.id}/kiosk` : `/devices/${activeDevice.id}/kiosk/exit`;
+      await posApi(path, {
+        method: "POST",
+        body: enabled ? { enabled: true, exitPin: kioskPin || undefined } : { pin: exitPin || undefined }
+      });
+      setKioskPin("");
+      setExitPin("");
+      setNotice(enabled ? "Kiosk mode enabled for this device." : "Kiosk mode exited.");
+      await loadPos();
+    } catch (posError) {
+      setError(posError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  function recallHeldOrder(session) {
+    const lines = session.cartJson?.lineItems || [];
+    const itemById = new Map(itemsForRegister.map((item) => [item.id, item]));
+    setOrderType(session.orderType || "WALK_IN");
+    setCustomer({ name: session.customerJson?.name || "Walk-in guest", phone: session.customerJson?.phone || "", email: session.customerJson?.email || "" });
+    setCart(lines.map((line) => {
+      const item = itemById.get(line.menuItemId) || {};
+      return {
+        menuItemId: line.menuItemId,
+        name: item.name || line.name || "Menu item",
+        priceCents: item.priceCents || line.unitPriceCents || 0,
+        quantity: Number(line.quantity) || 1,
+        optionIds: line.optionIds || [],
+        specialInstructions: line.specialInstructions || ""
+      };
+    }));
+    setQuote(null);
+    setNotice("Held order loaded into the register.");
+  }
+
+  if (!apiOnline) {
+    return (
+      <div className="pos-register">
+        <div className="pos-alert">Live API is required for POS register, payments, cash controls, and kiosk mode.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`pos-register ${activeDevice?.kioskModeEnabled ? "kiosk-active" : ""}`}>
+      <div className="pos-command-bar">
+        <div>
+          <p className="restaurant-shell-breadcrumb">Restaurant POS</p>
+          <h2>{profile.businessName || profile.name || "POS register"}</h2>
+          <p>Server-priced in-store orders with device, shift, cash, and kiosk controls.</p>
+        </div>
+        <button className="button-muted" type="button" onClick={loadPos} disabled={loading}><RefreshCw size={18} />Refresh POS</button>
+      </div>
+
+      <InlineError message={error} />
+      {notice ? <div className="success-box">{notice}</div> : null}
+
+      {loading ? <div className="panel">Loading POS register...</div> : null}
+
+      <div className="pos-status-grid">
+        <Stat icon={CreditCard} label="Device" value={activeDevice ? readable(activeDevice.deviceType) : "Unregistered"} detail={activeDevice?.status || "Register browser/device"} />
+        <Stat icon={Clock} label="Shift" value={activeShift?.status || "Closed"} detail={activeShift ? `Opened ${new Date(activeShift.openedAt).toLocaleTimeString()}` : "Open shift to accept payments"} />
+        <Stat icon={ReceiptText} label="Cart" value={money(quote?.totalCents ?? cartTotalCents)} detail={`${cart.reduce((sum, line) => sum + line.quantity, 0)} item(s)`} />
+        <Stat icon={Shield} label="Kiosk" value={activeDevice?.kioskModeEnabled ? "Locked" : "Off"} detail="Server-controlled device mode" />
+      </div>
+
+      <div className="pos-layout">
+        <section className="pos-catalog panel">
+          <div className="pos-section-head">
+            <div>
+              <h3 className="panel-title">Menu</h3>
+              <p>Tap items to add them to the current register cart.</p>
+            </div>
+            <select className="select pos-category-select" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+              <option value="all">All categories</option>
+              {categoriesForRegister.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+          </div>
+          {visibleItems.length === 0 ? <EmptyState title="No POS menu items" detail="Add available menu items before taking in-store orders." /> : (
+            <div className="pos-item-grid">
+              {visibleItems.map((item) => (
+                <button className="pos-menu-item" type="button" key={item.id} onClick={() => addToCart(item)}>
+                  {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" /> : <span className="pos-menu-item-fallback"><Store size={20} /></span>}
+                  <span>
+                    <strong>{item.name}</strong>
+                    <small>{item.categoryName || item.category?.name || "Menu"}</small>
+                  </span>
+                  <b>{money(item.priceCents)}</b>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <aside className="pos-cart panel">
+          <div className="pos-section-head">
+            <div>
+              <h3 className="panel-title">Current order</h3>
+              <p>Prices are recalculated by the backend before submit.</p>
+            </div>
+            <button className="button-muted" type="button" onClick={() => { setCart([]); setQuote(null); setLastOrder(null); }} disabled={!cart.length}><Trash2 size={16} />Clear</button>
+          </div>
+          <div className="pos-form-grid">
+            <label>Order type
+              <select className="select mt-1" value={orderType} onChange={(event) => { setOrderType(event.target.value); setQuote(null); }}>
+                {posOrderTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>Tip cents
+              <input className="input mt-1" type="number" min="0" value={tipCents} onChange={(event) => { setTipCents(Number(event.target.value) || 0); setQuote(null); }} />
+            </label>
+          </div>
+          <div className="pos-form-grid mt-3">
+            <label>Guest name
+              <input className="input mt-1" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} />
+            </label>
+            <label>Phone
+              <input className="input mt-1" value={customer.phone} onChange={(event) => setCustomer({ ...customer, phone: event.target.value })} />
+            </label>
+          </div>
+          <label className="mt-3 block text-sm font-semibold text-slate-600">Order notes
+            <textarea className="input mt-1 min-h-20 py-2" value={notes} onChange={(event) => setNotes(event.target.value)} />
+          </label>
+
+          <div className="pos-cart-lines">
+            {cart.length === 0 ? <EmptyState title="Cart is empty" detail="Select menu items to start a walk-in, dine-in, pickup, or delivery order." /> : cart.map((line) => (
+              <div className="pos-cart-line" key={line.menuItemId}>
+                <div>
+                  <strong>{line.name}</strong>
+                  <small>{money(line.priceCents)} each</small>
+                </div>
+                <input className="input" type="number" min="1" value={line.quantity} onChange={(event) => updateCartLine(line.menuItemId, { quantity: event.target.value })} aria-label={`Quantity for ${line.name}`} />
+                <button className="icon-button" type="button" onClick={() => removeCartLine(line.menuItemId)} aria-label={`Remove ${line.name}`}><Trash2 size={16} /></button>
+              </div>
+            ))}
+          </div>
+
+          <div className="pos-total-box">
+            <span>Server quote</span>
+            <strong>{money(quote?.totalCents ?? cartTotalCents)}</strong>
+            {quote ? <small>Tax {money(quote.taxCents)} · expires {new Date(quote.expiresAt).toLocaleTimeString()}</small> : <small>Recalculate before sending to kitchen.</small>}
+          </div>
+
+          <div className="pos-action-grid">
+            <button className="button-muted justify-center" type="button" onClick={calculateQuote} disabled={saving === "quote" || !cart.length}><ReceiptText size={16} />Quote</button>
+            <button className="button-muted justify-center" type="button" onClick={holdOrder} disabled={saving === "hold" || !cart.length}><Clock size={16} />Hold</button>
+            <button className="button-primary justify-center" type="button" onClick={submitOrder} disabled={saving === "submit" || !cart.length}><ChefHat size={16} />Send to kitchen</button>
+          </div>
+
+          {lastOrder ? (
+            <div className="pos-last-order">
+              <strong>{lastOrder.orderNumber}</strong>
+              <span>{money(lastOrder.totalCents)} · {readable(lastOrder.status || "pending")}</span>
+              <div className="pos-action-grid mt-3">
+                <button className="button-muted justify-center" type="button" onClick={acceptCashPayment} disabled={!canAcceptCash || saving === "cash"}><ReceiptText size={16} />Cash</button>
+                <button className="button-muted justify-center" type="button" onClick={requestCardPayment} disabled={!canAcceptCard || saving === "card"}><CreditCard size={16} />Card</button>
+              </div>
+              {!canAcceptCash && cashDisabledReason ? <small className="field-error">{cashDisabledReason}</small> : null}
+            </div>
+          ) : null}
+        </aside>
+      </div>
+
+      <div className="pos-admin-grid">
+        <section className="panel">
+          <h3 className="panel-title">Device controls</h3>
+          <form className="pos-device-form" onSubmit={registerDevice}>
+            <label>Device name
+              <input className="input mt-1" value={deviceForm.name} onChange={(event) => setDeviceForm({ ...deviceForm, name: event.target.value })} />
+            </label>
+            <label>Device type
+              <select className="select mt-1" value={deviceForm.deviceType} onChange={(event) => setDeviceForm({ ...deviceForm, deviceType: event.target.value })}>
+                {posDeviceTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="seg mt-6"><input type="checkbox" checked={deviceForm.cardPaymentsEnabled} onChange={(event) => setDeviceForm({ ...deviceForm, cardPaymentsEnabled: event.target.checked })} />Card payments</label>
+            <button className="button-primary mt-6 justify-center" type="submit" disabled={saving === "device"}><Shield size={16} />Register device</button>
+          </form>
+          <div className="pos-kiosk-controls">
+            <label>Kiosk exit PIN
+              <input className="input mt-1" type="password" autoComplete="new-password" value={kioskPin} onChange={(event) => setKioskPin(event.target.value)} />
+            </label>
+            <button className="button-muted justify-center" type="button" onClick={() => setKiosk(true)} disabled={!activeDevice || saving === "kiosk"}><Shield size={16} />Enable kiosk</button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <h3 className="panel-title">Shift and cash drawer</h3>
+          <div className="pos-device-form">
+            <label>Opening cash cents
+              <input className="input mt-1" type="number" min="0" value={openingCashCents} onChange={(event) => setOpeningCashCents(Number(event.target.value) || 0)} />
+            </label>
+            <div className="pos-mini-card">
+              <strong>{currentCashDrawer?.name || "No cash drawer"}</strong>
+              <span>{currentCashDrawer ? `${readable(currentCashDrawer.status)} · ${money(currentCashDrawer.currentBalanceCents)}` : "Cash drawer required for cash payments."}</span>
+            </div>
+            {activeShift ? <button className="button-muted justify-center" type="button" onClick={closeRegisterShift} disabled={saving === "shift-close"}>Close shift</button> : <button className="button-primary justify-center" type="button" onClick={openRegisterShift} disabled={!activeDevice || saving === "shift"}>Open shift</button>}
+          </div>
+        </section>
+
+        <section className="panel">
+          <h3 className="panel-title">Held orders</h3>
+          {heldOrders.length === 0 ? <EmptyState title="No held orders" detail="Held POS carts will appear here." /> : (
+            <div className="pos-held-list">
+              {heldOrders.map((session) => (
+                <button className="pos-held-order" type="button" key={session.id} onClick={() => recallHeldOrder(session)}>
+                  <strong>{session.name}</strong>
+                  <span>{readable(session.orderType)} · {new Date(session.updatedAt).toLocaleTimeString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {activeDevice?.kioskModeEnabled ? (
+        <div className="pos-kiosk-lock" role="dialog" aria-modal="true" aria-labelledby="pos-kiosk-title">
+          <div className="pos-kiosk-card">
+            <Shield size={42} />
+            <h2 id="pos-kiosk-title">Kiosk mode is active</h2>
+            <p>This device is locked to POS operations. Manager permission or a valid PIN is required to exit.</p>
+            <input className="input" type="password" autoComplete="current-password" placeholder="Manager PIN" value={exitPin} onChange={(event) => setExitPin(event.target.value)} />
+            <button className="button-primary justify-center" type="button" onClick={() => setKiosk(false)} disabled={saving === "kiosk-exit"}>Exit kiosk mode</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RestaurantPosPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-pos">{children}</div>;
+}
+
 function RestaurantOrdersPage({ children }) {
   return <div className="restaurant-owner-page restaurant-owner-page-orders">{children}</div>;
 }
@@ -5918,6 +6535,7 @@ function RestaurantSettingsPage({ children }) {
 
 const restaurantPageComponents = {
   dashboard: RestaurantDashboardPage,
+  pos: RestaurantPosPage,
   orders: RestaurantOrdersPage,
   kitchen: RestaurantKitchenPage,
   customers: RestaurantCustomersPage,
@@ -6929,6 +7547,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const RestaurantPageComponent = restaurantPageComponents[currentRestaurantPage] || RestaurantDashboardPage;
   const settingsCenterLinks = restaurantSettingsLinks.map((item) => item.id === "payments" ? { ...item, href: `${restaurantBasePath}/onboarding#payments` } : item);
   const dashboardShortcuts = [
+    { label: "POS register", detail: "Create in-store orders, manage shifts, cash, card, and kiosk mode.", icon: CreditCard, href: `${restaurantBasePath}/pos`, value: "Open" },
     { label: "Pending orders", detail: "Open live orders and kitchen queue.", icon: ReceiptText, href: `${restaurantBasePath}/orders?status=pending`, value: stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length },
     { label: "Today's sales", detail: "Review current-day sales and performance.", icon: CreditCard, href: `${restaurantBasePath}/reports?range=today`, value: money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || 0) },
     { label: "Available drivers", detail: "Manage delivery coverage and dispatch.", icon: Truck, href: `${restaurantBasePath}/drivers?filter=available`, value: stats.activeDrivers ?? drivers.filter((driver) => driver.available).length },
@@ -6936,6 +7555,24 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     { label: "Website", detail: "Edit branding, website content, and gallery.", icon: Store, href: `${restaurantBasePath}/settings#settings-website-branding`, value: website.websiteEnabled === false ? "Disabled" : "Active" },
     { label: "Menu", detail: "Manage categories, food items, photos, and availability.", icon: MenuIcon, href: `${restaurantBasePath}/settings#settings-menu-catalog`, value: items.length }
   ];
+
+  if (currentRestaurantPage === "pos") {
+    return (
+      <RestaurantPageComponent>
+        <RestaurantPosWorkspace
+          apiOnline={apiOnline}
+          token={token}
+          user={user}
+          restaurantId={restaurantId}
+          restaurantSlug={profile.slug || initialSlug || user?.restaurantSlug || ""}
+          profile={profile}
+          fallbackCategories={categories}
+          fallbackItems={items}
+          onRefresh={loadRestaurant}
+        />
+      </RestaurantPageComponent>
+    );
+  }
 
   return (
     <RestaurantPageComponent>

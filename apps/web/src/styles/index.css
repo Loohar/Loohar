@@ -369,8 +369,184 @@ textarea {
     @apply text-lg text-ink;
   }
 
+  .pos-register {
+    @apply grid gap-5;
+  }
+
+  .pos-command-bar {
+    @apply flex flex-col justify-between gap-3 rounded-md border border-line bg-white p-4 shadow-soft lg:flex-row lg:items-center;
+  }
+
+  .pos-command-bar h2 {
+    @apply text-2xl font-black text-ink md:text-3xl;
+  }
+
+  .pos-command-bar p:last-child,
+  .pos-section-head p {
+    @apply mt-1 text-sm font-semibold text-slate-500;
+  }
+
+  .pos-alert {
+    @apply rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700;
+  }
+
+  .pos-status-grid {
+    @apply grid gap-4 md:grid-cols-2 xl:grid-cols-4;
+  }
+
+  .pos-layout {
+    @apply grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.42fr)];
+  }
+
+  .pos-section-head {
+    @apply mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-start;
+  }
+
+  .pos-category-select {
+    @apply w-full sm:w-56;
+  }
+
+  .pos-item-grid {
+    @apply grid gap-3 sm:grid-cols-2 2xl:grid-cols-3;
+  }
+
+  .pos-menu-item {
+    @apply grid min-h-[92px] grid-cols-[64px_1fr_auto] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint;
+  }
+
+  .pos-menu-item img,
+  .pos-menu-item-fallback {
+    @apply h-16 w-16 rounded-md object-cover;
+  }
+
+  .pos-menu-item-fallback {
+    @apply grid place-items-center bg-mint/10 text-mint;
+  }
+
+  .pos-menu-item strong,
+  .pos-cart-line strong,
+  .pos-last-order strong,
+  .pos-mini-card strong,
+  .pos-held-order strong {
+    @apply block text-sm font-black text-ink;
+  }
+
+  .pos-menu-item small,
+  .pos-cart-line small,
+  .pos-last-order span,
+  .pos-mini-card span,
+  .pos-held-order span {
+    @apply mt-1 block text-xs font-bold text-slate-500;
+  }
+
+  .pos-menu-item b {
+    @apply text-sm font-black text-mint;
+  }
+
+  .pos-cart {
+    @apply xl:sticky xl:top-24 xl:self-start;
+  }
+
+  .pos-form-grid {
+    @apply grid gap-3 sm:grid-cols-2;
+  }
+
+  .pos-form-grid label,
+  .pos-device-form label,
+  .pos-kiosk-controls label {
+    @apply text-sm font-semibold text-slate-600;
+  }
+
+  .pos-cart-lines {
+    @apply mt-4 grid gap-2;
+  }
+
+  .pos-cart-line {
+    @apply grid grid-cols-[minmax(0,1fr)_76px_auto] items-center gap-2 rounded-md border border-line bg-slate-50 p-2;
+  }
+
+  .pos-cart-line .input {
+    @apply h-10 px-2 text-center;
+  }
+
+  .pos-total-box {
+    @apply mt-4 rounded-md border border-line bg-ink p-4 text-white;
+  }
+
+  .pos-total-box span {
+    @apply block text-xs font-black uppercase tracking-wide text-mint;
+  }
+
+  .pos-total-box strong {
+    @apply mt-1 block text-3xl font-black;
+  }
+
+  .pos-total-box small {
+    @apply mt-2 block text-xs font-semibold text-slate-200;
+  }
+
+  .pos-action-grid {
+    @apply mt-4 grid gap-2 sm:grid-cols-3;
+  }
+
+  .pos-last-order {
+    @apply mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3;
+  }
+
+  .pos-admin-grid {
+    @apply grid gap-5 xl:grid-cols-3;
+  }
+
+  .pos-device-form {
+    @apply mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2;
+  }
+
+  .pos-mini-card {
+    @apply rounded-md border border-line bg-slate-50 p-3;
+  }
+
+  .pos-kiosk-controls {
+    @apply mt-4 grid gap-3 border-t border-line pt-4 md:grid-cols-[1fr_auto] md:items-end;
+  }
+
+  .pos-held-list {
+    @apply mt-4 grid gap-2;
+  }
+
+  .pos-held-order {
+    @apply rounded-md border border-line bg-white p-3 text-left transition hover:border-mint hover:bg-mint/5;
+  }
+
+  .pos-kiosk-lock {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    background: rgba(15, 23, 42, 0.82);
+    backdrop-filter: blur(8px);
+  }
+
+  .pos-kiosk-card {
+    @apply grid w-full max-w-md gap-4 rounded-md border border-line bg-white p-6 text-center shadow-2xl;
+  }
+
+  .pos-kiosk-card svg {
+    @apply mx-auto text-mint;
+  }
+
+  .pos-kiosk-card h2 {
+    @apply text-2xl font-black text-ink;
+  }
+
+  .pos-kiosk-card p {
+    @apply text-sm font-semibold text-slate-500;
+  }
+
   .restaurant-dashboard-dashboard :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
   .restaurant-dashboard-orders :is(#settings-menu-catalog, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
+  .restaurant-dashboard-pos :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
   .restaurant-dashboard-customers :is(#settings-menu-catalog, #orders, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
   .restaurant-dashboard-drivers :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-inventory, #settings-notifications, #reports, #settings),
   .restaurant-dashboard-reports :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #settings),
@@ -434,6 +610,27 @@ textarea {
 
     .restaurant-dashboard-shortcut b {
       @apply col-span-2 text-base;
+    }
+
+    .pos-menu-item {
+      @apply grid-cols-[52px_1fr] gap-3;
+    }
+
+    .pos-menu-item img,
+    .pos-menu-item-fallback {
+      @apply h-12 w-12;
+    }
+
+    .pos-menu-item b {
+      @apply col-span-2;
+    }
+
+    .pos-cart-line {
+      @apply grid-cols-[minmax(0,1fr)_64px_auto];
+    }
+
+    .pos-action-grid {
+      @apply grid-cols-1;
     }
   }
 
