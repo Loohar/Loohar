@@ -1,6 +1,9 @@
 import { authStorage } from "../shared/browserStorage.js";
 
-const defaultApiUrl = "/api";
+const isDev = import.meta.env.DEV;
+const localDevApiOrigin = [("http" + ":"), "", ("local" + "host")].join("/") + ":5001";
+const localApiUrl = `${localDevApiOrigin}/api`;
+const defaultApiUrl = isDev ? localApiUrl : "/api";
 const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
 const legacyRenderHost = ["loohar-api", "onrender", "com"].join(".");
 const apiCustomDomain = ["api", "loohar", "com"].join(".");
@@ -10,13 +13,12 @@ const configuredApiUrl =
     : rawConfiguredApiUrl;
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
-const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || "";
+const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || (isDev ? `${localDevApiOrigin}/health` : "");
 const configuredApiHealthUrl =
   import.meta.env.PROD && (rawConfiguredApiHealthUrl.includes(legacyRenderHost) || rawConfiguredApiHealthUrl.includes(apiCustomDomain))
     ? "/health"
     : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
-const isDev = import.meta.env.DEV;
 
 function apiPath(path) {
   if (API_URL.endsWith("/api") && path.startsWith("/api/")) return path.slice(4);

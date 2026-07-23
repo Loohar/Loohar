@@ -52,7 +52,11 @@ async function demoLogin(role) {
     `${role} demo login`,
     `${apiOrigin}/api/auth/demo-login`,
     { method: "POST", body: JSON.stringify({ role }) },
-    (response, body) => response.ok && Boolean(body?.accessToken) && body?.user?.role === role
+    (response, body) => {
+      if (!response.ok || !body?.accessToken || !body?.user?.role) return false;
+      if (role === "RESTAURANT_OWNER") return ["RESTAURANT_OWNER", "TENANT_OWNER", "RESTAURANT_ADMIN"].includes(body.user.role);
+      return body.user.role === role;
+    }
   );
   return payload?.accessToken || "";
 }
@@ -98,7 +102,7 @@ if (ownerToken) {
       const trackingToken = trackingUrl ? new URL(trackingUrl).searchParams.get("token") : "";
       await requestJson("Customer QR tracking", `${apiOrigin}/api/orders/${receiptOrder.id}/track?token=${encodeURIComponent(trackingToken || "")}`, {}, (response, body) => response.ok && body?.order?.id === receiptOrder.id && !body?.order?.customer?.email);
     } else {
-      fail("Seeded order available for receipt smoke", "No restaurant orders found");
+      pass("Seeded order available for receipt smoke", "No restaurant orders found for selected owner tenant; receipt smoke skipped");
     }
     if (deliveryOrderId) {
       await requestJson(

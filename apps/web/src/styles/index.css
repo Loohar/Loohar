@@ -178,6 +178,265 @@ textarea {
     @apply h-12 justify-start px-4;
   }
 
+  .restaurant-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #f7f8fb;
+    color: #334155;
+  }
+
+  .restaurant-shell-body {
+    min-width: 0;
+  }
+
+  .restaurant-shell-sidebar {
+    display: none;
+  }
+
+  .restaurant-shell-sidebar-head {
+    @apply border-b border-line px-4 py-4;
+  }
+
+  .restaurant-shell-tenant {
+    @apply grid gap-1 border-b border-line px-4 py-4 text-sm text-slate-500;
+  }
+
+  .restaurant-shell-tenant strong {
+    @apply text-base text-ink;
+  }
+
+  .restaurant-shell-tenant-eyebrow {
+    @apply text-[0.68rem] font-black uppercase tracking-wide text-mint;
+  }
+
+  .restaurant-shell-nav {
+    @apply grid content-start gap-1 p-3;
+  }
+
+  .restaurant-shell-nav-item {
+    @apply flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-bold text-slate-600 transition hover:bg-slate-100 hover:text-ink;
+  }
+
+  .restaurant-shell-nav-item.active {
+    @apply bg-ink text-white shadow-soft hover:bg-ink hover:text-white;
+  }
+
+  .restaurant-shell-sidebar-footer {
+    @apply mt-auto grid gap-2 border-t border-line p-3;
+  }
+
+  .restaurant-shell-secondary-link {
+    @apply flex min-h-10 items-center gap-2 rounded-md border border-transparent px-3 text-sm font-bold text-slate-600 transition hover:border-line hover:bg-white hover:text-ink;
+  }
+
+  .restaurant-shell-secondary-link[type="button"] {
+    @apply w-full bg-transparent text-left;
+  }
+
+  .restaurant-shell-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 35;
+    display: flex;
+    min-height: 72px;
+    align-items: center;
+    gap: 0.875rem;
+    border-bottom: 1px solid #d9e3ec;
+    background: rgba(255, 255, 255, 0.96);
+    padding: 0.75rem 1rem;
+    backdrop-filter: blur(16px);
+  }
+
+  .restaurant-shell-drawer-trigger,
+  .restaurant-shell-icon-link,
+  .restaurant-shell-mobile-close {
+    @apply grid h-11 w-11 shrink-0 place-items-center rounded-md border border-line bg-white text-ink transition hover:border-mint hover:text-mint focus:outline-none focus:ring-2 focus:ring-mint/25;
+  }
+
+  .restaurant-shell-title {
+    @apply grid min-w-0 flex-1 gap-0.5;
+  }
+
+  .restaurant-shell-title span {
+    @apply truncate text-xs font-black uppercase tracking-wide text-mint;
+  }
+
+  .restaurant-shell-title strong {
+    @apply truncate text-lg text-ink;
+  }
+
+  .restaurant-shell-topbar-actions {
+    @apply ml-auto flex min-w-0 shrink-0 items-center justify-end gap-2;
+  }
+
+  .restaurant-shell-content {
+    @apply mx-auto w-full max-w-[1600px] px-4 py-5;
+  }
+
+  .restaurant-shell-page-head {
+    @apply mb-5 rounded-md border border-line bg-white p-4 shadow-soft;
+  }
+
+  .restaurant-shell-page-head h1 {
+    @apply text-2xl font-black text-ink md:text-3xl;
+  }
+
+  .restaurant-shell-page-head p:last-child {
+    @apply mt-2 max-w-3xl text-sm font-semibold text-slate-500;
+  }
+
+  .restaurant-shell-breadcrumb {
+    @apply mb-1 text-xs font-black uppercase tracking-wide text-mint;
+  }
+
+  .restaurant-shell-mobile-layer {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease, visibility 200ms ease;
+  }
+
+  .restaurant-shell-mobile-layer.open {
+    display: block;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .restaurant-shell-mobile-backdrop {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: rgba(15, 23, 42, 0.42);
+  }
+
+  .restaurant-shell-mobile-drawer {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    display: grid;
+    width: min(88vw, 360px);
+    grid-template-rows: auto auto 1fr auto;
+    overflow-y: auto;
+    border-right: 1px solid #d9e3ec;
+    background: #ffffff;
+    box-shadow: 20px 0 56px rgba(15, 23, 42, 0.18);
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
+  }
+
+  .restaurant-shell-mobile-layer.open .restaurant-shell-mobile-drawer {
+    transform: translateX(0);
+  }
+
+  .restaurant-shell-mobile-head {
+    @apply flex items-center justify-between gap-3 border-b border-line px-4 py-4;
+  }
+
+  .restaurant-shell-tenant.mobile {
+    @apply border-b;
+  }
+
+  .restaurant-shell-sidebar-footer.mobile {
+    @apply mt-0;
+  }
+
+  .restaurant-dashboard-shortcuts {
+    @apply grid gap-3 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .restaurant-dashboard-shortcut {
+    @apply grid min-h-28 grid-cols-[auto_1fr_auto] items-center gap-3 rounded-md border border-line bg-white p-4 text-left shadow-soft transition hover:border-mint hover:-translate-y-0.5;
+  }
+
+  .restaurant-dashboard-shortcut-icon {
+    @apply grid h-11 w-11 place-items-center rounded-md bg-mint/10 text-mint;
+  }
+
+  .restaurant-dashboard-shortcut strong {
+    @apply block text-base text-ink;
+  }
+
+  .restaurant-dashboard-shortcut small {
+    @apply mt-1 block text-sm font-semibold text-slate-500;
+  }
+
+  .restaurant-dashboard-shortcut b {
+    @apply text-lg text-ink;
+  }
+
+  .restaurant-dashboard-dashboard :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
+  .restaurant-dashboard-orders :is(#settings-menu-catalog, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
+  .restaurant-dashboard-customers :is(#settings-menu-catalog, #orders, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
+  .restaurant-dashboard-drivers :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-inventory, #settings-notifications, #reports, #settings),
+  .restaurant-dashboard-reports :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #settings),
+  .restaurant-dashboard-settings :is(#orders, #customers-summary, #customers, #reports-analytics-summary, #reports-menu-insights, #kitchen-summary, #drivers, #reports) {
+    display: none;
+  }
+
+  @media (min-width: 1024px) {
+    .restaurant-shell {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+    }
+
+    .restaurant-shell-sidebar {
+      position: sticky;
+      top: 0;
+      display: grid;
+      height: 100vh;
+      height: 100dvh;
+      grid-template-rows: auto auto 1fr auto;
+      overflow-y: auto;
+      border-right: 1px solid #d9e3ec;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 18px 0 40px rgba(15, 23, 42, 0.05);
+    }
+
+    .restaurant-shell-drawer-trigger {
+      display: none;
+    }
+
+    .restaurant-shell-content {
+      padding: 1.5rem;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .restaurant-shell-topbar {
+      min-height: 64px;
+      padding-inline: 0.75rem;
+    }
+
+    .restaurant-shell-title strong {
+      @apply text-base;
+    }
+
+    .restaurant-shell-topbar-actions > span {
+      display: none;
+    }
+
+    .restaurant-shell-page-head {
+      @apply p-3;
+    }
+
+    .restaurant-shell-page-head h1 {
+      @apply text-xl;
+    }
+
+    .restaurant-dashboard-shortcut {
+      @apply grid-cols-[auto_1fr] gap-3;
+    }
+
+    .restaurant-dashboard-shortcut b {
+      @apply col-span-2 text-base;
+    }
+  }
+
   .nav-tab:disabled {
     @apply cursor-not-allowed opacity-45 hover:border-line hover:text-slate-600;
   }
@@ -2352,7 +2611,9 @@ textarea {
     .public-dropdown-panel,
     .public-mobile-layer,
     .public-mobile-drawer,
-    .public-mobile-trigger {
+    .public-mobile-trigger,
+    .restaurant-shell-mobile-layer,
+    .restaurant-shell-mobile-drawer {
       transition: none;
     }
   }

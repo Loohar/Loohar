@@ -51,7 +51,8 @@ const localDevReservedHosts = import.meta.env.DEV ? ["localhost", ["127", "0", "
 const reservedTenantHosts = new Set([tenantRootDomain, appDomain, vercelProjectDomain, ...localDevReservedHosts, ...reservedHostLabels.map((label) => `${label}.${tenantRootDomain}`)]);
 const adminRoles = ["SUPER_ADMIN"];
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
-const kitchenRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "SUPER_ADMIN"];
+const restaurantStaffRoles = [...restaurantRoles, "CASHIER", "KITCHEN_STAFF"];
+const kitchenRoles = restaurantStaffRoles;
 const customerRoles = ["CUSTOMER"];
 const strongPasswordChecks = [
   { label: "At least 12 characters", test: (value) => value.length >= 12 },
@@ -124,17 +125,20 @@ const onboardingSteps = [
   { id: "review", label: "Review" }
 ];
 const restaurantSettingsLinks = [
+  { id: "account", label: "Account", detail: "Owner profile, login identity, password recovery, and account preferences.", href: "#settings-account", status: "Available" },
   { id: "profile", label: "Profile", detail: "Business name, phone, address, and public restaurant identity.", href: "#settings-profile", status: "Available" },
+  { id: "restaurants-ownership", label: "Restaurants & Ownership", detail: "Ownership access and restaurant tenant assignment for this account.", href: "#settings-restaurants-ownership", status: "Available" },
+  { id: "chains-locations", label: "Chains & Locations", detail: "Location foundation for future chain and multi-location operations.", href: "#settings-chains-locations", status: "Foundation" },
+  { id: "subscription", label: "Subscription & Billing", detail: "Plan, billing status, and subscription entitlements.", href: "#settings-billing", status: "Foundation" },
   { id: "website-branding", label: "Website & Branding", detail: "Homepage copy, logo, hero image, colors, fonts, and section visibility.", href: "#settings-website-branding", status: "Available" },
   { id: "menu-catalog", label: "Menu & Catalog", detail: "Categories, food items, pricing, photos, featured items, and availability.", href: "#settings-menu-catalog", status: "Available" },
   { id: "gallery-social", label: "Gallery & Social", detail: "Public gallery photos and social profile links.", href: "#settings-gallery-social", status: "Available" },
   { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order handling, kitchen flow, and ticket printing.", href: "#settings-ordering", status: "Available" },
   { id: "delivery", label: "Delivery", detail: "Delivery zones, fees, minimums, drivers, and dispatch settings.", href: "#settings-delivery", status: "Available" },
   { id: "domains-seo", label: "Domains & SEO", detail: "Loohar subdomain, custom domain, canonical URL, SSL, and search metadata.", href: "#settings-domains-seo", status: "Available" },
-  { id: "payments", label: "Payments", detail: "Payment provider onboarding and restaurant payout readiness.", href: "#settings-payments", status: "Onboarding" },
+  { id: "payments", label: "Customer Payments", detail: "Customer checkout, payment provider onboarding, and restaurant payout readiness.", href: "#settings-payments", status: "Onboarding" },
   { id: "staff-access", label: "Staff & Access", detail: "Managers, cashiers, kitchen staff, drivers, roles, and access status.", href: "#settings-staff-access", status: "Available" },
   { id: "notifications", label: "Notifications", detail: "Customer SMS and email events for orders, receipts, resets, and welcome flows.", href: "#settings-notifications", status: "Available" },
-  { id: "billing", label: "Billing", detail: "Subscription plan and account billing status.", href: "#settings-billing", status: "Foundation" },
   { id: "security", label: "Security", detail: "Password policy, session controls, audit trails, and account protection.", href: "#settings-security", status: "Foundation" },
   { id: "advanced", label: "Advanced", detail: "Multi-location foundation and future operational controls.", href: "#settings-advanced", status: "Foundation" }
 ];
@@ -549,38 +553,156 @@ function platformNavigation(path, showAddBusiness) {
   return items;
 }
 
-function restaurantOperationsNavigation(user, restaurantSlug, path) {
-  const slug = restaurantSlug || user?.restaurantSlug || "";
+const restaurantPageDefinitions = {
+  dashboard: {
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    title: "Restaurant dashboard",
+    description: "Track the most important operational signals and jump into focused workflows."
+  },
+  orders: {
+    label: "Orders",
+    icon: ReceiptText,
+    title: "Orders",
+    description: "Manage live and historical restaurant orders."
+  },
+  kitchen: {
+    label: "Kitchen",
+    icon: ChefHat,
+    title: "Kitchen",
+    description: "Track preparation and move orders through the kitchen workflow."
+  },
+  customers: {
+    label: "Customers",
+    icon: Users,
+    title: "Customers",
+    description: "View customer relationships, order history, and loyalty activity."
+  },
+  drivers: {
+    label: "Drivers",
+    icon: Truck,
+    title: "Drivers",
+    description: "Manage the restaurant delivery team and active assignments."
+  },
+  reports: {
+    label: "Reports",
+    icon: Activity,
+    title: "Reports",
+    description: "Review restaurant performance, orders, customers, and payouts."
+  },
+  settings: {
+    label: "Settings",
+    icon: UserCog,
+    title: "Settings",
+    description: "Configure restaurant profile, website, ordering, payments, and access."
+  }
+};
+
+const restaurantPageOrder = ["dashboard", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
+const restaurantSettingsChildRoutes = new Set([
+  "account",
+  "profile",
+  "restaurants",
+  "ownership",
+  "locations",
+  "subscription",
+  "website",
+  "branding",
+  "menu",
+  "catalog",
+  "gallery",
+  "social",
+  "ordering",
+  "delivery",
+  "domains",
+  "payments",
+  "staff",
+  "notifications",
+  "billing",
+  "security",
+  "advanced"
+]);
+
+function restaurantPageFromPath(path = "") {
+  if (path === "/kitchen" || path.startsWith("/kitchen/")) return "kitchen";
+  const parts = pathParts(path);
+  if (parts[0] !== "restaurant") return "dashboard";
+  const maybePage = parts[2] || (isRestaurantPageSegment(parts[1]) ? parts[1] : "dashboard");
+  if (maybePage === "onboarding") return "settings";
+  if (restaurantSettingsChildRoutes.has(maybePage)) return "settings";
+  if (maybePage === "dashboard" && typeof window !== "undefined") {
+    const legacyHashPages = {
+      "#orders": "orders",
+      "#customers": "customers",
+      "#drivers": "drivers",
+      "#reports": "reports",
+      "#kitchen": "kitchen",
+      "#settings": "settings",
+      "#settings-menu-catalog": "settings",
+      "#settings-website-branding": "settings",
+      "#settings-domains-seo": "settings"
+    };
+    if (legacyHashPages[window.location.hash]) return legacyHashPages[window.location.hash];
+  }
+  return restaurantPageDefinitions[maybePage] ? maybePage : "dashboard";
+}
+
+function restaurantPagePath(slug = "", page = "dashboard") {
   const base = slug ? `/restaurant/${slug}` : "/restaurant";
-  const kitchenSlug = slug || user?.restaurantSlug || user?.restaurantId || "";
-  const canUseKitchen = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF"].includes(user?.role);
+  if (page === "dashboard") return `${base}/dashboard`;
+  return `${base}/${page}`;
+}
+
+function pathParts(path = "") {
+  return path.split("/").filter(Boolean);
+}
+
+function isRestaurantPageSegment(segment = "") {
+  return Boolean(restaurantPageDefinitions[segment]);
+}
+
+function restaurantMembershipSlugs(user) {
+  const slugs = [
+    user?.restaurantSlug,
+    ...(Array.isArray(user?.memberships) ? user.memberships.map((membership) => membership?.tenantSlug) : [])
+  ].filter(Boolean);
+  return [...new Set(slugs)];
+}
+
+function primaryRestaurantSlugFor(user) {
+  return restaurantMembershipSlugs(user)[0] || user?.restaurantId || "";
+}
+
+function legacyRestaurantRedirectPath(path = "", user) {
+  const parts = pathParts(path);
+  if (parts[0] !== "restaurant" || !isRestaurantPageSegment(parts[1])) return "";
+  const slug = primaryRestaurantSlugFor(user);
+  if (!slug) return "";
+  const page = isRestaurantPageSegment(parts[2]) ? parts[2] : parts[1];
+  return restaurantPagePath(slug, page);
+}
+
+function restaurantOperationsNavigation(user, restaurantSlug, path) {
+  const slug = restaurantSlug || primaryRestaurantSlugFor(user);
+  const currentPage = restaurantPageFromPath(path);
+  const canUseKitchen = kitchenRoles.includes(normalizeRole(user?.role));
   const showSetup = restaurantRoles.includes(user?.role) && (!restaurantOnboardingComplete(user) || path.includes("/onboarding"));
-  const items = [
-    showSetup ? { label: "Setup", icon: PackageCheck, href: `${base}/onboarding`, active: path.includes("/onboarding") } : null,
-    { label: "Dashboard", icon: LayoutDashboard, href: base, active: path === base || path === "/restaurant" },
-    { label: "Orders", icon: ReceiptText, href: `${base}#orders` },
-    canUseKitchen ? { label: "Kitchen", icon: ReceiptText, href: kitchenSlug ? `/kitchen/${kitchenSlug}` : "/kitchen", active: path.startsWith("/kitchen") } : null,
-    { label: "Customers", icon: Users, href: `${base}#customers` },
-    { label: "Drivers", icon: Truck, href: `${base}#drivers` },
-    { label: "Reports", icon: Activity, href: `${base}#reports` },
-    { label: "Settings", icon: UserCog, href: `${base}#settings` }
-  ];
+  const items = restaurantPageOrder
+    .filter((page) => page !== "kitchen" || canUseKitchen)
+    .map((page) => ({
+      ...restaurantPageDefinitions[page],
+      href: restaurantPagePath(slug, page),
+      active: currentPage === page
+    }));
+  if (showSetup) {
+    items.unshift({ label: "Setup", icon: PackageCheck, href: `${slug ? `/restaurant/${slug}` : "/restaurant"}/onboarding`, active: path.includes("/onboarding") });
+  }
   return items.filter(Boolean);
 }
 
-function kitchenNavigation(user, kitchenSlug, path) {
-  const slug = kitchenSlug || user?.restaurantSlug || "";
-  const items = [{ label: "Kitchen", icon: ReceiptText, href: slug ? `/kitchen/${slug}` : "/kitchen", active: path.startsWith("/kitchen") }];
-  if (["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER"].includes(user?.role)) {
-    const restaurantBase = slug ? `/restaurant/${slug}` : "/restaurant";
-    items.push({ label: "Orders", icon: ReceiptText, href: `${restaurantBase}#orders` });
-  }
-  return items;
-}
-
 function dashboardPathFor(user) {
-  const slug = user?.restaurantSlug || user?.restaurantId || "";
-  const restaurantPath = slug ? `/restaurant/${slug}` : "/restaurant";
+  const slug = primaryRestaurantSlugFor(user);
+  const restaurantPath = slug ? `/restaurant/${slug}/dashboard` : "/restaurant/dashboard";
   const onboardingPath = slug ? `/restaurant/${slug}/onboarding` : "/restaurant/onboarding";
   const kitchenPath = slug ? `/kitchen/${slug}` : "/kitchen";
   const needsOnboarding = restaurantRoles.includes(normalizeRole(user?.role)) && !restaurantOnboardingComplete(user);
@@ -604,7 +726,7 @@ function restaurantOnboardingComplete(user) {
 }
 
 function restaurantOnboardingPathFor(user, fallbackSlug = "") {
-  const slug = user?.restaurantSlug || fallbackSlug || user?.restaurantId || "";
+  const slug = primaryRestaurantSlugFor(user) || fallbackSlug || "";
   return slug ? `/restaurant/${slug}/onboarding` : "/restaurant/onboarding";
 }
 
@@ -617,15 +739,19 @@ function isAuthPagePath(path = "") {
 }
 
 function routeSlug(path, prefix) {
-  const parts = path.split("/").filter(Boolean);
+  const parts = pathParts(path);
+  if (prefix === "restaurant" && isRestaurantPageSegment(parts[1])) return "";
   return parts[0] === prefix && parts[1] ? parts[1] : "";
 }
 
 function canAccessTenantRoute(user, path, prefix) {
-  if (!user || user.role === "SUPER_ADMIN") return Boolean(user);
+  if (!user) return false;
+  if (normalizeRole(user.role) === "SUPER_ADMIN") return false;
   const slug = routeSlug(path, prefix);
-  if (prefix === "restaurant" && slug === "onboarding") return restaurantRoles.includes(user.role);
-  return !slug || !user.restaurantSlug || slug === user.restaurantSlug;
+  if (prefix === "restaurant" && slug === "onboarding") return restaurantRoles.includes(normalizeRole(user.role));
+  if (!slug) return true;
+  const allowedSlugs = restaurantMembershipSlugs(user);
+  return allowedSlugs.length ? allowedSlugs.includes(slug) : slug === user.restaurantSlug;
 }
 
 function normalizeRole(role) {
@@ -664,7 +790,7 @@ function returnToForUser(user) {
   const fallback = dashboardPathFor(user);
   const requested = safeReturnTo(fallback);
   if (user?.role === "SUPER_ADMIN" && requested.startsWith("/admin")) return requested;
-  if (restaurantRoles.concat(["CASHIER", "KITCHEN_STAFF"]).includes(user?.role) && (requested.startsWith("/restaurant") || requested.startsWith("/kitchen"))) return requested;
+  if (restaurantStaffRoles.includes(user?.role) && (requested.startsWith("/restaurant") || requested.startsWith("/kitchen"))) return legacyRestaurantRedirectPath(requested, user) || requested;
   if (user?.role === "DRIVER" && requested.startsWith("/driver")) return requested;
   if (user?.role === "CUSTOMER" && (requested.startsWith("/customer") || requested.startsWith("/app/order"))) return requested;
   return fallback;
@@ -2132,6 +2258,138 @@ function AppHeader({ navItems = [] }) {
         </div>
       </div>
     </header>
+  );
+}
+
+function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = "dashboard", apiOnline, apiMode, authChecking, onLogout }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerTriggerRef = useRef(null);
+  const drawerCloseRef = useRef(null);
+  const drawerRef = useRef(null);
+  const previousFocusRef = useRef(null);
+  const safePage = restaurantPageDefinitions[activePage] ? activePage : "dashboard";
+  const navPath = typeof window !== "undefined" ? window.location.pathname : restaurantPagePath(restaurantSlug, safePage);
+  const navItems = restaurantOperationsNavigation(user, restaurantSlug, navPath);
+  const tenantName = user?.restaurantName || readable(restaurantSlug || "Restaurant");
+  const roleLabel = readable(user?.role || "Restaurant user");
+  const pageInfo = restaurantPageDefinitions[safePage];
+  const publicWebsitePath = restaurantSlug ? publicPathForSlug(restaurantSlug) : "/sites/demo-bistro";
+
+  function openDrawer() {
+    previousFocusRef.current = document.activeElement;
+    setDrawerOpen(true);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+  }
+
+  function handleDrawerKeyDown(event) {
+    trapFocus(event, drawerRef.current, drawerCloseRef.current);
+  }
+
+  useEffect(() => {
+    function handleEscape(event) {
+      if (event.key === "Escape") closeDrawer();
+    }
+    window.addEventListener("loohar:navigate", closeDrawer);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("loohar:navigate", closeDrawer);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.setTimeout(() => drawerCloseRef.current?.focus(), 0);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      const restoreTarget = previousFocusRef.current?.isConnected ? previousFocusRef.current : drawerTriggerRef.current;
+      window.setTimeout(() => restoreTarget?.focus(), 0);
+    };
+  }, [drawerOpen]);
+
+  function renderSidebarNav(onNavigate) {
+    return (
+      <nav className="restaurant-shell-nav" aria-label="Restaurant operations navigation">
+        {navItems.map(({ href, label, icon: Icon, active }) => (
+          <a className={`restaurant-shell-nav-item ${active ? "active" : ""}`} href={href} aria-current={active ? "page" : undefined} key={`${label}-${href}`} onClick={onNavigate}>
+            {Icon ? <Icon size={18} aria-hidden="true" /> : null}
+            <span>{label}</span>
+          </a>
+        ))}
+      </nav>
+    );
+  }
+
+  return (
+    <div className="restaurant-shell">
+      <aside className="restaurant-shell-sidebar">
+        <div className="restaurant-shell-sidebar-head">
+          <LooharPlatformBrand size="compact" href="/" />
+        </div>
+        <div className="restaurant-shell-tenant">
+          <span className="restaurant-shell-tenant-eyebrow">Restaurant operations</span>
+          <strong>{tenantName}</strong>
+          <span>{roleLabel}</span>
+        </div>
+        {renderSidebarNav()}
+        <div className="restaurant-shell-sidebar-footer">
+          <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer"><Store size={16} />Public site</a>
+          <a className="restaurant-shell-secondary-link" href="mailto:support@loohar.com"><Shield size={16} />Support</a>
+          <button className="restaurant-shell-secondary-link" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
+        </div>
+      </aside>
+      <div className="restaurant-shell-body">
+        <header className="restaurant-shell-topbar">
+          <button ref={drawerTriggerRef} className="restaurant-shell-drawer-trigger" type="button" aria-label="Open restaurant navigation" aria-expanded={drawerOpen} aria-controls="restaurant-mobile-drawer" onClick={openDrawer}>
+            <MenuIcon size={22} aria-hidden="true" />
+          </button>
+          <div className="restaurant-shell-title">
+            <span>{tenantName}</span>
+            <strong>{pageInfo.title}</strong>
+          </div>
+          <div className="restaurant-shell-topbar-actions">
+            <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill>
+            {authChecking ? <StatusPill tone="neutral">Session check</StatusPill> : null}
+            <a className="restaurant-shell-icon-link" href={publicWebsitePath} target="_blank" rel="noreferrer" aria-label="Open public restaurant website"><Store size={18} /></a>
+            <button className="restaurant-shell-icon-link" type="button" onClick={onLogout} aria-label="Log out"><LogOut size={18} /></button>
+          </div>
+        </header>
+        <main className="restaurant-shell-content">
+          <div className="restaurant-shell-page-head">
+            <div>
+              <p className="restaurant-shell-breadcrumb">Loohar / {tenantName}</p>
+              <h1>{pageInfo.title}</h1>
+              <p>{pageInfo.description}</p>
+            </div>
+          </div>
+          {children}
+        </main>
+      </div>
+      <div className={`restaurant-shell-mobile-layer ${drawerOpen ? "open" : ""}`} aria-hidden={!drawerOpen}>
+        <button className="restaurant-shell-mobile-backdrop" type="button" tabIndex={drawerOpen ? 0 : -1} aria-label="Close restaurant navigation" onClick={closeDrawer} />
+        <div ref={drawerRef} className="restaurant-shell-mobile-drawer" id="restaurant-mobile-drawer" role="dialog" aria-modal="true" aria-label="Restaurant navigation" onKeyDown={handleDrawerKeyDown}>
+          <div className="restaurant-shell-mobile-head">
+            <LooharPlatformBrand size="compact" href="/" />
+            <button ref={drawerCloseRef} className="restaurant-shell-mobile-close" type="button" aria-label="Close restaurant navigation" onClick={closeDrawer}><X size={20} /></button>
+          </div>
+          <div className="restaurant-shell-tenant mobile">
+            <span className="restaurant-shell-tenant-eyebrow">Restaurant operations</span>
+            <strong>{tenantName}</strong>
+            <span>{roleLabel}</span>
+          </div>
+          {renderSidebarNav(closeDrawer)}
+          <div className="restaurant-shell-sidebar-footer mobile">
+            <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer" onClick={closeDrawer}><Store size={16} />Public site</a>
+            <button className="restaurant-shell-secondary-link" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4581,10 +4839,12 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const demoRoleByMode = {
     platform: "SUPER_ADMIN",
     admin: "SUPER_ADMIN",
-    restaurant: "RESTAURANT_OWNER",
+    restaurant: "TENANT_OWNER",
     driver: "DRIVER",
     customer: "CUSTOMER"
   };
+  const demoLoginRole = demoRoleByMode[mode] || "SUPER_ADMIN";
+  const showDemoLogin = import.meta.env.DEV && mode !== "platform";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -4663,7 +4923,6 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       setError("Access denied for this login area. Use the correct Loohar login for your role.");
       return;
     }
-    onLogin(sessionPayload);
     setSession(sessionPayload);
     if (requiresPasswordChange(normalizedUser)) {
       setStep("password");
@@ -4673,6 +4932,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       setStep("mfa");
       return;
     }
+    onLogin(sessionPayload);
     continueAfterAuth(normalizedUser);
   }
 
@@ -4709,7 +4969,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     try {
       const payload = await api("/api/auth/demo-login", {
         method: "POST",
-        body: { role: demoRoleByMode[mode] || "SUPER_ADMIN" },
+        body: { role: demoLoginRole },
         skipAuth: true,
         authRetry: false,
         clearOnUnauthorized: false
@@ -4809,7 +5069,12 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
             </label>
             <button className="button-primary justify-center" type="submit" disabled={!canSubmitLogin}><LogIn size={18} />{loading ? "Signing in" : "Login"}</button>
             <a className="text-center text-sm font-bold text-mint" href="/forgot-password">Forgot password?</a>
-            {import.meta.env.DEV ? <button className="button-muted justify-center" type="button" disabled={loading} onClick={submitDemoLogin}>Use seeded development account</button> : null}
+            {showDemoLogin ? <button className="button-muted justify-center" type="button" disabled={loading} onClick={submitDemoLogin}>Use seeded development account</button> : null}
+            {import.meta.env.DEV && mode === "platform" ? (
+              <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                Restaurant owner testing uses the dedicated <a className="underline" href="/restaurant/login">Restaurant Login</a>.
+              </p>
+            ) : null}
             {loginReadinessMessage && !error ? <p className="text-sm text-slate-500">{loginReadinessMessage}</p> : null}
             {!apiOnline ? <p className="text-sm text-slate-500">Live API health is unavailable. You can still submit; network or credential errors will appear here.</p> : null}
           </form>
@@ -5623,7 +5888,45 @@ function AdminApp({ apiOnline, token, onImpersonate }) {
   );
 }
 
-function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
+function RestaurantDashboardPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-dashboard">{children}</div>;
+}
+
+function RestaurantOrdersPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-orders">{children}</div>;
+}
+
+function RestaurantKitchenPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-kitchen">{children}</div>;
+}
+
+function RestaurantCustomersPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-customers">{children}</div>;
+}
+
+function RestaurantDriversPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-drivers">{children}</div>;
+}
+
+function RestaurantReportsPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-reports">{children}</div>;
+}
+
+function RestaurantSettingsPage({ children }) {
+  return <div className="restaurant-owner-page restaurant-owner-page-settings">{children}</div>;
+}
+
+const restaurantPageComponents = {
+  dashboard: RestaurantDashboardPage,
+  orders: RestaurantOrdersPage,
+  kitchen: RestaurantKitchenPage,
+  customers: RestaurantCustomersPage,
+  drivers: RestaurantDriversPage,
+  reports: RestaurantReportsPage,
+  settings: RestaurantSettingsPage
+};
+
+function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = "dashboard" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
   const restaurantId = user?.restaurantId || routeRestaurantId;
   const [profile, setProfile] = useState(demoRestaurant);
@@ -6622,25 +6925,50 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
   const entitlementSummary = profile.entitlements || {};
   const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY") || (lockFor("PRINTING") ? { ...lockFor("PRINTING"), featureLabel: featureLabels.KITCHEN_DISPLAY, requiredPlan: featureRequiredPlans.KITCHEN_DISPLAY } : null);
   const restaurantBasePath = profile.slug ? `/restaurant/${profile.slug}` : restaurantId ? `/restaurant/${restaurantId}` : "/restaurant";
+  const currentRestaurantPage = restaurantPageDefinitions[activePage] ? activePage : "dashboard";
+  const RestaurantPageComponent = restaurantPageComponents[currentRestaurantPage] || RestaurantDashboardPage;
   const settingsCenterLinks = restaurantSettingsLinks.map((item) => item.id === "payments" ? { ...item, href: `${restaurantBasePath}/onboarding#payments` } : item);
+  const dashboardShortcuts = [
+    { label: "Pending orders", detail: "Open live orders and kitchen queue.", icon: ReceiptText, href: `${restaurantBasePath}/orders?status=pending`, value: stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length },
+    { label: "Today's sales", detail: "Review current-day sales and performance.", icon: CreditCard, href: `${restaurantBasePath}/reports?range=today`, value: money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || 0) },
+    { label: "Available drivers", detail: "Manage delivery coverage and dispatch.", icon: Truck, href: `${restaurantBasePath}/drivers?filter=available`, value: stats.activeDrivers ?? drivers.filter((driver) => driver.available).length },
+    { label: "Customers", detail: "Open customer CRM and loyalty activity.", icon: Users, href: `${restaurantBasePath}/customers`, value: customerSummary.totalCustomers || customers.length },
+    { label: "Website", detail: "Edit branding, website content, and gallery.", icon: Store, href: `${restaurantBasePath}/settings#settings-website-branding`, value: website.websiteEnabled === false ? "Disabled" : "Active" },
+    { label: "Menu", detail: "Manage categories, food items, photos, and availability.", icon: MenuIcon, href: `${restaurantBasePath}/settings#settings-menu-catalog`, value: items.length }
+  ];
 
   return (
-    <div className="space-y-6">
-      <SectionHeader eyebrow="Restaurant dashboard" title={apiOnline ? "Live restaurant operations" : "Demo Bistro operations"} icon={ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
-      <InlineError message={error} />
-      {toast ? <div className={`rounded-md border px-4 py-3 text-sm font-bold ${toast.tone === "bad" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{toast.message}</div> : null}
-      {entitlementSummary.planCode ? (
-        <div className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-slate-600">
-          Plan: <strong className="text-ink">{readable(entitlementSummary.planCode)}</strong>
-          {entitlementSummary.subscriptionStatus ? <> - Status: <strong className="text-ink">{readable(entitlementSummary.subscriptionStatus)}</strong></> : null}
-        </div>
-      ) : null}
-      <div className="grid gap-4 md:grid-cols-4">
+    <RestaurantPageComponent>
+      <div className={`space-y-6 restaurant-dashboard restaurant-dashboard-${currentRestaurantPage}`}>
+        <SectionHeader eyebrow={`${restaurantPageDefinitions[currentRestaurantPage].label} workspace`} title={currentRestaurantPage === "dashboard" ? (apiOnline ? "Live restaurant operations" : "Demo Bistro operations") : restaurantPageDefinitions[currentRestaurantPage].title} icon={restaurantPageDefinitions[currentRestaurantPage].icon || ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
+        <InlineError message={error} />
+        {toast ? <div className={`rounded-md border px-4 py-3 text-sm font-bold ${toast.tone === "bad" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{toast.message}</div> : null}
+        {entitlementSummary.planCode ? (
+          <div className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-slate-600">
+            Plan: <strong className="text-ink">{readable(entitlementSummary.planCode)}</strong>
+            {entitlementSummary.subscriptionStatus ? <> - Status: <strong className="text-ink">{readable(entitlementSummary.subscriptionStatus)}</strong></> : null}
+          </div>
+        ) : null}
+        <div className="grid gap-4 md:grid-cols-4">
         <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
         <Stat icon={ReceiptText} label="Today's sales" value={money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || orders.reduce((sum, order) => sum + order.totalCents, 0))} detail="Tips separated" />
         <Stat icon={Truck} label="Available drivers" value={stats.activeDrivers ?? drivers.filter((driver) => driver.available).length} detail="Internal fleet" />
         <Stat icon={TicketPercent} label="Orders today" value={stats.ordersToday ?? orders.length} detail="Pickup and delivery" />
       </div>
+      {currentRestaurantPage === "dashboard" ? (
+        <div className="restaurant-dashboard-shortcuts" aria-label="Restaurant dashboard shortcuts">
+          {dashboardShortcuts.map(({ label, detail, icon: Icon, href, value }) => (
+            <a className="restaurant-dashboard-shortcut" href={href} key={label}>
+              <span className="restaurant-dashboard-shortcut-icon"><Icon size={20} aria-hidden="true" /></span>
+              <span>
+                <strong>{label}</strong>
+                <small>{detail}</small>
+              </span>
+              <b>{value}</b>
+            </a>
+          ))}
+        </div>
+      ) : null}
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="panel" id="settings-menu-catalog">
           <h3 className="panel-title">Menu management</h3>
@@ -6778,14 +7106,14 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           </div>
         </div>
       </div>
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-4" id="customers-summary">
         <Stat icon={Users} label="Customers" value={customerSummary.totalCustomers || customers.length} detail={`${customerSummary.newCustomersThisMonth || 0} new this month`} />
         <Stat icon={RefreshCw} label="Repeat rate" value={`${customerSummary.repeatCustomerPercentage || 0}%`} detail="Customers with orders" />
         <Stat icon={TicketPercent} label="VIP customers" value={customerSummary.vipCustomerCount || 0} detail="High-value guests" />
         <Stat icon={CreditCard} label="Average order" value={money(growthAnalytics.metrics?.averageOrderValueCents)} detail="All completed orders" />
       </div>
       <div className="grid gap-5 xl:grid-cols-2" id="customers">
-        <div className="panel">
+        <div className="panel" id="customers-crm">
           <h3 className="panel-title">Customer CRM</h3>
           {hasLock("CUSTOMER_CRM") ? <div className="mt-4"><UpgradeRequired feature="CUSTOMER_CRM" lock={lockFor("CUSTOMER_CRM")} /></div> : <div className="mt-4 space-y-3">
             {customers.length === 0 ? <EmptyState title="No customers yet" detail="Customer profiles appear after orders are placed." /> : customers.slice(0, 6).map((customerRow) => (
@@ -6802,7 +7130,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>}
         </div>
-        <div className="panel">
+        <div className="panel" id="settings-loyalty">
           <h3 className="panel-title">Loyalty program</h3>
           {hasLock("LOYALTY") ? <div className="mt-4"><UpgradeRequired feature="LOYALTY" lock={lockFor("LOYALTY")} /></div> : <>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -6819,7 +7147,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-3">
-        <div className="panel">
+        <div className="panel" id="settings-coupons">
           <h3 className="panel-title">Promotions</h3>
           {hasLock("COUPONS") ? <div className="mt-4"><UpgradeRequired feature="COUPONS" lock={lockFor("COUPONS")} /></div> : <div className="mt-4 space-y-2">
             {(promotions.activePromotions || []).length === 0 ? <EmptyState title="No active promotions" detail="Create coupons for fixed discounts, percentage discounts, free delivery, or BOGO campaigns." /> : promotions.activePromotions.map((coupon) => (
@@ -6827,7 +7155,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>}
         </div>
-        <div className="panel">
+        <div className="panel" id="reports-analytics-summary">
           <h3 className="panel-title">Restaurant analytics</h3>
           {hasLock("ANALYTICS") ? <div className="mt-4"><UpgradeRequired feature="ANALYTICS" lock={lockFor("ANALYTICS")} /></div> : <div className="mt-4 space-y-2 text-sm text-slate-600">
             <div className="summary-line"><span>Total orders</span><strong>{growthAnalytics.metrics?.totalOrders || orders.length}</strong></div>
@@ -6836,7 +7164,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <div className="summary-line"><span>Driver tips</span><strong>{money(growthAnalytics.metrics?.driverTipsCents)}</strong></div>
           </div>}
         </div>
-        <div className="panel">
+        <div className="panel" id="reports-menu-insights">
           <h3 className="panel-title">Menu insights</h3>
           {hasLock("MENU_INSIGHTS") ? <div className="mt-4"><UpgradeRequired feature="MENU_INSIGHTS" lock={lockFor("MENU_INSIGHTS")} /></div> : <div className="mt-4 space-y-2">
             {(menuInsights.bestSellingItems || []).length === 0 ? <EmptyState title="No item insights yet" detail="Best sellers and weak performers appear after orders." /> : menuInsights.bestSellingItems.slice(0, 4).map((item) => (
@@ -7013,7 +7341,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-[1fr_1fr]" id="kitchen">
-        <div className="panel">
+        <div className="panel" id="kitchen-summary">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
               <h3 className="panel-title">Kitchen Display System</h3>
@@ -7135,7 +7463,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           <p className="mt-3 text-xs font-semibold text-slate-500">Map drawing integration is reserved for a later provider pass.</p>
           </>}
         </div>
-        <div className="panel">
+        <div className="panel" id="settings-inventory">
           <h3 className="panel-title">Inventory Foundation</h3>
           {hasLock("INVENTORY") ? <div className="mt-4"><UpgradeRequired feature="INVENTORY" lock={lockFor("INVENTORY")} /></div> : <>
           <form className="mt-4 grid gap-2" onSubmit={createInventoryItem}>
@@ -7219,7 +7547,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
         </div>
         </>}
       </div>
-      <div className="grid gap-5 xl:grid-cols-2" id="settings">
+        <div className="grid gap-5 xl:grid-cols-2" id="settings">
         <div className="panel xl:col-span-2">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
@@ -7238,6 +7566,14 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             ))}
           </div>
         </div>
+        <div className="panel" id="settings-account">
+          <h3 className="panel-title">Account</h3>
+          <p className="mt-2 text-sm text-slate-500">Owner login, profile, password recovery, and session access stay separate from the platform owner console.</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600">
+            <div className="summary-line"><span>Signed in as</span><strong>{user?.email || "Restaurant owner"}</strong></div>
+            <div className="summary-line"><span>Role</span><strong>{readable(user?.role || "TENANT_OWNER")}</strong></div>
+          </div>
+        </div>
         <div className="panel" id="settings-profile">
           <h3 className="panel-title">Restaurant profile</h3>
           <p className="mt-2 text-sm text-slate-500">Business name, public contact details, address, and restaurant identity are edited in Website & Branding and saved to the live restaurant profile.</p>
@@ -7247,6 +7583,26 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
             <div className="summary-line"><span>Location</span><strong>{[profile.city, profile.state].filter(Boolean).join(", ") || "Not set"}</strong></div>
           </div>
           <a className="button-primary mt-4" href="#settings-website-branding"><Store size={16} />Edit profile</a>
+        </div>
+        <div className="panel" id="settings-restaurants-ownership">
+          <h3 className="panel-title">Restaurants & Ownership</h3>
+          <p className="mt-2 text-sm text-slate-500">This account opens only the assigned restaurant tenant. Platform-owner controls remain in the Master Admin portal.</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600">
+            <div className="summary-line"><span>Assigned restaurant</span><strong>{profile.businessName || profile.name || "Restaurant"}</strong></div>
+            <div className="summary-line"><span>Slug</span><strong>{profile.slug || user?.restaurantSlug || "Not set"}</strong></div>
+          </div>
+        </div>
+        <div className="panel" id="settings-chains-locations">
+          <h3 className="panel-title">Chains & Locations</h3>
+          <p className="mt-2 text-sm text-slate-500">Location records are ready for future chain workflows without changing the restaurant owner navigation.</p>
+          <div className="mt-4 space-y-2 text-sm text-slate-600">
+            {locations.length === 0 ? <EmptyState title="No location records" detail="Primary restaurant location is active; additional location controls are a future phase." /> : locations.map((location) => (
+              <div className="summary-line rounded-md bg-slate-50 px-3" key={location.id || location.name}>
+                <span>{location.name || profile.businessName || profile.name}</span>
+                <strong>{location.status || "ACTIVE"}</strong>
+              </div>
+            ))}
+          </div>
         </div>
         <div className="panel" id="settings-payments">
           <h3 className="panel-title">Payments</h3>
@@ -7274,8 +7630,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "" }) {
           <h3 className="panel-title">Advanced</h3>
           {hasLock("MULTI_LOCATION") ? <div className="mt-4"><UpgradeRequired feature="MULTI_LOCATION" lock={lockFor("MULTI_LOCATION")} /></div> : <p className="mt-2 text-sm text-slate-500">{locations.length} configured location records. Future support will separate menus, drivers, and reporting by location.</p>}
         </div>
+        </div>
       </div>
-    </div>
+    </RestaurantPageComponent>
   );
 }
 
@@ -8606,18 +8963,12 @@ export default function App() {
   if (isKitchenRoute) {
     const kitchenSlug = window.location.pathname.startsWith("/kitchen/") ? window.location.pathname.split("/")[2] : "";
     const canOpenKitchen = kitchenRoles.includes(user?.role) && canAccessTenantRoute(user, initialPath, "kitchen") && !requiresPasswordChange(user);
+    if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <AppLoadingState />;
+    if (!canOpenKitchen) return !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant operations login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for assigned kitchen staff, cashiers, managers, and restaurant owners." />;
     return (
-      <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-        <AppHeader navItems={kitchenNavigation(user, kitchenSlug, initialPath)} />
-        <main className="mx-auto max-w-7xl px-4 py-6">
-          <LoginStrip user={user} onLogout={logout} />
-          <div className="my-4 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-            <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
-            <StatusPill tone={canOpenKitchen ? "good" : "warn"}>{user?.role || "Kitchen login required"}</StatusPill>
-          </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenKitchen ? <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={kitchenSlug} /> : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant operations login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for assigned kitchen staff, cashiers, managers, and restaurant owners." />}
-        </main>
-      </div>
+      <RestaurantAppShell user={user} restaurantSlug={kitchenSlug || user?.restaurantSlug || ""} activePage="kitchen" apiOnline={apiOnline} apiMode={apiMode} authChecking={authChecking} onLogout={logout}>
+        <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={kitchenSlug} />
+      </RestaurantAppShell>
     );
   }
 
@@ -8653,25 +9004,26 @@ export default function App() {
       return <AuthPage mode="restaurant" apiOnline={apiOnline} onLogin={handleLogin} />;
     }
     const restaurantSlug = isRestaurantRoute && !isRestaurantOnboardingRoute ? routeSlug(initialPath, "restaurant") : isRestaurantOnboardingRoute && initialPath !== "/restaurant/onboarding" ? routeSlug(initialPath, "restaurant") : "";
-    const canOpenRestaurant = restaurantRoles.concat(["SUPER_ADMIN"]).includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
+    const restaurantPage = restaurantPageFromPath(initialPath);
+    const legacyRestaurantRedirect = user ? legacyRestaurantRedirectPath(initialPath, user) : "";
+    const restaurantShellSlug = restaurantSlug || primaryRestaurantSlugFor(user);
+    const allowedRestaurantRouteRoles = restaurantPage === "kitchen" ? kitchenRoles : restaurantRoles;
+    const canOpenRestaurant = allowedRestaurantRouteRoles.includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
     const shouldResumeOnboarding = canOpenRestaurant && restaurantRoles.includes(user?.role) && !restaurantOnboardingComplete(user) && !isRestaurantOnboardingRoute && (initialPath === "/restaurant" || initialPath === `/restaurant/${restaurantSlug}`);
     const restaurantContent = isRestaurantOnboardingRoute
       ? <RestaurantOnboardingWizard apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} />
       : shouldResumeOnboarding
         ? <Redirecting to={restaurantOnboardingPathFor(user, restaurantSlug)} />
-        : <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} />;
+        : restaurantPage === "kitchen"
+          ? <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantShellSlug} />
+          : <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} activePage={restaurantPage} />;
+    if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <AppLoadingState />;
+    if (legacyRestaurantRedirect) return <Redirecting to={legacyRestaurantRedirect} />;
+    if (!canOpenRestaurant) return !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />;
     return (
-      <div className="min-h-screen bg-[#f7f8fb] text-slate-700">
-        <AppHeader navItems={restaurantOperationsNavigation(user, restaurantSlug, initialPath)} />
-        <main className="mx-auto max-w-7xl px-4 py-6">
-          <LoginStrip user={user} onLogout={logout} />
-          <div className="my-4 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-            <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API connected" : apiMode === "CHECKING" ? "Checking API" : "Offline demo fallback"}</StatusPill>
-            <StatusPill tone={canOpenRestaurant ? "good" : "warn"}>{user?.role || "Restaurant login required"}</StatusPill>
-          </div>
-          {apiMode === "CHECKING" || (apiOnline && authChecking) ? <AppLoadingState /> : canOpenRestaurant ? restaurantContent : !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />}
-        </main>
-      </div>
+      <RestaurantAppShell user={user} restaurantSlug={restaurantShellSlug} activePage={restaurantPage} apiOnline={apiOnline} apiMode={apiMode} authChecking={authChecking} onLogout={logout}>
+        {restaurantContent}
+      </RestaurantAppShell>
     );
   }
 

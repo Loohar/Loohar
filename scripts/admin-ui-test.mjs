@@ -23,8 +23,8 @@ function sliceBetween(content, startNeedle, endNeedle) {
 }
 
 const appHeader = sliceBetween(app, "function AppHeader(", "\nfunction LoginStrip");
-const platformNavigation = sliceBetween(app, "function platformNavigation(", "\nfunction restaurantOperationsNavigation");
-const restaurantOperationsNavigation = sliceBetween(app, "function restaurantOperationsNavigation(", "\nfunction kitchenNavigation");
+const platformNavigation = sliceBetween(app, "function platformNavigation(", "\nconst restaurantPageDefinitions");
+const restaurantOperationsNavigation = sliceBetween(app, "function restaurantOperationsNavigation(", "\nfunction dashboardPathFor");
 const adminRoute = sliceBetween(app, "if (isAdminRoute)", "\n  if (isRestaurantRoute || isSiteAdminRoute)");
 const restaurantRoute = sliceBetween(app, "if (isRestaurantRoute || isSiteAdminRoute)", "\n  if (isSiteRoute)");
 const adminApp = sliceBetween(app, "function AdminApp(", "\nfunction RestaurantApp");
@@ -35,7 +35,7 @@ assertCheck(appHeader.includes('<LooharPlatformBrand size="default" />') && appH
 assertCheck(!appHeader.includes("BrandMark") && !appHeader.includes("app-brand-icon") && !appHeader.includes("loohar-brand"), "Authenticated app shell has no legacy platform logo markup");
 assertCheck(adminRoute.includes("platformNavigation(initialPath, user?.role === \"SUPER_ADMIN\")") && adminRoute.includes("<AdminApp"), "Super Admin route renders through the shared platform shell");
 assertCheck(platformNavigation.includes("platformNavItems.map") && platformNavigation.includes('href: "/admin/business/new"') && platformNavigation.includes('label: "Add Business"'), "Super Admin navigation keeps role-specific Add Business action");
-assertCheck(restaurantRoute.includes("restaurantOperationsNavigation(user, restaurantSlug, initialPath)") && restaurantOperationsNavigation.includes('label: "Kitchen"'), "Restaurant operations navigation remains separate and keeps Kitchen in restaurant context");
+assertCheck(restaurantRoute.includes("<RestaurantAppShell") && restaurantOperationsNavigation.includes('page !== "kitchen" || canUseKitchen'), "Restaurant operations navigation remains separate and keeps Kitchen in restaurant context");
 assertCheck(adminApp.includes("View Website") && adminApp.includes("Open Restaurant Admin") && adminApp.includes("Manage Domain") && adminApp.includes("Audit History"), "Super Admin business actions remain available");
 assertCheck(adminApp.includes("logoUrl") && adminApp.includes("Restaurant logo URL") && !adminApp.includes("LooharPlatformBrand"), "Admin tenant website settings still edit tenant logo data, not the platform logo");
 assertCheck(tenantSiteHeader.includes("logoImage") && tenantSiteHeader.includes("restaurant.name") && !tenantSiteHeader.includes("LooharPlatformBrand"), "Public restaurant site header keeps restaurant-uploaded logo data");
