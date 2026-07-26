@@ -14,6 +14,18 @@ const prisma = createPrismaClient();
 const defaultRestaurantSlug = "development-restaurant";
 const ownerPermissions = ["dashboard", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
 const defaultCategories = ["Appetizers", "Soups", "Salads", "Lunch", "Dinner", "Desserts", "Drinks"];
+const developmentModules = [
+  "RESTAURANT_ORDERING",
+  "PICKUP",
+  "DELIVERY",
+  "DRIVER_MANAGEMENT",
+  "LOYALTY",
+  "COUPONS",
+  "DELIVERY_ZONES",
+  "FOOD_CATALOG",
+  "POS_REGISTER",
+  "POS_KIOSK_MODE"
+];
 
 function runtimeEnvironment() {
   return String(process.env.APP_ENV || process.env.VERCEL_ENV || process.env.RENDER_ENVIRONMENT || process.env.NODE_ENV || "development").toLowerCase();
@@ -35,6 +47,10 @@ function publicRestaurantName(slug) {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ") || "Development Restaurant";
+}
+
+function shouldForcePasswordChange() {
+  return process.env.DEV_OWNER_FORCE_PASSWORD_CHANGE === "true";
 }
 
 async function ensureStarterPlan() {
@@ -80,7 +96,7 @@ async function ensureRestaurantFixture(slug) {
       timezone: process.env.DEV_OWNER_RESTAURANT_TIMEZONE || "America/Denver",
       deliveryEnabled: true,
       pickupEnabled: true,
-      enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"],
+      enabledModules: developmentModules,
       onboardingStatus: "COMPLETED",
       onboardingCurrentStep: "review",
       websitePublishedAt: new Date()
@@ -100,7 +116,7 @@ async function ensureRestaurantFixture(slug) {
       slug,
       deliveryEnabled: true,
       pickupEnabled: true,
-      enabledModules: ["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"],
+      enabledModules: developmentModules,
       onboardingStatus: "COMPLETED",
       onboardingCurrentStep: "review",
       websitePublishedAt: new Date()
@@ -187,6 +203,7 @@ async function main() {
   const name = (process.env.DEV_OWNER_NAME || "Loohar Development Owner").trim();
   const restaurantSlug = (process.env.DEV_OWNER_RESTAURANT_SLUG || defaultRestaurantSlug).trim();
   const password = requiredEnv("DEV_OWNER_TEMP_PASSWORD");
+  const forcePasswordChange = shouldForcePasswordChange();
 
   validateStrongPassword(password);
 
@@ -213,9 +230,9 @@ async function main() {
         role: "TENANT_OWNER",
         status: "ACTIVE",
         restaurantId: restaurant.id,
-        forcePasswordChange: true,
-        temporaryPassword: true,
-        passwordChangedAt: null,
+        forcePasswordChange,
+        temporaryPassword: forcePasswordChange,
+        passwordChangedAt: forcePasswordChange ? null : new Date(),
         sessionVersion: 0,
         staffProfile: {
           create: {
@@ -240,9 +257,9 @@ async function main() {
 
     if (resetExisting) {
       data.passwordHash = await hashPassword(password);
-      data.forcePasswordChange = true;
-      data.temporaryPassword = true;
-      data.passwordChangedAt = null;
+      data.forcePasswordChange = forcePasswordChange;
+      data.temporaryPassword = forcePasswordChange;
+      data.passwordChangedAt = forcePasswordChange ? null : new Date();
       data.sessionVersion = { increment: 1 };
     }
 
@@ -282,6 +299,7 @@ async function main() {
       maskedEmail: maskEmail(user.email),
       action,
       restaurantSlug: restaurant.slug,
+      forcePasswordChange,
       runtimeEnvironment: runtimeEnvironment(),
       database: databaseSummary()
     }

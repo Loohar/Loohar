@@ -148,7 +148,7 @@ assertCheck(includesAll(app, [
 assertCheck(app.includes("Live API is required for POS register") && !app.includes("mock POS"), "Frontend does not offer demo-only POS state");
 assertCheck(app.includes("Kiosk mode is active") && app.includes("Manager PIN"), "Frontend includes kiosk lock and exit UI");
 assertCheck(styles.includes(".pos-layout") && styles.includes(".pos-kiosk-lock") && styles.includes("@media (max-width: 767px)"), "POS layout has responsive and kiosk CSS");
-assertCheck(styles.includes("xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.42fr)]") && styles.includes(".pos-cart-line"), "POS register layout separates menu and cart controls");
+assertCheck(styles.includes("lg:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.85fr)]") && styles.includes(".pos-cart-line") && styles.includes(".pos-cart-body") && styles.includes("position: sticky"), "POS register layout separates menu and cart controls with a stable sticky order panel");
 
 if (failures.length) {
   console.error(`pos-release-test (${mode}) failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}.`);

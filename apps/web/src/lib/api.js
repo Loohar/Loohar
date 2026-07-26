@@ -19,6 +19,14 @@ const configuredApiHealthUrl =
     ? "/health"
     : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
+const inflightRequests = new Map();
+const healthState = {
+  payload: null,
+  okUntil: 0,
+  failUntil: 0,
+  promise: null,
+  lastError: null
+};
 
 function apiPath(path) {
   if (API_URL.endsWith("/api") && path.startsWith("/api/")) return path.slice(4);
@@ -70,7 +78,21 @@ async function refreshStoredSession() {
   return payload;
 }
 
-export async function api(path, options = {}) {
+function requestMethod(options = {}) {
+  return String(options.method || "GET").toUpperCase();
+}
+
+function shouldDedupeRequest(path, options = {}) {
+  return !options.skipDedupe && requestMethod(options) === "GET" && !options.body && !isAuthPath(path);
+}
+
+function requestDedupeKey(path, options = {}, token = "") {
+  const headers = options.headers || {};
+  const authKey = options.skipAuth ? "public" : token ? "token" : "anon";
+  return [requestMethod(options), `${API_URL}${apiPath(path)}`, authKey, headers.Accept || headers.accept || ""].join(" ");
+}
+
+async function performApiRequest(path, options = {}) {
   const body = options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body;
   const token = options.skipAuth ? "" : options.token || authStorage.getItem("accessToken");
   const url = `${API_URL}${apiPath(path)}`;
@@ -88,6 +110,7 @@ export async function api(path, options = {}) {
   delete requestOptions.clearOnUnauthorized;
   delete requestOptions.authRetry;
   delete requestOptions.skipAuth;
+  delete requestOptions.skipDedupe;
   const response = await fetch(url, requestOptions);
 
   if (!response.ok) {
@@ -119,7 +142,19 @@ export async function api(path, options = {}) {
   return response.json();
 }
 
-export async function checkApiHealth() {
+export async function api(path, options = {}) {
+  if (!shouldDedupeRequest(path, options)) return performApiRequest(path, options);
+  const token = options.skipAuth ? "" : options.token || authStorage.getItem("accessToken");
+  const key = requestDedupeKey(path, options, token);
+  if (inflightRequests.has(key)) return inflightRequests.get(key);
+  const request = performApiRequest(path, options).finally(() => {
+    if (inflightRequests.get(key) === request) inflightRequests.delete(key);
+  });
+  inflightRequests.set(key, request);
+  return request;
+}
+
+async function runApiHealthProbe() {
   const inferredCandidates = API_URL.endsWith("/api")
     ? [`${API_URL}/health`, `${API_ORIGIN}/health`]
     : [`${API_URL}/api/health`, `${API_URL}/health`];
@@ -127,25 +162,78 @@ export async function checkApiHealth() {
   let lastError;
   for (const url of candidates) {
     try {
-      if (isDev) globalThis.console?.info?.("[api] health check");
       const response = await fetch(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } });
       if (!response.ok) throw new Error(`Health check failed with ${response.status}`);
       const payload = await response.json();
-      if (isDev) {
-        globalThis.console?.info?.("[api] health result:", payload);
-        globalThis.console?.info?.("[api] mode: LIVE");
-      }
       return payload;
     } catch (error) {
       lastError = error;
-      if (isDev) globalThis.console?.warn?.("[api] health failed", error);
     }
   }
-  if (isDev) {
-    globalThis.console?.warn?.("[api] mode: DEMO");
-    globalThis.console?.warn?.("API health check failed. Verify VITE_API_URL and backend /health.", lastError);
-  }
   throw lastError;
+}
+
+export async function checkApiHealth(options = {}) {
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (!force && healthState.payload && now < healthState.okUntil) return healthState.payload;
+  if (!force && healthState.promise) return healthState.promise;
+  if (!force && healthState.lastError && now < healthState.failUntil) throw healthState.lastError;
+
+  const probe = runApiHealthProbe()
+    .then((payload) => {
+      healthState.payload = payload;
+      healthState.okUntil = Date.now() + 8000;
+      healthState.failUntil = 0;
+      healthState.lastError = null;
+      if (isDev) globalThis.console?.info?.("[api] mode: LIVE");
+      return payload;
+    })
+    .catch((error) => {
+      healthState.payload = null;
+      healthState.okUntil = 0;
+      healthState.failUntil = Date.now() + 2500;
+      healthState.lastError = error;
+      throw error;
+    })
+    .finally(() => {
+      if (healthState.promise === probe) healthState.promise = null;
+    });
+  healthState.promise = probe;
+  return probe;
+}
+
+export function resetApiHealthCache() {
+  healthState.payload = null;
+  healthState.okUntil = 0;
+  healthState.failUntil = 0;
+  healthState.promise = null;
+  healthState.lastError = null;
+}
+
+export function apiDebugState() {
+  return {
+    inflightRequests: inflightRequests.size,
+    healthCached: Boolean(healthState.payload),
+    healthOkUntil: healthState.okUntil,
+    healthFailUntil: healthState.failUntil
+  };
+}
+
+if (isDev) {
+  globalThis.__LOOHAR_API_DEBUG__ = apiDebugState;
+}
+
+export async function checkApiHealthLegacyForTests() {
+  return checkApiHealth({ force: true });
+}
+
+try {
+  if (isDev) {
+    globalThis.addEventListener?.("online", () => resetApiHealthCache());
+  }
+} catch {
+  // Browser debug helper is optional.
 }
 
 export { API_URL, API_ORIGIN };

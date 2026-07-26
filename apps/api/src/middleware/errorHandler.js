@@ -4,6 +4,27 @@ export function notFound(req, res) {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.originalUrl}` });
 }
 
+function requestIdFor(req) {
+  return req.get?.("x-request-id")
+    || req.get?.("x-loohar-request-id")
+    || req.get?.("x-loohar-pos-request-id")
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function structuredOperationalError({ req, res, status = 503, code, message }) {
+  const requestId = requestIdFor(req);
+  console.error("Operational API error.", { requestId, code, path: req.originalUrl, method: req.method });
+  return res.status(status).json({
+    error: { code, message, requestId }
+  });
+}
+
+function isPrismaMissingColumn(error) {
+  return error?.code === "P2022"
+    || /column .* does not exist/i.test(error?.message || "")
+    || /The column .* does not exist in the current database/i.test(error?.message || "");
+}
+
 export function errorHandler(error, req, res, next) {
   if (res.headersSent) return next(error);
   if (error instanceof ZodError) {
@@ -15,6 +36,22 @@ export function errorHandler(error, req, res, next) {
   if (["P1000", "P1001", "P1002", "P1017"].includes(error.code)) {
     console.error("Database unavailable. Start PostgreSQL and verify DATABASE_URL.", error.message);
     return res.status(503).json({ error: "Database unavailable. Start PostgreSQL and verify DATABASE_URL." });
+  }
+  if (isPrismaMissingColumn(error)) {
+    if (req.originalUrl?.includes("/pos/")) {
+      return structuredOperationalError({
+        req,
+        res,
+        code: "POS_CONFIGURATION_UNAVAILABLE",
+        message: "The POS configuration could not be loaded."
+      });
+    }
+    return structuredOperationalError({
+      req,
+      res,
+      code: "DATABASE_SCHEMA_MISMATCH",
+      message: "The service is temporarily unavailable while the database schema is updated."
+    });
   }
   const status = error.status || 500;
   if (status === 403 && error.code && String(error.code).startsWith("FEATURE_")) {
@@ -55,7 +92,6 @@ export function errorHandler(error, req, res, next) {
     });
   }
   res.status(status).json({
-    error: status === 500 ? "Internal server error" : error.message,
-    detail: process.env.NODE_ENV === "production" ? undefined : error.message
+    error: status === 500 ? "Internal server error" : error.message
   });
 }

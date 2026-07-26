@@ -34,6 +34,81 @@ function newestLegacySubscription(subscriptions = []) {
   return active || subscriptions[0] || null;
 }
 
+function isInternalTenantClassification(value) {
+  return ["INTERNAL_DEVELOPMENT", "PRIVATE_BETA"].includes(String(value || "").toUpperCase());
+}
+
+function isActiveSimulation(simulation) {
+  if (!simulation?.enabled) return false;
+  if (!simulation.expiresAt) return true;
+  return new Date(simulation.expiresAt).getTime() > Date.now();
+}
+
+function applyEntitlementSimulation(entitlement, restaurant) {
+  const tenantClassification = restaurant.tenantClassification || "STANDARD";
+  const activeSimulation = isActiveSimulation(restaurant.entitlementSimulation)
+    ? restaurant.entitlementSimulation
+    : null;
+  const simulation = activeSimulation || (
+    isInternalTenantClassification(tenantClassification) && entitlement.tenantStatus === "ACTIVE"
+      ? { enabled: true, mode: "FULL_ACCESS", source: "INTERNAL_FULL_ACCESS_DEFAULT" }
+      : null
+  );
+
+  if (!simulation) {
+    return {
+      ...entitlement,
+      tenantClassification,
+      actualPlanCode: entitlement.planCode,
+      actualSubscriptionStatus: entitlement.subscriptionStatus,
+      fullAccess: false,
+      simulation: restaurant.entitlementSimulation
+        ? {
+            enabled: Boolean(restaurant.entitlementSimulation.enabled),
+            mode: restaurant.entitlementSimulation.mode,
+            simulatedPlan: restaurant.entitlementSimulation.simulatedPlan || null,
+            simulatedSubscriptionStatus: restaurant.entitlementSimulation.simulatedSubscriptionStatus || null,
+            expiresAt: restaurant.entitlementSimulation.expiresAt || null,
+            active: false
+          }
+        : null
+    };
+  }
+
+  const mode = String(simulation.mode || "FULL_ACCESS").toUpperCase();
+  const simulatedPlan = normalizePlanCode(simulation.simulatedPlan || entitlement.planCode);
+  const statusByMode = {
+    FULL_ACCESS: "ACTIVE",
+    SIMULATE_PLAN: normalizeSubscriptionStatus(simulation.simulatedSubscriptionStatus || "ACTIVE"),
+    SIMULATE_SUSPENDED: "SUSPENDED",
+    SIMULATE_EXPIRED_TRIAL: "CANCELLED",
+    SIMULATE_PAST_DUE: "PAST_DUE",
+    SIMULATE_CANCELLED: "CANCELLED"
+  };
+  const simulatedStatus = statusByMode[mode] || normalizeSubscriptionStatus(simulation.simulatedSubscriptionStatus || entitlement.subscriptionStatus);
+
+  return {
+    ...entitlement,
+    tenantClassification,
+    actualPlanCode: entitlement.planCode,
+    actualSubscriptionStatus: entitlement.subscriptionStatus,
+    planCode: mode === "FULL_ACCESS" ? "ENTERPRISE" : simulatedPlan,
+    subscriptionStatus: entitlement.tenantStatus === "ACTIVE" ? simulatedStatus : entitlement.subscriptionStatus,
+    subscriptionSource: activeSimulation ? "ENTITLEMENT_SIMULATION" : "INTERNAL_FULL_ACCESS_DEFAULT",
+    fullAccess: mode === "FULL_ACCESS" && entitlement.tenantStatus === "ACTIVE",
+    fullAccessSource: activeSimulation ? "ENTITLEMENT_SIMULATION" : "INTERNAL_FULL_ACCESS_DEFAULT",
+    simulation: {
+      enabled: true,
+      mode,
+      simulatedPlan: mode === "FULL_ACCESS" ? "ENTERPRISE" : simulatedPlan,
+      simulatedSubscriptionStatus: simulatedStatus,
+      expiresAt: simulation.expiresAt || null,
+      active: true,
+      source: simulation.source || (activeSimulation ? "DATABASE" : "DEFAULT")
+    }
+  };
+}
+
 export function restaurantIdFromRequest(req) {
   return req.resolvedRestaurantId || req.params?.restaurantId || req.body?.restaurantId || req.query?.restaurantId || req.tenantId || req.user?.restaurantId || null;
 }
@@ -54,6 +129,8 @@ export async function loadRestaurantEntitlements(restaurantId, req = null) {
       businessName: true,
       status: true,
       enabledModules: true,
+      tenantClassification: true,
+      entitlementSimulation: true,
       platformSubscriptions: {
         include: { plan: true },
         orderBy: [{ updatedAt: "desc" }],
@@ -81,7 +158,7 @@ export async function loadRestaurantEntitlements(restaurantId, req = null) {
         ? "CANCELLED"
         : "ACTIVE";
 
-  const entitlement = {
+  const baseEntitlement = {
     restaurantId: restaurant.id,
     restaurantSlug: restaurant.slug,
     restaurantName: restaurant.businessName || restaurant.name,
@@ -95,6 +172,7 @@ export async function loadRestaurantEntitlements(restaurantId, req = null) {
     platformSubscriptionId: platformSubscription?.id || null,
     tenantSubscriptionId: legacySubscription?.id || null
   };
+  const entitlement = applyEntitlementSimulation(baseEntitlement, restaurant);
 
   if (req) req.entitlementCache.set(restaurantId, entitlement);
   return entitlement;

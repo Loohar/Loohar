@@ -9,6 +9,7 @@ import { Server } from "socket.io";
 import authRoutes from "./routes/auth.js";
 import customerRoutes from "./routes/customer.js";
 import driverRoutes from "./routes/driver.js";
+import entitlementSimulationRoutes from "./routes/entitlementSimulation.js";
 import kitchenRoutes from "./routes/kitchen.js";
 import orderPaymentRoutes from "./routes/orderPayments.js";
 import orderRoutes from "./routes/orders.js";
@@ -24,6 +25,7 @@ import { authorizeNetOrdersWebhookRouter, authorizeNetPlatformWebhookRouter, str
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
+import { refreshSchemaCompatibility } from "./utils/schemaCompatibility.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
 import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
@@ -87,7 +89,22 @@ app.use("/api/webhooks/stripe-connect", express.raw({ type: "application/json", 
 app.use("/api/webhooks/authorize-net-platform", express.raw({ type: "application/json", limit: "2mb" }), authorizeNetPlatformWebhookRouter);
 app.use("/api/webhooks/authorize-net-orders", express.raw({ type: "application/json", limit: "2mb" }), authorizeNetOrdersWebhookRouter);
 app.use(express.json({ limit: "8mb" }));
-app.use(rateLimit({ windowMs: 60_000, limit: 120 }));
+const posSafeReadPathPattern = /^\/api\/restaurants?\/[^/]+\/pos\/(?:bootstrap|config|menu|held-orders|devices|shifts\/current|orders\/[^/]+\/receipt)\/?$/;
+const restaurantSafeReadPathPattern = /^\/api\/restaurants?\/[^/]+\/(?:dashboard|profile|settings(?:\/(?:search|audit|[a-z0-9-]+))?|menu\/(?:categories|items|insights)|orders|drivers|dispatch|customers(?:\/summary)?|loyalty|promotions\/analytics|analytics|locations|website|domain|gallery|social-links|employees|printing|notification-settings|delivery-zones|inventory|reports\/(?:sales|operations))\/?$/;
+function isSafeReadBurstPath(req) {
+  return posSafeReadPathPattern.test(req.path) || restaurantSafeReadPathPattern.test(req.path);
+}
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.method === "GET" && isSafeReadBurstPath(req),
+  message: {
+    error: "Too many requests. Please wait a moment and try again.",
+    code: "RATE_LIMITED"
+  }
+}));
 app.use(morgan("dev"));
 app.use((req, res, next) => {
   const json = res.json.bind(res);
@@ -95,9 +112,14 @@ app.use((req, res, next) => {
   next();
 });
 
-const healthPayload = { ok: true, service: "api", platform: process.env.PLATFORM_NAME || "Loohar", domain: process.env.PLATFORM_DOMAIN || "loohar.com" };
-app.get("/health", (req, res) => res.json(healthPayload));
-app.get("/api/health", (req, res) => res.json(healthPayload));
+const baseHealthPayload = { service: "api", platform: process.env.PLATFORM_NAME || "Loohar", domain: process.env.PLATFORM_DOMAIN || "loohar.com" };
+async function healthHandler(req, res) {
+  const schema = await refreshSchemaCompatibility();
+  const ok = Boolean(schema.ok);
+  res.status(ok ? 200 : 503).json({ ok, ...baseHealthPayload, schema });
+}
+app.get("/health", healthHandler);
+app.get("/api/health", healthHandler);
 app.use("/public", publicRoutes);
 app.use("/admin", superAdminRoutes);
 app.use("/restaurant", restaurantRoutes);
@@ -105,6 +127,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/admin", superAdminRoutes);
 app.use("/api/restaurants", posRoutes);
 app.use("/api/restaurant", posRoutes);
+app.use("/api/restaurants", entitlementSimulationRoutes);
+app.use("/api/restaurant", entitlementSimulationRoutes);
 app.use("/api/restaurants", restaurantRoutes);
 app.use("/api/restaurant", restaurantRoutes);
 app.use("/api/customer", customerRoutes);

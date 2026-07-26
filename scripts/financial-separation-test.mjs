@@ -79,7 +79,8 @@ const groups = {
   "order-payments": () => {
     assertCheck(includesAll(schema, ["model RestaurantMerchantAccount", "model RestaurantOrderPayment", "model RestaurantPaymentEvent", "model RestaurantRefund"]), "Restaurant order payment models are present");
     assertCheck(includesAll(orderRoutes, ['"/quote"', '"/create"', '"/confirm"', '"/refund"', '"/:orderId/status"', '"/:orderId/receipt"', '"/merchant-account/onboarding-link"']), "Restaurant order payment routes exist");
-    assertCheck(orderService.includes("transfer_data[destination]") && orderService.includes("application_fee_amount"), "Restaurant order payments use Stripe Connect destination charges with platform fee");
+    assertCheck(orderService.includes("stripeAccount: merchant.stripeAccountId") && !orderService.includes("transfer_data[destination]"), "Restaurant order payments use Stripe Connect direct charges on the restaurant account");
+    assertCheck(includesAll(quoteService, ["platformFeeCents: feeCents", "looharPlatformFeeCents: 0", "processorFeesMayApply: true"]) && orderService.includes("quote.platformFeeCents > 0 ? { application_fee_amount: quote.platformFeeCents } : {}"), "Restaurant order payments omit Loohar application fees by default while preserving processor-fee disclosure");
     assertCheck(!orderService.includes('path: "/checkout/sessions"') && !orderService.includes('mode: "subscription"'), "Restaurant order payments do not use Stripe Billing Checkout Sessions");
   },
   "stripe-billing": () => {

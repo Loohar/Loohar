@@ -30,7 +30,18 @@ const kioskExitLimiter = rateLimit({
   limit: 8,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Too many kiosk exit attempts. Please wait before trying again." }
+  message: { error: "Too many kiosk exit attempts. Please wait before trying again.", code: "RATE_LIMITED" }
+});
+
+const posReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "POS is receiving too many requests. Please wait a moment and try again.",
+    code: "RATE_LIMITED"
+  }
 });
 
 function deviceContext(req) {
@@ -38,6 +49,65 @@ function deviceContext(req) {
     deviceId: req.get("x-loohar-device-id") || req.body?.deviceId || req.query?.deviceId || null,
     fingerprint: req.get("x-loohar-device-fingerprint") || req.body?.deviceFingerprint || null
   };
+}
+
+function summarizePosMenu(categories = []) {
+  const items = categories.flatMap((category) => category.items || []);
+  const latestUpdatedAt = [categories, items]
+    .flat()
+    .map((record) => record?.updatedAt || record?.createdAt)
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0] || 0;
+  const availableItems = items.filter((item) => item.available !== false).length;
+
+  return {
+    categoryCount: categories.length,
+    itemCount: items.length,
+    availableItems,
+    menuVersion: `${categories.length}:${items.length}:${latestUpdatedAt}`
+  };
+}
+
+function posEntitlementPayload(req) {
+  if (!req.entitlements) return null;
+  return {
+    planCode: req.entitlements.planCode,
+    subscriptionStatus: req.entitlements.subscriptionStatus,
+    subscriptionSource: req.entitlements.subscriptionSource,
+    fullAccess: Boolean(req.entitlements.fullAccess),
+    simulation: req.entitlements.simulation || null
+  };
+}
+
+function buildPosMenuPayload(req, categories, requestId = req.get("x-loohar-pos-request-id") || null) {
+  const summary = summarizePosMenu(categories);
+  return {
+    requestId,
+    generatedAt: new Date().toISOString(),
+    tenantId: req.resolvedRestaurantId,
+    restaurantId: req.resolvedRestaurantId,
+    restaurantSlug: req.posRestaurant.slug,
+    locationId: req.posRestaurant.locations?.[0]?.id || null,
+    timezone: req.posRestaurant.timezone || "America/Denver",
+    menuVersion: summary.menuVersion,
+    availabilitySummary: {
+      categories: summary.categoryCount,
+      items: summary.itemCount,
+      availableItems: summary.availableItems
+    },
+    entitlement: posEntitlementPayload(req),
+    categories
+  };
+}
+
+async function findHeldOrders(restaurantId) {
+  return prisma.posOrderSession.findMany({
+    where: { restaurantId, status: "HELD" },
+    orderBy: { updatedAt: "desc" },
+    take: 50
+  });
 }
 
 async function resolvePosContext(req, res, next) {
@@ -56,7 +126,29 @@ router.use("/:restaurantId/pos", requireAuth, resolvePosContext, featureGuard(FE
   restaurantId: (req) => req.resolvedRestaurantId
 }));
 
-router.get("/:restaurantId/pos/config", async (req, res, next) => {
+router.get("/:restaurantId/pos/bootstrap", posReadLimiter, async (req, res, next) => {
+  const startedAt = Date.now();
+  const requestId = req.get("x-loohar-pos-request-id") || `pos:${Date.now()}`;
+  try {
+    const [config, categories, heldOrders] = await Promise.all([
+      posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) }),
+      posMenu(req.resolvedRestaurantId),
+      findHeldOrders(req.resolvedRestaurantId)
+    ]);
+    res.json({
+      requestId,
+      generatedAt: new Date().toISOString(),
+      performance: { serverDurationMs: Date.now() - startedAt },
+      config,
+      menu: buildPosMenuPayload(req, categories, requestId),
+      heldOrders
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/pos/config", posReadLimiter, async (req, res, next) => {
   try {
     const config = await posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) });
     res.json(config);
@@ -65,10 +157,10 @@ router.get("/:restaurantId/pos/config", async (req, res, next) => {
   }
 });
 
-router.get("/:restaurantId/pos/menu", async (req, res, next) => {
+router.get("/:restaurantId/pos/menu", posReadLimiter, async (req, res, next) => {
   try {
     const categories = await posMenu(req.resolvedRestaurantId);
-    res.json({ categories });
+    res.json(buildPosMenuPayload(req, categories));
   } catch (error) {
     next(error);
   }
@@ -108,13 +200,9 @@ router.post("/:restaurantId/pos/orders", async (req, res, next) => {
   }
 });
 
-router.get("/:restaurantId/pos/held-orders", async (req, res, next) => {
+router.get("/:restaurantId/pos/held-orders", posReadLimiter, async (req, res, next) => {
   try {
-    const heldOrders = await prisma.posOrderSession.findMany({
-      where: { restaurantId: req.resolvedRestaurantId, status: "HELD" },
-      orderBy: { updatedAt: "desc" },
-      take: 50
-    });
+    const heldOrders = await findHeldOrders(req.resolvedRestaurantId);
     res.json({ heldOrders });
   } catch (error) {
     next(error);
@@ -208,7 +296,7 @@ router.post("/:restaurantId/pos/payments/card", async (req, res, next) => {
   }
 });
 
-router.get("/:restaurantId/pos/devices", async (req, res, next) => {
+router.get("/:restaurantId/pos/devices", posReadLimiter, async (req, res, next) => {
   try {
     const devices = await prisma.posDevice.findMany({
       where: { restaurantId: req.resolvedRestaurantId },
@@ -277,7 +365,7 @@ router.post("/:restaurantId/pos/devices/:deviceId/kiosk/exit", kioskExitLimiter,
   }
 });
 
-router.get("/:restaurantId/pos/shifts/current", async (req, res, next) => {
+router.get("/:restaurantId/pos/shifts/current", posReadLimiter, async (req, res, next) => {
   try {
     const shift = await currentShift({
       restaurantId: req.resolvedRestaurantId,
@@ -318,7 +406,7 @@ router.post("/:restaurantId/pos/shifts/:shiftId/clock-out", async (req, res, nex
   }
 });
 
-router.get("/:restaurantId/pos/orders/:orderId/receipt", async (req, res, next) => {
+router.get("/:restaurantId/pos/orders/:orderId/receipt", posReadLimiter, async (req, res, next) => {
   try {
     const receipt = await prisma.posReceipt.findFirst({
       where: { restaurantId: req.resolvedRestaurantId, orderId: req.params.orderId },

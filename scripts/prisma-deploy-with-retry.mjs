@@ -1,4 +1,11 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { config as loadDotenv } from "dotenv";
+
+for (const envPath of [resolve(process.cwd(), ".env"), resolve(process.cwd(), "apps/api/.env")]) {
+  if (existsSync(envPath)) loadDotenv({ path: envPath, override: false });
+}
 
 const maxAttempts = 3;
 const retryDelaysMs = [5000, 15000, 30000];

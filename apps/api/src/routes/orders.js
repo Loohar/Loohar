@@ -17,6 +17,22 @@ function canReadOrder(req, order) {
   return false;
 }
 
+function receiptFormatFor(req) {
+  const requested = req.body?.format || req.query?.format || "80mm";
+  return requested === "58mm" ? "58mm" : "80mm";
+}
+
+function receiptKindFor(req) {
+  const requested = String(req.body?.kind || req.query?.kind || "customer").toLowerCase();
+  if (["kitchen", "kitchen_ticket"].includes(requested)) return "kitchen";
+  if (["driver", "driver_slip"].includes(requested)) return "driver";
+  return "customer";
+}
+
+function receiptReprintFor(req) {
+  return req.body?.reprint === true || req.query?.reprint === "1" || req.query?.reprint === "true";
+}
+
 router.get("/:orderId/track", async (req, res, next) => {
   try {
     const order = await findOrderForTracking(req.params.orderId, req.query.token?.toString());
@@ -71,7 +87,7 @@ router.get("/:orderId/receipt", async (req, res, next) => {
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (!canReadOrder(req, order)) return res.status(403).json({ error: "Order access denied" });
     const issued = await issueOrderTrackingToken(order.id);
-    res.json({ receipt: buildReceiptPayload(issued.order, { kind: req.query.kind?.toString() || "customer", trackingToken: issued.trackingToken }) });
+    res.json({ receipt: buildReceiptPayload(issued.order, { kind: receiptKindFor(req), trackingToken: issued.trackingToken, format: receiptFormatFor(req), isReprint: receiptReprintFor(req) }) });
   } catch (error) {
     next(error);
   }
@@ -82,9 +98,12 @@ router.get("/:orderId/receipt/print", async (req, res, next) => {
     const order = await prisma.order.findUnique({ where: { id: req.params.orderId }, include: receiptOrderInclude() });
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (!canReadOrder(req, order)) return res.status(403).json({ error: "Order access denied" });
+    const kind = receiptKindFor(req);
+    const format = receiptFormatFor(req);
+    const isReprint = receiptReprintFor(req);
     const issued = await issueOrderTrackingToken(order.id);
-    await recordAudit({ actorUserId: req.user.id, restaurantId: order.restaurantId, action: "receipt.printed", entityType: "Order", entityId: order.id, metadata: { kind: req.query.kind || "customer" } });
-    res.json({ receipt: buildReceiptPayload(issued.order, { kind: req.query.kind?.toString() || "customer", trackingToken: issued.trackingToken }) });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: order.restaurantId, action: isReprint ? "receipt.reprinted" : "receipt.printed", entityType: "Order", entityId: order.id, metadata: { kind, format, isReprint } });
+    res.json({ receipt: buildReceiptPayload(issued.order, { kind, trackingToken: issued.trackingToken, format, isReprint }) });
   } catch (error) {
     next(error);
   }

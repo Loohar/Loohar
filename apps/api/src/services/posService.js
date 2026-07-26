@@ -54,6 +54,10 @@ const ROLE_PERMISSIONS = {
 const ORDER_TYPES = new Set(["PICKUP", "DELIVERY", "DINE_IN", "WALK_IN"]);
 const ACTIVE_RESTAURANT_STATUSES = new Set(["ACTIVE"]);
 const POS_ROLES = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER", "CASHIER"]);
+const POS_RESTAURANT_INCLUDE = {
+  locations: { where: { active: true }, orderBy: { createdAt: "asc" } },
+  merchantAccounts: true
+};
 
 export function httpError(message, status = 400, details = {}) {
   const error = new Error(message);
@@ -71,6 +75,123 @@ function safeJson(value, fallback) {
   return value && typeof value === "object" ? value : fallback;
 }
 
+export const ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE =
+  "No additional Loohar transaction fee. Standard payment-processing fees may still apply.";
+
+const ZERO_PLATFORM_FEE_QUOTE = Object.freeze({
+  zeroLooharPlatformFee: true,
+  looharPlatformFeeCents: 0,
+  platformFeeCents: 0,
+  processorFeesMayApply: true,
+  paymentFeeDisclosure: ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE
+});
+
+function zeroPlatformFeeQuoteJson(extra = {}) {
+  return { ...ZERO_PLATFORM_FEE_QUOTE, ...extra };
+}
+
+function rawLineOptionIds(line = {}) {
+  const selections = [];
+  if (Array.isArray(line.optionIds)) selections.push(...line.optionIds);
+  if (Array.isArray(line.modifierOptionIds)) selections.push(...line.modifierOptionIds);
+  if (Array.isArray(line.modifierSelections)) {
+    for (const selection of line.modifierSelections) {
+      if (Array.isArray(selection?.optionIds)) selections.push(...selection.optionIds);
+      if (selection?.optionId) selections.push(selection.optionId);
+    }
+  }
+  if (line.modifierSelections && typeof line.modifierSelections === "object" && !Array.isArray(line.modifierSelections)) {
+    for (const value of Object.values(line.modifierSelections)) {
+      if (Array.isArray(value)) selections.push(...value);
+      else if (value) selections.push(value);
+    }
+  }
+  return selections.map((optionId) => String(optionId || "").trim()).filter(Boolean);
+}
+
+function normalizeLineOptionIds(line = {}) {
+  return [...new Set(rawLineOptionIds(line))];
+}
+
+function normalizeMenuItemModifierGroups(menuItem = {}) {
+  const groups = (menuItem.optionGroups || [])
+    .map((group) => ({
+      ...group,
+      options: [...(group.options || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    }))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+  const groupedOptionIds = new Set(groups.flatMap((group) => (group.options || []).map((option) => option.id)));
+  const ungroupedOptions = (menuItem.options || [])
+    .filter((option) => !groupedOptionIds.has(option.id))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+  if (ungroupedOptions.length) {
+    groups.push({
+      id: `__ungrouped:${menuItem.id}`,
+      menuItemId: menuItem.id,
+      name: "Options",
+      required: false,
+      minSelect: 0,
+      maxSelect: ungroupedOptions.length,
+      sortOrder: groups.length + 1,
+      options: ungroupedOptions
+    });
+  }
+
+  return groups;
+}
+
+function validateSelectedModifiers(menuItem, line = {}) {
+  const rawOptionIds = rawLineOptionIds(line);
+  const optionIds = normalizeLineOptionIds(line);
+  if (rawOptionIds.length !== optionIds.length) {
+    throw httpError("Duplicate menu item modifier selected.", 400, { code: "POS_MODIFIER_DUPLICATE" });
+  }
+
+  const groups = normalizeMenuItemModifierGroups(menuItem);
+  const optionToGroup = new Map();
+  for (const group of groups) {
+    for (const option of group.options || []) {
+      optionToGroup.set(option.id, { group, option });
+    }
+  }
+
+  const selectedByGroup = new Map(groups.map((group) => [group.id, []]));
+  for (const optionId of optionIds) {
+    const match = optionToGroup.get(optionId);
+    if (!match) throw httpError("Menu item modifier is invalid for this item.", 400, { code: "POS_MODIFIER_INVALID", optionId });
+    selectedByGroup.get(match.group.id).push(match.option);
+  }
+
+  for (const group of groups) {
+    const selected = selectedByGroup.get(group.id) || [];
+    const minSelect = Math.max(0, Number(group.minSelect ?? 0));
+    const maxSelect = Math.max(1, Number(group.maxSelect ?? group.options?.length ?? 1));
+    if ((group.required || minSelect > 0) && selected.length < Math.max(1, minSelect)) {
+      throw httpError(`${group.name} requires a selection.`, 400, { code: "POS_MODIFIER_REQUIRED", groupId: group.id });
+    }
+    if (selected.length > maxSelect) {
+      throw httpError(`${group.name} allows up to ${maxSelect} selection${maxSelect === 1 ? "" : "s"}.`, 400, { code: "POS_MODIFIER_MAXIMUM", groupId: group.id, maxSelect });
+    }
+  }
+
+  const modifiers = optionIds.map((optionId) => {
+    const { group, option } = optionToGroup.get(optionId);
+    return {
+      id: option.id,
+      optionId: option.id,
+      name: option.name,
+      optionName: option.name,
+      priceCents: option.priceCents,
+      groupId: group.id,
+      groupName: group.name
+    };
+  });
+
+  return { optionIds, modifiers };
+}
+
 export function hashDeviceFingerprint(restaurantId, fingerprint = "") {
   const normalized = String(fingerprint || "").trim().toLowerCase();
   if (!normalized) return null;
@@ -82,19 +203,23 @@ function randomReceiptNumber(prefix = "R") {
 }
 
 export async function resolveRestaurantForPos(identifier, user) {
-  if (!identifier) throw httpError("Restaurant slug or id is required.", 400);
-  const restaurant = await prisma.restaurant.findFirst({
-    where: { OR: [{ id: identifier }, { slug: identifier }] },
-    include: {
-      locations: { where: { active: true }, orderBy: { createdAt: "asc" } },
-      merchantAccounts: true
-    }
+  const restaurantIdentifier = String(identifier || "").trim();
+  if (!restaurantIdentifier) throw httpError("Restaurant slug or id is required.", 400, { code: "POS_RESTAURANT_IDENTIFIER_REQUIRED" });
+  let restaurant = await prisma.restaurant.findUnique({
+    where: { id: restaurantIdentifier },
+    include: POS_RESTAURANT_INCLUDE
   });
-  if (!restaurant) throw httpError("Restaurant not found.", 404);
-  if (!ACTIVE_RESTAURANT_STATUSES.has(restaurant.status)) throw httpError("Restaurant is not active.", 403);
-  if (user?.role === "SUPER_ADMIN") throw httpError("Super admin cannot operate a tenant POS register.", 403);
-  if (!POS_ROLES.has(user?.role)) throw httpError("POS access is limited to restaurant staff.", 403);
-  if (!user?.restaurantId || user.restaurantId !== restaurant.id) throw httpError("Tenant access denied.", 403);
+  if (!restaurant) {
+    restaurant = await prisma.restaurant.findUnique({
+      where: { slug: restaurantIdentifier },
+      include: POS_RESTAURANT_INCLUDE
+    });
+  }
+  if (!restaurant) throw httpError("Restaurant not found.", 404, { code: "POS_RESTAURANT_NOT_FOUND" });
+  if (!ACTIVE_RESTAURANT_STATUSES.has(restaurant.status)) throw httpError("Restaurant is not active.", 403, { code: "POS_RESTAURANT_INACTIVE", restaurantStatus: restaurant.status });
+  if (user?.role === "SUPER_ADMIN") throw httpError("Super admin cannot operate a tenant POS register.", 403, { code: "POS_SUPER_ADMIN_DENIED" });
+  if (!POS_ROLES.has(user?.role)) throw httpError("POS access is limited to restaurant staff.", 403, { code: "POS_ROLE_DENIED", role: user?.role || null });
+  if (!user?.restaurantId || user.restaurantId !== restaurant.id) throw httpError("Tenant access denied.", 403, { code: "POS_TENANT_MISMATCH" });
   return restaurant;
 }
 
@@ -130,6 +255,22 @@ export async function touchDevice({ restaurantId, deviceId, fingerprint }) {
     ? { id: deviceId, restaurantId }
     : { restaurantId, deviceFingerprintHash: fingerprintHash };
   const device = await prisma.posDevice.findFirst({ where });
+  if (!device) return null;
+  return prisma.posDevice.update({
+    where: { id: device.id },
+    data: { lastSeenAt: new Date() }
+  });
+}
+
+async function activeInternalDevelopmentDevice(restaurantId) {
+  const device = await prisma.posDevice.findFirst({
+    where: {
+      restaurantId,
+      status: "ACTIVE",
+      settingsJson: { path: ["internalDevelopment"], equals: true }
+    },
+    orderBy: { updatedAt: "desc" }
+  });
   if (!device) return null;
   return prisma.posDevice.update({
     where: { id: device.id },
@@ -183,7 +324,13 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
   await assertPosFeature(restaurant.id, "GET");
   const permissions = await getUserPosPermissions(user, restaurant.id);
   if (!permissions.includes(POS_PERMISSION.ACCESS)) throw httpError("POS access denied.", 403);
-  const device = await touchDevice({ restaurantId: restaurant.id, deviceId, fingerprint });
+  let device = await touchDevice({ restaurantId: restaurant.id, deviceId, fingerprint });
+  if (device?.status !== "ACTIVE") {
+    device = null;
+  }
+  if (!device && restaurant.tenantClassification === "INTERNAL_DEVELOPMENT") {
+    device = await activeInternalDevelopmentDevice(restaurant.id);
+  }
   const shift = await currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null });
   const [cashDrawers, registers, devices] = await Promise.all([
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
@@ -213,7 +360,12 @@ export async function posMenu(restaurantId) {
     include: {
       items: {
         where: { available: true },
-        include: { options: true, optionGroups: { include: { options: true }, orderBy: { sortOrder: "asc" } },
+        include: {
+          options: { orderBy: { sortOrder: "asc" } },
+          optionGroups: {
+            include: { options: { orderBy: { sortOrder: "asc" } } },
+            orderBy: { sortOrder: "asc" }
+          }
         },
         orderBy: { name: "asc" }
       }
@@ -241,7 +393,13 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
   const itemIds = [...new Set(rawItems.map((line) => String(line.menuItemId || "")).filter(Boolean))];
   const menuItems = await prisma.menuItem.findMany({
     where: { restaurantId, id: { in: itemIds }, available: true },
-    include: { options: true }
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      optionGroups: {
+        include: { options: { orderBy: { sortOrder: "asc" } } },
+        orderBy: { sortOrder: "asc" }
+      }
+    }
   });
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
@@ -249,20 +407,18 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     const menuItem = menuById.get(String(line.menuItemId || ""));
     if (!menuItem) throw httpError("Menu item is unavailable for this restaurant.", 400);
     const quantity = Math.min(99, Math.max(1, Number.parseInt(line.quantity, 10) || 1));
-    const optionIds = Array.isArray(line.optionIds) ? line.optionIds.map(String) : [];
-    const selectedOptions = optionIds.map((optionId) => {
-      const option = menuItem.options.find((candidate) => candidate.id === optionId);
-      if (!option) throw httpError("Menu item option is invalid for this item.", 400);
-      return { id: option.id, name: option.name, priceCents: option.priceCents };
-    });
-    const unitPriceCents = menuItem.priceCents + selectedOptions.reduce((sum, option) => sum + option.priceCents, 0);
+    const { optionIds, modifiers } = validateSelectedModifiers(menuItem, line);
+    const unitPriceCents = menuItem.priceCents + modifiers.reduce((sum, option) => sum + option.priceCents, 0);
     return {
       menuItemId: menuItem.id,
       name: menuItem.name,
       quantity,
       unitPriceCents,
       basePriceCents: menuItem.priceCents,
-      options: selectedOptions,
+      optionIds,
+      modifierOptionIds: optionIds,
+      modifiers,
+      options: modifiers,
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
     };
@@ -336,6 +492,11 @@ function receiptPayload({ order, quote, payment = null }) {
     taxCents: order.taxCents,
     tipCents: order.tipCents,
     totalCents: order.totalCents,
+    looharPlatformFeeCents: 0,
+    platformFeeCents: 0,
+    zeroLooharPlatformFee: true,
+    processorFeesMayApply: true,
+    paymentFeeDisclosure: ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE,
     createdAt: order.createdAt
   };
 }
@@ -383,7 +544,12 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
             name: line.name,
             quantity: line.quantity,
             unitPriceCents: line.unitPriceCents,
-            optionsJson: { options: line.options || [], specialInstructions: line.specialInstructions || "" }
+            optionsJson: {
+              options: line.options || [],
+              modifiers: line.modifiers || line.options || [],
+              optionIds: line.optionIds || line.modifierOptionIds || [],
+              specialInstructions: line.specialInstructions || ""
+            }
           }))
         },
         statusHistory: {
@@ -495,10 +661,12 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         status: "PAID",
         paidAt: new Date(),
         totalCents: order.totalCents,
+        platformFeeCents: 0,
         restaurantGrossCents: order.totalCents,
         restaurantNetCents: order.totalCents,
         restaurantTipCents: order.restaurantTipCents,
-        driverTipCents: order.driverTipCents
+        driverTipCents: order.driverTipCents,
+        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id })
       },
       create: {
         restaurantId,
@@ -513,8 +681,10 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         restaurantTipCents: order.restaurantTipCents,
         driverTipCents: order.driverTipCents,
         totalCents: order.totalCents,
+        platformFeeCents: 0,
         restaurantGrossCents: order.totalCents,
         restaurantNetCents: order.totalCents,
+        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id }),
         paidAt: new Date()
       }
     });
@@ -581,9 +751,10 @@ export async function cardPaymentIntent({ restaurantId, user, orderId, deviceId,
       provider: "STRIPE_CONNECT",
       status: "REQUIRES_PAYMENT_METHOD",
       totalCents: order.totalCents,
+      platformFeeCents: 0,
       restaurantGrossCents: order.totalCents,
       restaurantNetCents: order.totalCents,
-      quoteJson: { source: "POS", deviceId: device.id }
+      quoteJson: zeroPlatformFeeQuoteJson({ source: "POS", deviceId: device.id })
     },
     create: {
       restaurantId,
@@ -598,9 +769,10 @@ export async function cardPaymentIntent({ restaurantId, user, orderId, deviceId,
       restaurantTipCents: order.restaurantTipCents,
       driverTipCents: order.driverTipCents,
       totalCents: order.totalCents,
+      platformFeeCents: 0,
       restaurantGrossCents: order.totalCents,
       restaurantNetCents: order.totalCents,
-      quoteJson: { source: "POS", deviceId: device.id }
+      quoteJson: zeroPlatformFeeQuoteJson({ source: "POS", deviceId: device.id })
     }
   });
   await recordAudit({

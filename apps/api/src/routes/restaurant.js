@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
-import { FEATURE, USAGE_LIMIT } from "../config/entitlements.js";
+import { entitlementDecision, FEATURE, FEATURE_LABELS, requiredPlanForFeature, USAGE_LIMIT } from "../config/entitlements.js";
 import { requireAuth, requireRole, requireTenantAccess } from "../middleware/auth.js";
 import { assertUsageLimitForRestaurant, featureGuard, loadRestaurantEntitlements } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
@@ -51,12 +51,23 @@ async function assertGalleryImageLimit(restaurantId) {
   return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.GALLERY_IMAGES, used, requestedIncrement: 1 });
 }
 
+async function resolveRestaurantIdentifier(value) {
+  const identifier = String(value || "").trim();
+  if (!identifier) return null;
+  const byId = await prisma.restaurant.findUnique({
+    where: { id: identifier },
+    select: { id: true, slug: true, status: true }
+  }).catch(() => null);
+  if (byId) return byId;
+  return prisma.restaurant.findUnique({
+    where: { slug: identifier },
+    select: { id: true, slug: true, status: true }
+  }).catch(() => null);
+}
+
 router.param("restaurantId", async (req, res, next, value) => {
   try {
-    const restaurant = await prisma.restaurant.findFirst({
-      where: { OR: [{ id: value }, { slug: value }] },
-      select: { id: true, slug: true, status: true }
-    });
+    const restaurant = await resolveRestaurantIdentifier(value);
     if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
     if (req.user.role !== "SUPER_ADMIN" && req.tenantId !== restaurant.id) {
       return res.status(403).json({ error: "Tenant access denied" });
@@ -70,6 +81,7 @@ router.param("restaurantId", async (req, res, next, value) => {
 });
 
 router.use(["/onboarding", "/:restaurantId/onboarding"], featureGuard(FEATURE.ONBOARDING));
+router.use("/:restaurantId/settings", featureGuard(FEATURE.BASIC_SETTINGS));
 router.use("/:restaurantId/dashboard", featureGuard(FEATURE.BASIC_DASHBOARD));
 router.use(["/:restaurantId/profile", "/:restaurantId/branding"], featureGuard(FEATURE.BASIC_SETTINGS));
 router.use(["/website", "/:restaurantId/website", "/gallery", "/:restaurantId/gallery", "/social-links", "/:restaurantId/social-links"], featureGuard(FEATURE.BASIC_WEBSITE));
@@ -138,6 +150,13 @@ function generateTemporaryPassword() {
   return `Temp-${crypto.randomBytes(9).toString("base64url")}1!`;
 }
 
+function ticketModifiers(item) {
+  if (Array.isArray(item.optionsJson)) return item.optionsJson;
+  if (Array.isArray(item.optionsJson?.modifiers)) return item.optionsJson.modifiers;
+  if (Array.isArray(item.optionsJson?.options)) return item.optionsJson.options;
+  return [];
+}
+
 function kitchenTicketText(order) {
   const lines = [
     `KITCHEN TICKET #${order.orderNumber}`,
@@ -147,7 +166,7 @@ function kitchenTicketText(order) {
   ];
   order.items.forEach((item) => {
     lines.push(`${item.quantity}x ${item.name}`);
-    const modifiers = Array.isArray(item.optionsJson) ? item.optionsJson : [];
+    const modifiers = ticketModifiers(item);
     modifiers.forEach((modifier) => lines.push(`  + ${modifier.group ? `${modifier.group}: ` : ""}${modifier.name}`));
   });
   if (order.notes) lines.push("", `Instructions: ${order.notes}`);
@@ -171,6 +190,52 @@ function customerReceiptText(order) {
     `Total: ${(order.totalCents / 100).toFixed(2)}`
   );
   return lines.join("\n");
+}
+
+function driverSlipText(order) {
+  return [
+    `DRIVER SLIP #${order.orderNumber}`,
+    `${order.restaurant?.businessName || order.restaurant?.name || "Restaurant"}`,
+    `Pickup: ${[order.restaurant?.address, order.restaurant?.city, order.restaurant?.state, order.restaurant?.zip].filter(Boolean).join(", ") || "Restaurant location"}`,
+    `Dropoff: ${order.deliveryAddress || "Customer delivery address"}`,
+    `Customer: ${order.customer?.name || "Customer"}`,
+    order.customer?.phone ? `Phone: ${order.customer.phone}` : null,
+    `Status: ${order.status}`,
+    "",
+    "Items:",
+    ...order.items.map((item) => `${item.quantity}x ${item.name}`),
+    order.notes ? `Instructions: ${order.notes}` : null
+  ].filter(Boolean).join("\n");
+}
+
+function receiptFormatFor(req) {
+  const requested = req.body?.format || req.query?.format || "80mm";
+  return requested === "58mm" ? "58mm" : "80mm";
+}
+
+function receiptKindFor(req, fallback = "customer") {
+  const requested = String(req.body?.kind || req.query?.kind || fallback).toLowerCase();
+  if (["kitchen", "kitchen_ticket"].includes(requested)) return "kitchen";
+  if (["driver", "driver_slip"].includes(requested)) return "driver";
+  if (["test"].includes(requested)) return "test";
+  return fallback === "receipt" ? "receipt" : "customer";
+}
+
+function receiptReprintFor(req) {
+  return req.body?.reprint === true || req.query?.reprint === "1" || req.query?.reprint === "true";
+}
+
+function ticketTextForKind(order, kind) {
+  if (kind === "kitchen") return kitchenTicketText(order);
+  if (kind === "driver") return driverSlipText(order);
+  return customerReceiptText(order);
+}
+
+function auditActionForReceipt(kind, isReprint = false) {
+  if (isReprint) return "receipt.reprinted";
+  if (kind === "kitchen") return "print.kitchen_ticket";
+  if (kind === "driver") return "print.driver_slip";
+  return "print.customer_receipt";
 }
 
 const websiteEditableFields = [
@@ -524,6 +589,195 @@ function onboardingPayload(restaurant) {
   };
 }
 
+const SETTINGS_SECTION_STATUS = {
+  IMPLEMENTED: "IMPLEMENTED",
+  READ_ONLY: "READ_ONLY",
+  COMING_SOON: "COMING_SOON",
+  PLAN_RESTRICTED: "PLAN_RESTRICTED",
+  PERMISSION_RESTRICTED: "PERMISSION_RESTRICTED"
+};
+
+const restaurantSettingsRegistry = [
+  { id: "account", label: "Account", category: "Account", detail: "Owner identity, session, password recovery, and account access.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.BASIC_SETTINGS },
+  { id: "restaurant-profile", label: "Restaurant Profile", category: "Restaurant", detail: "Business name, public name, contact information, address, timezone, and public identity.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_SETTINGS, endpoint: "PATCH /api/restaurants/:restaurantId/profile" },
+  { id: "locations", label: "Locations", category: "Restaurant", detail: "Primary location today and multi-location foundation for Enterprise tenants.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.MULTI_LOCATION },
+  { id: "business-hours", label: "Business Hours", category: "Restaurant", detail: "Store hours used by the public website and ordering surfaces.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_WEBSITE, endpoint: "PATCH /api/restaurants/:restaurantId/website" },
+  { id: "ordering", label: "Ordering", category: "Operations", detail: "Pickup, delivery, order readiness, and kitchen workflow configuration.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.RESTAURANT_ORDERING },
+  { id: "menu-catalog", label: "Menu/Catalog", category: "Operations", detail: "Menu categories, food items, photos, modifiers, availability, and food catalog controls.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.MENU_MANAGEMENT, endpoint: "POST/PATCH /api/restaurants/:restaurantId/menu" },
+  { id: "payments", label: "Payments", category: "Operations", detail: "Customer checkout, Stripe Connect, and payout readiness.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.ORDER_PAYMENTS },
+  { id: "receipts-printing", label: "Receipts & Printing", category: "Operations", detail: "Kitchen tickets, customer receipts, printer targets, and future thermal printer integrations.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.PRINTING, endpoint: "PATCH /api/restaurants/:restaurantId/printing" },
+  { id: "website-branding", label: "Website & Branding", category: "Website", detail: "Logo, hero image, brand colors, homepage content, and section visibility.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_WEBSITE, endpoint: "PATCH /api/restaurants/:restaurantId/website" },
+  { id: "gallery-social", label: "Gallery & Social", category: "Website", detail: "Public gallery photos, captions, visibility, and restaurant social links.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_WEBSITE, endpoint: "POST/PATCH /api/restaurants/:restaurantId/gallery" },
+  { id: "domains-seo", label: "Domains & SEO", category: "Website", detail: "Loohar subdomain, custom domain, SSL state, canonical URL, and search metadata.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.CUSTOM_DOMAIN, endpoint: "PATCH /api/restaurants/:restaurantId/domain" },
+  { id: "staff-roles", label: "Staff & Roles", category: "Access", detail: "Owner, manager, cashier, kitchen, and driver account foundation.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.EMPLOYEE_MANAGEMENT, endpoint: "POST/PATCH /api/restaurants/:restaurantId/employees" },
+  { id: "notifications", label: "Notifications", category: "Messaging", detail: "SMS and email event settings for orders, receipts, password resets, and welcome emails.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.NOTIFICATIONS, endpoint: "PATCH /api/restaurants/:restaurantId/notification-settings" },
+  { id: "loyalty", label: "Loyalty", category: "Growth", detail: "Points, rewards, top loyalty customers, issued points, and redeemed points.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.LOYALTY, endpoint: "PATCH /api/restaurants/:restaurantId/loyalty/settings" },
+  { id: "coupons", label: "Coupons", category: "Growth", detail: "Active promotions, redemption statistics, and campaign performance.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.COUPONS },
+  { id: "delivery-zones", label: "Delivery Zones", category: "Delivery", detail: "Delivery radius, fees, minimum order amounts, and future map boundaries.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.DELIVERY_ZONES, endpoint: "POST/PATCH /api/restaurants/:restaurantId/delivery-zones" },
+  { id: "pos-kiosk", label: "POS & Kiosk", category: "POS", detail: "Register configuration, devices, shifts, cash controls, card payments, and kiosk mode.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.POS_REGISTER },
+  { id: "security-audit", label: "Security & Audit Logs", category: "Security", detail: "Recent restaurant audit history, account events, and security trail.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.BASIC_SETTINGS },
+  { id: "billing-subscription", label: "Billing & Subscription", category: "Billing", detail: "Current plan, subscription status, Stripe ids, and entitlement source.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.BASIC_SETTINGS },
+  { id: "integrations", label: "Integrations", category: "Developer", detail: "Future partner integrations for delivery, accounting, marketing, and POS ecosystems.", status: SETTINGS_SECTION_STATUS.COMING_SOON, feature: FEATURE.BASIC_SETTINGS },
+  { id: "developer-api", label: "Developer/API", category: "Developer", detail: "Future API keys, webhook delivery logs, and developer docs.", status: SETTINGS_SECTION_STATUS.COMING_SOON, feature: FEATURE.BASIC_SETTINGS }
+];
+
+function settingState(entry, entitlements) {
+  if (entry.status === SETTINGS_SECTION_STATUS.COMING_SOON) return entry.status;
+  const decision = entitlementDecision(entitlements, entry.feature || FEATURE.BASIC_SETTINGS, "GET");
+  if (!decision.allowed) {
+    return decision.code === "FEATURE_NOT_INCLUDED" ? SETTINGS_SECTION_STATUS.PLAN_RESTRICTED : SETTINGS_SECTION_STATUS.PERMISSION_RESTRICTED;
+  }
+  return entry.status || SETTINGS_SECTION_STATUS.READ_ONLY;
+}
+
+function settingsRegistryPayload(entitlements) {
+  return restaurantSettingsRegistry.map((entry) => ({
+    ...entry,
+    state: settingState(entry, entitlements),
+    featureLabel: FEATURE_LABELS[entry.feature] || entry.feature || "Restaurant settings",
+    requiredPlan: entry.feature ? requiredPlanForFeature(entry.feature) : null
+  }));
+}
+
+async function settingsSectionSnapshot(req, sectionId) {
+  const restaurantId = restaurantIdFor(req);
+  if (sectionId === "account") {
+    return { user: { id: req.user.id, name: req.user.name, email: req.user.email, role: req.user.role, status: req.user.status } };
+  }
+  if (sectionId === "restaurant-profile" || sectionId === "ordering" || sectionId === "payments" || sectionId === "billing-subscription") {
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      include: {
+        platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 },
+        subscriptions: { include: { plan: true }, orderBy: { currentPeriodStart: "desc" }, take: 1 }
+      }
+    });
+    return { restaurant };
+  }
+  if (sectionId === "locations") {
+    const locations = await prisma.restaurantLocation.findMany({ where: { restaurantId }, orderBy: { createdAt: "asc" } });
+    return { locations };
+  }
+  if (sectionId === "menu-catalog") {
+    const [categories, items] = await Promise.all([
+      prisma.menuCategory.findMany({ where: { restaurantId }, orderBy: { sortOrder: "asc" } }),
+      prisma.menuItem.findMany({ where: { restaurantId }, include: { category: true, optionGroups: { include: { options: true } } }, orderBy: { createdAt: "desc" } })
+    ]);
+    return { categories, items };
+  }
+  if (["business-hours", "website-branding"].includes(sectionId)) {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    const website = restaurant ? await ensureWebsiteSettings(restaurant) : null;
+    return { restaurant, website };
+  }
+  if (sectionId === "gallery-social") {
+    const [gallery, socialLinks] = await Promise.all([
+      prisma.restaurantGalleryImage.findMany({ where: { restaurantId }, orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }] }),
+      prisma.restaurantSocialLink.findMany({ where: { restaurantId }, orderBy: { createdAt: "desc" } })
+    ]);
+    return { gallery, socialLinks };
+  }
+  if (sectionId === "domains-seo") {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
+    const domain = restaurant ? await ensureDomain(restaurant) : null;
+    return { domain: restaurant && domain ? domainInfoForRestaurant(restaurant, domain) : null };
+  }
+  if (sectionId === "receipts-printing") {
+    const settings = await prisma.restaurantPrinterSettings.upsert({ where: { restaurantId }, update: {}, create: { restaurantId } });
+    return { settings, printerTargets: ["browser_print", "star_micronics_future", "epson_future", "thermal_printer_future"] };
+  }
+  if (sectionId === "staff-roles") {
+    const employees = await prisma.user.findMany({
+      where: { restaurantId, role: { in: ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"] }, status: { not: "DELETED" } },
+      select: { id: true, name: true, email: true, phone: true, role: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" }
+    });
+    return { employees };
+  }
+  if (sectionId === "notifications") {
+    const settings = await prisma.restaurantNotificationSettings.upsert({ where: { restaurantId }, update: {}, create: { restaurantId } });
+    return { settings, providers: { sms: process.env.SMS_PROVIDER || "console", email: process.env.EMAIL_PROVIDER || "console" } };
+  }
+  if (sectionId === "loyalty") {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { loyaltySettingsJson: true } });
+    const rewards = await prisma.loyaltyReward.findMany({ where: { restaurantId }, orderBy: { createdAt: "desc" }, take: 20 });
+    return { settings: restaurant?.loyaltySettingsJson || {}, rewards };
+  }
+  if (sectionId === "coupons") {
+    const coupons = await prisma.coupon.findMany({ where: { restaurantId }, orderBy: { createdAt: "desc" }, take: 20 });
+    return { coupons };
+  }
+  if (sectionId === "delivery-zones") {
+    const zones = await prisma.deliveryZone.findMany({ where: { restaurantId }, orderBy: { createdAt: "asc" } });
+    return { zones };
+  }
+  if (sectionId === "pos-kiosk") {
+    const [devices, currentShift] = await Promise.all([
+      prisma.posDevice?.findMany ? prisma.posDevice.findMany({ where: { restaurantId }, orderBy: { createdAt: "desc" }, take: 20 }).catch(() => []) : [],
+      prisma.employeeShift?.findFirst ? prisma.employeeShift.findFirst({ where: { restaurantId, closedAt: null }, orderBy: { openedAt: "desc" } }).catch(() => null) : null
+    ]);
+    return { devices, currentShift };
+  }
+  if (sectionId === "security-audit") {
+    const events = await prisma.auditLog.findMany({ where: { restaurantId }, orderBy: { createdAt: "desc" }, take: 25 });
+    return { events };
+  }
+  return {};
+}
+
+async function getSettingsRegistry(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const entitlements = await loadRestaurantEntitlements(restaurantId, req);
+    res.json({ settings: settingsRegistryPayload(entitlements), entitlements });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function searchSettings(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const query = String(req.query.q || "").trim().toLowerCase();
+    const entitlements = await loadRestaurantEntitlements(restaurantId, req);
+    const settings = settingsRegistryPayload(entitlements).filter((entry) => {
+      if (!query) return true;
+      return [entry.label, entry.category, entry.detail, entry.featureLabel].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+    });
+    res.json({ settings, query });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getSettingsAudit(req, res, next) {
+  try {
+    const events = await prisma.auditLog.findMany({ where: { restaurantId: restaurantIdFor(req) }, orderBy: { createdAt: "desc" }, take: 50 });
+    res.json({ events });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getSettingsSection(req, res, next) {
+  try {
+    const sectionId = String(req.params.section || "").trim();
+    const entry = restaurantSettingsRegistry.find((item) => item.id === sectionId);
+    if (!entry) return res.status(404).json({ error: "Settings section not found" });
+    const entitlements = await loadRestaurantEntitlements(restaurantIdFor(req), req);
+    const section = {
+      ...entry,
+      state: settingState(entry, entitlements),
+      featureLabel: FEATURE_LABELS[entry.feature] || entry.feature || "Restaurant settings",
+      requiredPlan: entry.feature ? requiredPlanForFeature(entry.feature) : null
+    };
+    const data = await settingsSectionSnapshot(req, sectionId);
+    res.json({ section, data, entitlements });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function markOnboardingProgress({ req, restaurantId, step, status = "IN_PROGRESS", skippedSteps }) {
   const current = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { onboardingStartedAt: true, onboardingStatus: true, onboardingSkippedSteps: true } });
   const data = {
@@ -772,6 +1026,11 @@ router.get("/:restaurantId/onboarding/readiness", getOnboardingReadiness);
 router.patch("/:restaurantId/onboarding/:step", saveOnboardingStep);
 router.post("/:restaurantId/onboarding/:step/skip", skipOnboardingStep);
 router.post("/:restaurantId/onboarding/publish", publishOnboarding);
+
+router.get("/:restaurantId/settings", getSettingsRegistry);
+router.get("/:restaurantId/settings/search", searchSettings);
+router.get("/:restaurantId/settings/audit", getSettingsAudit);
+router.get("/:restaurantId/settings/:section", getSettingsSection);
 
 router.get("/me", async (req, res, next) => {
   try {
@@ -1025,18 +1284,73 @@ async function getItemOptionGroups(req, res, next) {
   }
 }
 
+function intInRange(value, fallback, min = 0, max = 999999) {
+  const parsed = Number.parseInt(value, 10);
+  const next = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(max, Math.max(min, next));
+}
+
+function modifierHttpError(message, code = "MENU_MODIFIER_INVALID") {
+  const error = new Error(message);
+  error.status = 400;
+  error.code = code;
+  return error;
+}
+
+function sanitizeModifierOptions(options = []) {
+  if (!Array.isArray(options)) throw modifierHttpError("Modifier options must be an array.");
+  return options
+    .map((option, index) => ({
+      name: String(option?.name || "").trim().slice(0, 120),
+      priceCents: intInRange(option?.priceCents, 0, 0, 999999),
+      required: Boolean(option?.required),
+      isDefault: Boolean(option?.isDefault),
+      sortOrder: intInRange(option?.sortOrder, index, 0, 999)
+    }))
+    .filter((option) => option.name);
+}
+
+function sanitizeModifierGroupPayload(body = {}, { partial = false } = {}) {
+  const name = String(body?.name || "").trim().slice(0, 120);
+  if (!partial && !name) throw modifierHttpError("Modifier group name is required.");
+  const minSelect = intInRange(body?.minSelect, 0, 0, 99);
+  const maxSelect = intInRange(body?.maxSelect, 1, 1, 99);
+  if (minSelect > maxSelect) throw modifierHttpError("Minimum selections cannot be greater than maximum selections.", "MENU_MODIFIER_RANGE_INVALID");
+  const groupData = {
+    ...(name ? { name } : {}),
+    ...(body.required === undefined ? {} : { required: Boolean(body.required) }),
+    ...(!partial || body.minSelect !== undefined ? { minSelect } : {}),
+    ...(!partial || body.maxSelect !== undefined ? { maxSelect } : {}),
+    ...(!partial || body.sortOrder !== undefined ? { sortOrder: intInRange(body?.sortOrder, 0, 0, 999) } : {})
+  };
+  return {
+    groupData,
+    ...(body.options === undefined ? {} : { options: sanitizeModifierOptions(body.options) })
+  };
+}
+
 async function createItemOptionGroup(req, res, next) {
   try {
-    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId: restaurantIdFor(req) } } });
+    const restaurantId = restaurantIdFor(req);
+    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } });
     if (!item) return res.status(404).json({ error: "Menu item not found" });
-    const { options = [], ...groupData } = req.body;
+    const { groupData, options = [] } = sanitizeModifierGroupPayload(req.body);
+    if (!options.length) throw modifierHttpError("At least one modifier option is required.", "MENU_MODIFIER_OPTION_REQUIRED");
     const optionGroup = await prisma.menuItemOptionGroup.create({
       data: {
         ...groupData,
         menuItemId: item.id,
         options: { create: options.map((option, index) => ({ ...option, menuItemId: item.id, sortOrder: option.sortOrder ?? index })) }
       },
-      include: { options: true }
+      include: { options: { orderBy: { sortOrder: "asc" } } }
+    });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: "menu.item.modifiers.created",
+      entityType: "MenuItemOptionGroup",
+      entityId: optionGroup.id,
+      metadata: { itemId: item.id, optionCount: optionGroup.options.length }
     });
     res.status(201).json({ optionGroup });
   } catch (error) {
@@ -1046,11 +1360,12 @@ async function createItemOptionGroup(req, res, next) {
 
 async function updateItemOptionGroup(req, res, next) {
   try {
-    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId: restaurantIdFor(req) } } });
+    const restaurantId = restaurantIdFor(req);
+    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } });
     if (!item) return res.status(404).json({ error: "Menu item not found" });
     const existing = await prisma.menuItemOptionGroup.findFirst({ where: { id: req.params.optionGroupId, menuItemId: item.id } });
     if (!existing) return res.status(404).json({ error: "Option group not found" });
-    const { options, ...groupData } = req.body;
+    const { groupData, options } = sanitizeModifierGroupPayload(req.body, { partial: true });
     if (options) await prisma.menuItemOption.deleteMany({ where: { optionGroupId: existing.id } });
     const optionGroup = await prisma.menuItemOptionGroup.update({
       where: { id: existing.id },
@@ -1058,7 +1373,15 @@ async function updateItemOptionGroup(req, res, next) {
         ...groupData,
         ...(options ? { options: { create: options.map((option, index) => ({ ...option, menuItemId: item.id, sortOrder: option.sortOrder ?? index })) } } : {})
       },
-      include: { options: true }
+      include: { options: { orderBy: { sortOrder: "asc" } } }
+    });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: "menu.item.modifiers.updated",
+      entityType: "MenuItemOptionGroup",
+      entityId: optionGroup.id,
+      metadata: { itemId: item.id, optionCount: optionGroup.options.length }
     });
     res.json({ optionGroup });
   } catch (error) {
@@ -1068,12 +1391,21 @@ async function updateItemOptionGroup(req, res, next) {
 
 async function deleteItemOptionGroup(req, res, next) {
   try {
-    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId: restaurantIdFor(req) } } });
+    const restaurantId = restaurantIdFor(req);
+    const item = await prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } });
     if (!item) return res.status(404).json({ error: "Menu item not found" });
     const existing = await prisma.menuItemOptionGroup.findFirst({ where: { id: req.params.optionGroupId, menuItemId: item.id } });
     if (!existing) return res.status(404).json({ error: "Option group not found" });
     await prisma.menuItemOption.deleteMany({ where: { optionGroupId: existing.id } });
     await prisma.menuItemOptionGroup.delete({ where: { id: existing.id } });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: "menu.item.modifiers.deleted",
+      entityType: "MenuItemOptionGroup",
+      entityId: existing.id,
+      metadata: { itemId: item.id }
+    });
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -1542,15 +1874,27 @@ router.patch("/:restaurantId/printing", async (req, res, next) => {
 async function printOrder(req, res, next, kind) {
   try {
     const restaurantId = restaurantIdFor(req);
+    const format = receiptFormatFor(req);
+    const isReprint = receiptReprintFor(req);
     const order = await prisma.order.findUnique({
       where: { id_restaurantId: { id: req.params.orderId, restaurantId } },
       include: receiptOrderInclude()
     });
     if (!order) return res.status(404).json({ error: "Order not found" });
-    const ticket = kind === "kitchen" ? kitchenTicketText(order) : customerReceiptText(order);
+    const ticket = ticketTextForKind(order, kind);
     const issued = await issueOrderTrackingToken(order.id);
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: kind === "kitchen" ? "print.kitchen_ticket" : "print.customer_receipt", entityType: "Order", entityId: order.id });
-    res.json({ printJob: { kind, provider: "browser_print", orderId: order.id, orderNumber: order.orderNumber, ticket }, receipt: buildReceiptPayload(issued.order, { kind, trackingToken: issued.trackingToken }) });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: auditActionForReceipt(kind, isReprint),
+      entityType: "Order",
+      entityId: order.id,
+      metadata: { kind, format, isReprint }
+    });
+    res.json({
+      printJob: { kind, provider: "browser_print", orderId: order.id, orderNumber: order.orderNumber, ticket, format, isReprint },
+      receipt: buildReceiptPayload(issued.order, { kind, trackingToken: issued.trackingToken, format, isReprint })
+    });
   } catch (error) {
     next(error);
   }
@@ -1559,13 +1903,24 @@ async function printOrder(req, res, next, kind) {
 router.get("/:restaurantId/orders/:orderId/receipt", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
+    const kind = receiptKindFor(req);
+    const format = receiptFormatFor(req);
+    const isReprint = receiptReprintFor(req);
     const order = await prisma.order.findUnique({
       where: { id_restaurantId: { id: req.params.orderId, restaurantId } },
       include: receiptOrderInclude()
     });
     if (!order) return res.status(404).json({ error: "Order not found" });
     const issued = await issueOrderTrackingToken(order.id);
-    res.json({ receipt: buildReceiptPayload(issued.order, { kind: req.query.kind?.toString() || "customer", trackingToken: issued.trackingToken }) });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: "receipt.previewed",
+      entityType: "Order",
+      entityId: order.id,
+      metadata: { kind, format, isReprint }
+    }).catch(() => {});
+    res.json({ receipt: buildReceiptPayload(issued.order, { kind, trackingToken: issued.trackingToken, format, isReprint }) });
   } catch (error) {
     next(error);
   }

@@ -2,16 +2,16 @@ import { prisma } from "../../config/prisma.js";
 import { normalizeTipInput } from "../../services/orderWorkflowService.js";
 
 const ORDERING_TYPES = new Set(["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"]);
+export const ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE =
+  "No additional Loohar transaction fee. Standard payment-processing fees may still apply.";
 
 function nonnegativeInt(value, fallback = 0) {
   const next = Number(value ?? fallback);
   return Number.isFinite(next) ? Math.max(0, Math.round(next)) : fallback;
 }
 
-function platformFeeCents(totalCents) {
-  const bps = nonnegativeInt(process.env.ORDER_PAYMENT_PLATFORM_FEE_BPS, 0);
-  const fixed = nonnegativeInt(process.env.ORDER_PAYMENT_PLATFORM_FEE_FIXED_CENTS, 0);
-  return Math.round((totalCents * bps) / 10000) + fixed;
+function platformFeeCents() {
+  return 0;
 }
 
 function defaultTaxRateBps() {
@@ -117,9 +117,9 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
   const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
   const totalCents = taxableAmountCents + deliveryFeeCents + taxCents + serviceFeeCents + tipBreakdown.tipCents;
-  const feeCents = platformFeeCents(totalCents);
+  const feeCents = platformFeeCents();
   const restaurantGrossCents = totalCents - (tipBreakdown.driverTipCents || 0);
-  const restaurantNetCents = restaurantGrossCents - feeCents;
+  const restaurantNetCents = restaurantGrossCents;
 
   return {
     restaurant,
@@ -137,6 +137,10 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     ...tipBreakdown,
     totalCents,
     platformFeeCents: feeCents,
+    looharPlatformFeeCents: 0,
+    zeroLooharPlatformFee: true,
+    processorFeesMayApply: true,
+    paymentFeeDisclosure: ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE,
     restaurantGrossCents,
     restaurantNetCents,
     provider: "STRIPE_CONNECT",
@@ -149,7 +153,9 @@ export async function calculateOrderQuote({ restaurantId, body }) {
       serviceFeeCents,
       restaurantTipCents: tipBreakdown.restaurantTipCents,
       driverTipCents: tipBreakdown.driverTipCents,
-      totalCents
+      totalCents,
+      platformFeeCents: 0,
+      looharPlatformFeeCents: 0
     }
   };
 }

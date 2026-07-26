@@ -242,6 +242,22 @@ enum SubscriptionPlanCode {
   ENTERPRISE
 }
 
+enum TenantClassification {
+  STANDARD
+  INTERNAL_DEVELOPMENT
+  PRIVATE_BETA
+  DEMO
+}
+
+enum EntitlementSimulationMode {
+  FULL_ACCESS
+  SIMULATE_PLAN
+  SIMULATE_SUSPENDED
+  SIMULATE_EXPIRED_TRIAL
+  SIMULATE_PAST_DUE
+  SIMULATE_CANCELLED
+}
+
 enum CustomerSegment {
   NEW_CUSTOMER
   ACTIVE_CUSTOMER
@@ -356,6 +372,7 @@ model Restaurant {
   deliveryRadiusMiles Float?
   deliveryEnabled     Boolean                    @default(true)
   pickupEnabled       Boolean                    @default(true)
+  tenantClassification TenantClassification       @default(STANDARD)
   deliveryFeeCents    Int                        @default(399)
   deliveryZoneJson    Json?
   loyaltySettingsJson Json?
@@ -385,6 +402,7 @@ model Restaurant {
   socialLinks         RestaurantSocialLink[]
   subscriptions       TenantSubscription[]
   platformSubscriptions PlatformSubscription[]
+  entitlementSimulation TenantEntitlementSimulation?
   merchantAccounts    RestaurantMerchantAccount[]
   orderPayments       RestaurantOrderPayment[]
   paymentEvents       RestaurantPaymentEvent[]
@@ -410,6 +428,24 @@ model Restaurant {
   auditLogs           AuditLog[]
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
+}
+
+model TenantEntitlementSimulation {
+  id                          String                    @id @default(cuid())
+  tenantId                    String                    @unique
+  enabled                     Boolean                   @default(false)
+  mode                        EntitlementSimulationMode @default(FULL_ACCESS)
+  simulatedPlan               SubscriptionPlanCode?
+  simulatedSubscriptionStatus String?
+  expiresAt                   DateTime?
+  createdByUserId             String?
+  updatedByUserId             String?
+  restaurant                  Restaurant                @relation(fields: [tenantId], references: [id])
+  createdAt                   DateTime                  @default(now())
+  updatedAt                   DateTime                  @updatedAt
+
+  @@index([enabled, mode])
+  @@index([expiresAt])
 }
 
 model RestaurantStaff {

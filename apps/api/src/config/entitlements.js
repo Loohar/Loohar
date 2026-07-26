@@ -317,6 +317,20 @@ export function entitlementDecision(entitlement, feature, method = "GET") {
     };
   }
 
+  if (entitlement?.fullAccess) {
+    return {
+      allowed: true,
+      warning: access.warning,
+      feature,
+      featureLabel: label,
+      currentPlan,
+      requiredPlan,
+      subscriptionStatus: normalizeSubscriptionStatus(entitlement?.subscriptionStatus),
+      fullAccess: true,
+      fullAccessSource: entitlement.fullAccessSource || "INTERNAL_DEVELOPMENT"
+    };
+  }
+
   if (!planAllowsFeature(currentPlan, feature)) {
     return {
       allowed: false,
@@ -363,6 +377,21 @@ export function usageLimitDecision({ entitlement, limitCode, used = 0, requested
   const maxAllowed = entitlementLimitForPlan(currentPlan, normalizedLimit);
   const currentUsage = Math.max(0, Number(used || 0));
   const increment = Math.max(0, Number(requestedIncrement || 0));
+
+  if (entitlement?.fullAccess) {
+    return {
+      allowed: true,
+      code: "LIMIT_BYPASSED_INTERNAL_FULL_ACCESS",
+      limitCode: normalizedLimit,
+      limitLabel: label,
+      currentPlan,
+      used: currentUsage,
+      requestedIncrement: increment,
+      maxAllowed: null,
+      fullAccess: true,
+      fullAccessSource: entitlement.fullAccessSource || "INTERNAL_DEVELOPMENT"
+    };
+  }
 
   if (!normalizedLimit || maxAllowed === null) {
     return {

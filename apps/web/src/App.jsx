@@ -12,6 +12,7 @@ import {
   LogOut,
   MapPin,
   Menu as MenuIcon,
+  Minus,
   PackageCheck,
   Plus,
   ReceiptText,
@@ -139,22 +140,27 @@ const onboardingSteps = [
   { id: "review", label: "Review" }
 ];
 const restaurantSettingsLinks = [
-  { id: "account", label: "Account", detail: "Owner profile, login identity, password recovery, and account preferences.", href: "#settings-account", status: "Available" },
-  { id: "profile", label: "Profile", detail: "Business name, phone, address, and public restaurant identity.", href: "#settings-profile", status: "Available" },
-  { id: "restaurants-ownership", label: "Restaurants & Ownership", detail: "Ownership access and restaurant tenant assignment for this account.", href: "#settings-restaurants-ownership", status: "Available" },
-  { id: "chains-locations", label: "Chains & Locations", detail: "Location foundation for future chain and multi-location operations.", href: "#settings-chains-locations", status: "Foundation" },
-  { id: "subscription", label: "Subscription & Billing", detail: "Plan, billing status, and subscription entitlements.", href: "#settings-billing", status: "Foundation" },
-  { id: "website-branding", label: "Website & Branding", detail: "Homepage copy, logo, hero image, colors, fonts, and section visibility.", href: "#settings-website-branding", status: "Available" },
-  { id: "menu-catalog", label: "Menu & Catalog", detail: "Categories, food items, pricing, photos, featured items, and availability.", href: "#settings-menu-catalog", status: "Available" },
-  { id: "gallery-social", label: "Gallery & Social", detail: "Public gallery photos and social profile links.", href: "#settings-gallery-social", status: "Available" },
-  { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order handling, kitchen flow, and ticket printing.", href: "#settings-ordering", status: "Available" },
-  { id: "delivery", label: "Delivery", detail: "Delivery zones, fees, minimums, drivers, and dispatch settings.", href: "#settings-delivery", status: "Available" },
-  { id: "domains-seo", label: "Domains & SEO", detail: "Loohar subdomain, custom domain, canonical URL, SSL, and search metadata.", href: "#settings-domains-seo", status: "Available" },
-  { id: "payments", label: "Customer Payments", detail: "Customer checkout, payment provider onboarding, and restaurant payout readiness.", href: "#settings-payments", status: "Onboarding" },
-  { id: "staff-access", label: "Staff & Access", detail: "Managers, cashiers, kitchen staff, drivers, roles, and access status.", href: "#settings-staff-access", status: "Available" },
-  { id: "notifications", label: "Notifications", detail: "Customer SMS and email events for orders, receipts, resets, and welcome flows.", href: "#settings-notifications", status: "Available" },
-  { id: "security", label: "Security", detail: "Password policy, session controls, audit trails, and account protection.", href: "#settings-security", status: "Foundation" },
-  { id: "advanced", label: "Advanced", detail: "Multi-location foundation and future operational controls.", href: "#settings-advanced", status: "Foundation" }
+  { id: "account", label: "Account", detail: "Owner identity, session, password recovery, and account access.", status: "READ_ONLY" },
+  { id: "restaurant-profile", label: "Restaurant Profile", detail: "Business name, public contact details, address, timezone, and public identity.", status: "IMPLEMENTED" },
+  { id: "locations", label: "Locations", detail: "Primary location today and multi-location foundation for Enterprise tenants.", status: "READ_ONLY", feature: "MULTI_LOCATION" },
+  { id: "business-hours", label: "Business Hours", detail: "Store hours used by the public website and ordering surfaces.", status: "IMPLEMENTED" },
+  { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order readiness, and kitchen workflow configuration.", status: "READ_ONLY" },
+  { id: "menu-catalog", label: "Menu/Catalog", detail: "Menu categories, food items, photos, modifiers, availability, and food catalog controls.", status: "IMPLEMENTED", feature: "MENU_MANAGEMENT" },
+  { id: "payments", label: "Payments", detail: "Customer checkout, Stripe Connect, and payout readiness.", status: "READ_ONLY", feature: "ORDER_PAYMENTS" },
+  { id: "receipts-printing", label: "Receipts & Printing", detail: "Kitchen tickets, customer receipts, printer targets, and future thermal printer integrations.", status: "IMPLEMENTED", feature: "PRINTING" },
+  { id: "website-branding", label: "Website & Branding", detail: "Logo, hero image, brand colors, homepage content, and section visibility.", status: "IMPLEMENTED" },
+  { id: "gallery-social", label: "Gallery & Social", detail: "Public gallery photos, captions, visibility, and restaurant social links.", status: "IMPLEMENTED" },
+  { id: "domains-seo", label: "Domains & SEO", detail: "Loohar subdomain, custom domain, SSL state, canonical URL, and search metadata.", status: "IMPLEMENTED", feature: "CUSTOM_DOMAIN" },
+  { id: "staff-roles", label: "Staff & Roles", detail: "Owner, manager, cashier, kitchen, and driver account foundation.", status: "IMPLEMENTED", feature: "EMPLOYEE_MANAGEMENT" },
+  { id: "notifications", label: "Notifications", detail: "SMS and email event settings for orders, receipts, password resets, and welcome emails.", status: "IMPLEMENTED", feature: "NOTIFICATIONS" },
+  { id: "loyalty", label: "Loyalty", detail: "Points, rewards, top loyalty customers, issued points, and redeemed points.", status: "IMPLEMENTED", feature: "LOYALTY" },
+  { id: "coupons", label: "Coupons", detail: "Active promotions, redemption statistics, and campaign performance.", status: "READ_ONLY", feature: "COUPONS" },
+  { id: "delivery-zones", label: "Delivery Zones", detail: "Delivery radius, fees, minimum order amounts, and future map boundaries.", status: "IMPLEMENTED", feature: "DELIVERY_ZONES" },
+  { id: "pos-kiosk", label: "POS & Kiosk", detail: "Register configuration, devices, shifts, cash controls, card payments, and kiosk mode.", status: "READ_ONLY", feature: "POS_REGISTER" },
+  { id: "security-audit", label: "Security & Audit Logs", detail: "Recent restaurant audit history, account events, and security trail.", status: "READ_ONLY" },
+  { id: "billing-subscription", label: "Billing & Subscription", detail: "Current plan, subscription status, Stripe ids, and entitlement source.", status: "READ_ONLY" },
+  { id: "integrations", label: "Integrations", detail: "Future partner integrations for delivery, accounting, marketing, and POS ecosystems.", status: "COMING_SOON" },
+  { id: "developer-api", label: "Developer/API", detail: "Future API keys, webhook delivery logs, and developer docs.", status: "COMING_SOON" }
 ];
 const socialPlatformLabels = {
   facebook: "Facebook",
@@ -421,103 +427,19 @@ function money(cents = 0) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
 }
 
-function escapeHtml(value = "") {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function paymentFeeDisclosureText(source = {}) {
+  if (!source) return "";
+  if (source.paymentFeeDisclosure) return source.paymentFeeDisclosure;
+  const looharPlatformFeeCents = Number(source.looharPlatformFeeCents ?? source.platformFeeCents ?? 0);
+  if (source.zeroLooharPlatformFee || looharPlatformFeeCents === 0) {
+    return "No Loohar transaction fee is added to this order; processor fees may still apply.";
+  }
+  return "";
 }
 
 async function qrImageData(url) {
   if (!url) return "";
   return QRCode.toDataURL(url, { width: 192, margin: 3, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } });
-}
-
-async function buildReceiptPrintHtml(receipt) {
-  const customerQr = await qrImageData(receipt.qr?.customer?.url);
-  const driverQr = await qrImageData(receipt.qr?.driver?.url);
-  const rows = receipt.items.map((item) => `
-    <div class="item">
-      <div><strong>${escapeHtml(item.quantity)} x ${escapeHtml(item.name)}</strong>${(item.modifiers || []).map((modifier) => `<small>+ ${escapeHtml(modifier.group ? `${modifier.group}: ` : "")}${escapeHtml(modifier.name)}</small>`).join("")}</div>
-      <span>${money(item.totalCents)}</span>
-    </div>
-  `).join("");
-  const totals = receipt.text.totals.map(([label, value]) => `<div class="total"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Receipt #${escapeHtml(receipt.order.orderNumber)}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #f3f4f6; color: #111827; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .toolbar { display: flex; gap: 8px; justify-content: center; padding: 16px; }
-    button { border: 0; border-radius: 8px; background: #111827; color: white; cursor: pointer; font: 700 14px system-ui; padding: 12px 16px; }
-    .receipt { width: 80mm; min-height: 100vh; margin: 0 auto; background: white; padding: 14px; }
-    .center { text-align: center; }
-    .logo { max-width: 48px; max-height: 48px; object-fit: cover; border-radius: 8px; }
-    h1 { font-size: 17px; margin: 8px 0 2px; }
-    p { margin: 3px 0; font-size: 11px; }
-    .rule { border-top: 1px dashed #111827; margin: 10px 0; }
-    .meta, .total, .item { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; }
-    .item { align-items: flex-start; margin: 7px 0; }
-    .item div { max-width: 48mm; }
-    small { display: block; color: #374151; margin-top: 2px; }
-    .total { margin: 5px 0; }
-    .grand { font-size: 14px; border-top: 1px solid #111827; padding-top: 7px; }
-    .qr { margin: 12px auto 4px; padding: 10px; background: #fff; width: 210px; text-align: center; }
-    .qr img { width: 192px; height: 192px; image-rendering: pixelated; }
-    .qr-label { font: 700 11px system-ui; color: #111827; }
-    .fallback { overflow-wrap: anywhere; font-size: 9px; color: #374151; }
-    @page { size: 80mm auto; margin: 0; }
-    @media print {
-      body { background: white; }
-      .toolbar { display: none !important; }
-      .receipt { width: 80mm; margin: 0; padding: 8px; box-shadow: none; }
-    }
-  </style>
-</head>
-<body>
-  <div class="toolbar"><button onclick="window.print()">Print Receipt</button></div>
-  <main class="receipt" aria-label="Loohar receipt">
-    <section class="center">
-      ${receipt.restaurant.logoUrl ? `<img class="logo" src="${escapeHtml(receipt.restaurant.logoUrl)}" alt="${escapeHtml(receipt.restaurant.name)} logo" />` : ""}
-      <h1>${escapeHtml(receipt.restaurant.name)}</h1>
-      ${receipt.restaurant.address ? `<p>${escapeHtml(receipt.restaurant.address)}</p>` : ""}
-      ${receipt.restaurant.phone ? `<p>${escapeHtml(receipt.restaurant.phone)}</p>` : ""}
-    </section>
-    <div class="rule"></div>
-    <section>
-      <div class="meta"><span>Order</span><strong>#${escapeHtml(receipt.order.orderNumber)}</strong></div>
-      <div class="meta"><span>Type</span><strong>${escapeHtml(receipt.order.type)}</strong></div>
-      <div class="meta"><span>Customer</span><strong>${escapeHtml(receipt.customer.name)}</strong></div>
-      <div class="meta"><span>Date</span><strong>${escapeHtml(new Date(receipt.order.createdAt).toLocaleString())}</strong></div>
-      <div class="meta"><span>Payment</span><strong>${escapeHtml(receipt.payment.status)}</strong></div>
-    </section>
-    <div class="rule"></div>
-    <section>${rows}</section>
-    <div class="rule"></div>
-    <section>${totals.replace("Total</span><strong>", "Total</span><strong class=\"grand\">")}</section>
-    ${receipt.order.notes ? `<div class="rule"></div><p><strong>Instructions:</strong> ${escapeHtml(receipt.order.notes)}</p>` : ""}
-    ${customerQr ? `<section class="qr"><img src="${customerQr}" alt="Customer order tracking QR code" /><p class="qr-label">${escapeHtml(receipt.qr.customer.label)}</p><p class="fallback">${escapeHtml(receipt.qr.customer.webUrl)}</p></section>` : ""}
-    ${driverQr ? `<section class="qr"><img src="${driverQr}" alt="Driver delivery QR code" /><p class="qr-label">${escapeHtml(receipt.qr.driver.label)}</p><p class="fallback">${escapeHtml(receipt.qr.driver.webUrl)}</p></section>` : ""}
-  </main>
-</body>
-</html>`;
-}
-
-async function openReceiptPrintWindow(receipt) {
-  const html = await buildReceiptPrintHtml(receipt);
-  const printWindow = window.open("", "_blank", "noopener,noreferrer,width=420,height=760");
-  if (!printWindow) throw new Error("Browser blocked the receipt print window. Allow popups for Loohar and try again.");
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.setTimeout(() => printWindow.print(), 500);
 }
 
 function normalizePublicRestaurant(payload, fallback = demoRestaurant) {
@@ -580,6 +502,12 @@ const restaurantPageDefinitions = {
     title: "POS register",
     description: "Create in-store orders, manage register devices, shifts, cash controls, and kiosk mode."
   },
+  kiosk: {
+    label: "Kiosk",
+    icon: Shield,
+    title: "POS kiosk",
+    description: "Run a secure full-screen register for cashier and counter staff."
+  },
   orders: {
     label: "Orders",
     icon: ReceiptText,
@@ -621,27 +549,68 @@ const restaurantPageDefinitions = {
 const restaurantPageOrder = ["dashboard", "pos", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
 const restaurantSettingsChildRoutes = new Set([
   "account",
+  "restaurant-profile",
   "profile",
   "restaurants",
   "ownership",
+  "restaurants-ownership",
+  "chains-locations",
   "locations",
+  "business-hours",
   "subscription",
   "website",
+  "website-branding",
   "branding",
   "menu",
+  "menu-catalog",
   "catalog",
   "gallery",
+  "gallery-social",
   "social",
   "ordering",
   "delivery",
+  "delivery-zones",
   "domains",
+  "domains-seo",
   "payments",
   "staff",
+  "staff-access",
+  "staff-roles",
   "notifications",
   "billing",
+  "billing-subscription",
+  "loyalty",
+  "coupons",
+  "receipts-printing",
+  "pos-kiosk",
   "security",
-  "advanced"
+  "security-audit",
+  "advanced",
+  "integrations",
+  "developer-api"
 ]);
+
+const restaurantSettingsAliases = {
+  profile: "restaurant-profile",
+  restaurants: "restaurant-profile",
+  ownership: "restaurant-profile",
+  "restaurants-ownership": "restaurant-profile",
+  "chains-locations": "locations",
+  subscription: "billing-subscription",
+  website: "website-branding",
+  branding: "website-branding",
+  menu: "menu-catalog",
+  catalog: "menu-catalog",
+  gallery: "gallery-social",
+  social: "gallery-social",
+  delivery: "delivery-zones",
+  domains: "domains-seo",
+  staff: "staff-roles",
+  "staff-access": "staff-roles",
+  billing: "billing-subscription",
+  security: "security-audit",
+  advanced: "developer-api"
+};
 
 function restaurantPageFromPath(path = "") {
   if (path === "/kitchen" || path.startsWith("/kitchen/")) return "kitchen";
@@ -672,6 +641,63 @@ function restaurantPagePath(slug = "", page = "dashboard") {
   const base = slug ? `/restaurant/${slug}` : "/restaurant";
   if (page === "dashboard") return `${base}/dashboard`;
   return `${base}/${page}`;
+}
+
+function normalizeRestaurantSettingsSectionId(section = "") {
+  const id = String(section || "").replace(/^#?settings-?/, "").trim();
+  return restaurantSettingsAliases[id] || id || "account";
+}
+
+function restaurantSettingsSectionFromPath(path = "", hash = "") {
+  const parts = pathParts(path);
+  if (parts[0] === "restaurant" && parts[2] === "settings" && parts[3]) return normalizeRestaurantSettingsSectionId(parts[3]);
+  if (parts[0] === "restaurant" && restaurantSettingsChildRoutes.has(parts[2])) return normalizeRestaurantSettingsSectionId(parts[2]);
+  if (hash) return normalizeRestaurantSettingsSectionId(hash);
+  return "account";
+}
+
+function restaurantSettingPath(basePath = "/restaurant", sectionId = "account") {
+  return `${basePath.replace(/\/+$/, "")}/settings/${normalizeRestaurantSettingsSectionId(sectionId)}`;
+}
+
+function settingsStatusLabel(status = "READ_ONLY") {
+  return readable(status);
+}
+
+function settingsStatusTone(status = "READ_ONLY") {
+  const tones = {
+    IMPLEMENTED: "good",
+    READ_ONLY: "neutral",
+    COMING_SOON: "warn",
+    PLAN_RESTRICTED: "warn",
+    PERMISSION_RESTRICTED: "bad"
+  };
+  return tones[status] || "neutral";
+}
+
+function restaurantProfilePlaceholder(user, fallbackSlug = "") {
+  const slug = user?.restaurantSlug || fallbackSlug || "";
+  const name = user?.restaurantName || user?.tenantName || (slug ? readable(slug) : "Restaurant");
+  return {
+    id: user?.restaurantId || "",
+    slug,
+    name,
+    businessName: name,
+    publicBusinessName: name,
+    businessType: "RESTAURANT",
+    status: "ACTIVE",
+    enabledModules: user?.enabledModules || [],
+    logoUrl: "",
+    heroImageUrl: "",
+    phone: user?.phone || "",
+    email: user?.email || "",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    timezone: "America/Denver",
+    categories: []
+  };
 }
 
 function pathParts(path = "") {
@@ -5939,16 +5965,282 @@ function posDeviceFingerprint() {
   return fingerprint;
 }
 
-function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile, fallbackCategories = [], fallbackItems = [], onRefresh }) {
+const posOwnerRoles = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER"]);
+
+function posCanManageSubscription(user) {
+  return posOwnerRoles.has(normalizeRole(user?.role));
+}
+
+function normalizedPosError(error, user) {
+  if (!error) return null;
+  const message = typeof error === "string" ? error : error.message || "";
+  const payload = typeof error === "object" && error ? error.payload || {} : {};
+  const code = String(payload.code || "");
+  const status = Number(error?.status || payload.status || 0);
+  const ownerOperator = posCanManageSubscription(user);
+  if (status === 429 || code === "RATE_LIMITED" || message.includes("429")) {
+    return {
+      tone: "warn",
+      title: "POS is receiving too many requests.",
+      detail: "Please wait a moment and try again. The register will not retry automatically.",
+      action: "Retry POS"
+    };
+  }
+  if (payload.upgradeRequired || code.startsWith("FEATURE_") || code === "PLAN_NOT_INCLUDED" || message.toLowerCase().includes("feature not included")) {
+    return ownerOperator
+      ? {
+          tone: "upgrade",
+          title: `${payload.featureLabel || "POS register"} is not included in the current plan.`,
+          detail: `Current plan: ${payload.currentPlan || "Unknown"}. Required plan: ${payload.requiredPlan || "Professional"}.`,
+          action: "Review subscription"
+        }
+      : {
+          tone: "warn",
+          title: "POS is not enabled for this restaurant.",
+          detail: "Contact your manager before using this register."
+        };
+  }
+  if (status === 403) {
+    return {
+      tone: "warn",
+      title: "POS action is not allowed.",
+      detail: message || "Your account does not have permission for this register action."
+    };
+  }
+  return {
+    tone: "bad",
+    title: message || "POS could not complete the request.",
+    detail: payload.detail || "Try again, or refresh the register if the issue continues."
+  };
+}
+
+function PosNotice({ error, user, onRetry, subscriptionHref }) {
+  const normalized = normalizedPosError(error, user);
+  if (!normalized) return null;
+  const isUpgrade = normalized.tone === "upgrade";
+  const isRateLimit = normalized.action === "Retry POS";
+  return (
+    <div className={`pos-notice ${normalized.tone}`} role="alert">
+      <Shield size={20} aria-hidden="true" />
+      <div>
+        <strong>{normalized.title}</strong>
+        <span>{normalized.detail}</span>
+      </div>
+      {isUpgrade ? <a className="button-muted" href={subscriptionHref}>Review Subscription</a> : null}
+      {isRateLimit ? <button className="button-muted" type="button" onClick={onRetry}>Retry</button> : null}
+    </div>
+  );
+}
+
+function centsFromDollarInput(value) {
+  const cleaned = String(value || "").replace(/[^0-9.]/g, "");
+  if (!cleaned) return 0;
+  return Math.max(0, Math.round(Number(cleaned) * 100) || 0);
+}
+
+function itemCategoryId(item) {
+  return item.categoryId || item.category?.id || "";
+}
+
+function itemCategoryName(item) {
+  return item.categoryName || item.category?.name || "Menu";
+}
+
+const POS_MENU_STATUS = Object.freeze({
+  IDLE: "IDLE",
+  INITIAL_LOADING: "INITIAL_LOADING",
+  SUCCESS: "SUCCESS",
+  EMPTY: "EMPTY",
+  REFRESHING: "REFRESHING",
+  STALE: "STALE",
+  ERROR: "ERROR",
+  ENTITLEMENT_DENIED: "ENTITLEMENT_DENIED"
+});
+
+function emptyPosMenuState() {
+  return {
+    status: POS_MENU_STATUS.IDLE,
+    categories: [],
+    lastSuccessfulCategories: [],
+    itemCount: 0,
+    lastSuccessfulItemCount: 0,
+    menuVersion: "",
+    requestId: "",
+    requestSequence: 0,
+    acceptedSequence: 0,
+    tenantId: "",
+    locationId: "",
+    loadedAt: null,
+    error: null,
+    refreshError: null
+  };
+}
+
+function countPosMenuItems(categories = []) {
+  return categories.reduce((total, category) => total + (category.items || []).length, 0);
+}
+
+function posMenuErrorCode(error) {
+  return String(error?.payload?.code || error?.code || "");
+}
+
+function isPosEntitlementDenied(error) {
+  const code = posMenuErrorCode(error);
+  const status = Number(error?.status || error?.payload?.status || 0);
+  return status === 403 && (code.startsWith("FEATURE_") || code === "PLAN_NOT_INCLUDED" || code === "SUBSCRIPTION_SUSPENDED" || code === "SUBSCRIPTION_READ_ONLY");
+}
+
+function normalizePosMenuPayload(payload = {}) {
+  const categories = Array.isArray(payload.categories) ? payload.categories : [];
+  const itemCount = Number(payload.availabilitySummary?.items ?? countPosMenuItems(categories));
+  return {
+    categories,
+    itemCount,
+    menuVersion: String(payload.menuVersion || `${categories.length}:${itemCount}`),
+    tenantId: payload.tenantId || payload.restaurantId || "",
+    locationId: payload.locationId || "",
+    generatedAt: payload.generatedAt || new Date().toISOString(),
+    requestId: payload.requestId || ""
+  };
+}
+
+function debugPosMenu(event, details = {}) {
+  if (import.meta.env?.DEV) {
+    globalThis.console?.debug?.(`[Loohar POS menu] ${event}`, details);
+  }
+}
+
+function posPerformanceMark(name) {
+  if (!import.meta.env?.DEV || !globalThis.performance?.mark) return;
+  globalThis.performance.mark(name);
+}
+
+function posPerformanceMeasure(name, start, end) {
+  if (!import.meta.env?.DEV || !globalThis.performance?.measure) return;
+  try {
+    const measure = globalThis.performance.measure(name, start, end);
+    const entry = Array.isArray(measure) ? measure[0] : measure;
+    globalThis.console?.debug?.("[Loohar POS perf]", name, `${Math.round(entry?.duration || 0)}ms`);
+  } catch {
+    // Performance markers are diagnostics only; never block POS usage.
+  }
+}
+
+function posCartLineId() {
+  return `cart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizePosModifierGroups(item = {}) {
+  const groups = (item.optionGroups || [])
+    .map((group) => ({
+      ...group,
+      id: group.id || `group-${group.name}`,
+      minSelect: Number(group.minSelect || 0),
+      maxSelect: Math.max(1, Number(group.maxSelect || 1)),
+      options: [...(group.options || [])]
+        .filter((option) => option.available !== false)
+        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")))
+    }))
+    .filter((group) => group.options.length > 0)
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
+  const groupedOptionIds = new Set(groups.flatMap((group) => group.options.map((option) => option.id)));
+  const looseOptions = (item.options || [])
+    .filter((option) => option.available !== false && !groupedOptionIds.has(option.id))
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
+  if (looseOptions.length) {
+    groups.push({
+      id: `__ungrouped:${item.id}`,
+      name: "Options",
+      required: false,
+      minSelect: 0,
+      maxSelect: looseOptions.length,
+      options: looseOptions
+    });
+  }
+  return groups;
+}
+
+function selectedPosModifierRows(item = {}, selections = {}) {
+  return normalizePosModifierGroups(item).flatMap((group) => {
+    const selectedIds = new Set(selections[group.id] || []);
+    return group.options
+      .filter((option) => selectedIds.has(option.id))
+      .map((option) => ({
+        id: option.id,
+        optionId: option.id,
+        name: option.name,
+        priceCents: Number(option.priceCents || 0),
+        groupId: group.id,
+        groupName: group.name
+      }));
+  });
+}
+
+function posModifierOptionIds(selections = {}) {
+  return Object.values(selections).flat().filter(Boolean);
+}
+
+function posModifierValidationErrors(item = {}, selections = {}) {
+  return normalizePosModifierGroups(item).flatMap((group) => {
+    const count = (selections[group.id] || []).length;
+    const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+    const maximum = Math.max(1, Number(group.maxSelect || 1));
+    if (count < minimum) return [`Choose at least ${minimum} ${minimum === 1 ? "option" : "options"} for ${group.name}.`];
+    if (count > maximum) return [`Choose no more than ${maximum} ${maximum === 1 ? "option" : "options"} for ${group.name}.`];
+    return [];
+  });
+}
+
+function posModifierSignature(optionIds = [], instructions = "") {
+  return `${[...new Set(optionIds)].sort().join("|")}::${String(instructions || "").trim()}`;
+}
+
+function posSelectionsFromOptionIds(item = {}, optionIds = []) {
+  const selected = new Set(optionIds || []);
+  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+    group.id,
+    group.options.filter((option) => selected.has(option.id)).map((option) => option.id)
+  ]));
+}
+
+function RestaurantKioskShell({ apiOnline, apiMode, token, user, restaurantSlug, onLogout }) {
+  const ownerOperator = posCanManageSubscription(user);
+  const profile = {
+    id: user?.restaurantId,
+    slug: restaurantSlug || user?.restaurantSlug || "",
+    name: user?.restaurantName || readable(restaurantSlug || "Restaurant"),
+    businessName: user?.restaurantName || readable(restaurantSlug || "Restaurant")
+  };
+  return (
+    <div className="pos-kiosk-shell">
+      <header className="pos-kiosk-topbar">
+        <LooharPlatformBrand size="compact" href="/" />
+        <div className="pos-kiosk-topbar-actions">
+          <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live POS" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill>
+          {ownerOperator ? <a className="button-muted" href={restaurantPagePath(profile.slug, "pos")}><CreditCard size={16} />Owner POS</a> : null}
+          <button className="button-muted" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
+        </div>
+      </header>
+      <main className="pos-kiosk-main">
+        <RestaurantPosWorkspace apiOnline={apiOnline} token={token} user={user} restaurantId={user?.restaurantId} restaurantSlug={profile.slug} profile={profile} kioskOnly />
+      </main>
+    </div>
+  );
+}
+
+function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile = {}, onRefresh, kioskOnly = false }) {
   const restaurantKey = restaurantSlug || profile.slug || user?.restaurantSlug || restaurantId;
   const posBasePath = restaurantKey ? `/api/restaurants/${restaurantKey}/pos` : "";
-  const deviceStorageKey = restaurantId ? `loohar-pos-device-id:${restaurantId}` : "loohar-pos-device-id";
+  const deviceStorageKey = restaurantKey ? `loohar-pos-device-id:${restaurantKey}` : "loohar-pos-device-id";
+  const subscriptionHref = restaurantKey ? `/restaurant/${restaurantKey}/settings/subscription` : "/restaurant/settings/subscription";
+  const ownerOperator = posCanManageSubscription(user);
   const [fingerprint, setFingerprint] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [config, setConfig] = useState(null);
-  const [menuCategories, setMenuCategories] = useState([]);
+  const [posMenuState, setPosMenuState] = useState(() => emptyPosMenuState());
   const [heldOrders, setHeldOrders] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState([]);
   const [quote, setQuote] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
@@ -5963,7 +6255,18 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [customer, setCustomer] = useState({ name: "Walk-in guest", phone: "", email: "" });
   const [orderType, setOrderType] = useState("WALK_IN");
   const [tipCents, setTipCents] = useState(0);
+  const [customTip, setCustomTip] = useState("");
   const [notes, setNotes] = useState("");
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [showKioskExit, setShowKioskExit] = useState(false);
+  const [customizingItem, setCustomizingItem] = useState(null);
+  const [modifierSelections, setModifierSelections] = useState({});
+  const [modifierInstructions, setModifierInstructions] = useState("");
+  const [modifierError, setModifierError] = useState("");
+  const inflightLoadRef = useRef(null);
+  const posMenuSequenceRef = useRef(0);
+  const acceptedPosMenuSequenceRef = useRef(0);
+  const loadedOnceRef = useRef(false);
 
   useEffect(() => {
     setFingerprint(posDeviceFingerprint());
@@ -5989,39 +6292,138 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     });
   }
 
-  async function loadPos() {
+  async function loadPos(options = {}) {
     if (!apiOnline || !token || !posBasePath) return;
-    setLoading(true);
+    if (inflightLoadRef.current) return inflightLoadRef.current;
+    posPerformanceMark("pos-route-start");
+    const requestSequence = posMenuSequenceRef.current + 1;
+    posMenuSequenceRef.current = requestSequence;
+    const requestId = `${restaurantKey || "restaurant"}:${requestSequence}:${Date.now()}`;
+    const hadSuccessfulMenu = posMenuState.lastSuccessfulCategories.length > 0 || posMenuState.status === POS_MENU_STATUS.SUCCESS || posMenuState.status === POS_MENU_STATUS.EMPTY;
+    setPosMenuState((current) => ({
+      ...current,
+      status: hadSuccessfulMenu ? POS_MENU_STATUS.REFRESHING : POS_MENU_STATUS.INITIAL_LOADING,
+      requestId,
+      requestSequence,
+      refreshError: null,
+      error: null
+    }));
+    if (!options.silent) setLoading(true);
     setError("");
-    try {
-      const [configPayload, menuPayload, heldPayload] = await Promise.all([
-        posApi("/config"),
-        posApi("/menu"),
-        posApi("/held-orders")
-      ]);
-      setConfig(configPayload);
-      setMenuCategories(menuPayload.categories || []);
-      setHeldOrders(heldPayload.heldOrders || []);
-      if (configPayload.device?.id) {
-        setDeviceId(configPayload.device.id);
-        if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
+    inflightLoadRef.current = (async () => {
+      try {
+        let configPayload;
+        let menuPayload;
+        let heldPayload;
+        try {
+          const bootstrapPayload = await posApi("/bootstrap", { headers: { "x-loohar-pos-request-id": requestId } });
+          configPayload = bootstrapPayload.config;
+          menuPayload = bootstrapPayload.menu;
+          heldPayload = { heldOrders: bootstrapPayload.heldOrders || [] };
+        } catch (bootstrapError) {
+          const status = Number(bootstrapError?.status || bootstrapError?.payload?.status || 0);
+          if (![404, 405].includes(status)) throw bootstrapError;
+          [configPayload, menuPayload, heldPayload] = await Promise.all([
+            posApi("/config"),
+            posApi("/menu", { headers: { "x-loohar-pos-request-id": requestId } }),
+            posApi("/held-orders")
+          ]);
+        }
+        posPerformanceMark("pos-config-ready");
+        posPerformanceMark("pos-menu-ready");
+        if (requestSequence < acceptedPosMenuSequenceRef.current) {
+          debugPosMenu("stale-response-rejected", { requestSequence, acceptedSequence: acceptedPosMenuSequenceRef.current });
+          return;
+        }
+        const normalizedMenu = normalizePosMenuPayload(menuPayload);
+        const expectedRestaurantId = configPayload?.restaurant?.id || restaurantId || user?.restaurantId || "";
+        if (normalizedMenu.tenantId && expectedRestaurantId && normalizedMenu.tenantId !== expectedRestaurantId) {
+          const staleError = new Error("Stale POS menu response was rejected.");
+          staleError.code = "POS_MENU_TENANT_MISMATCH";
+          throw staleError;
+        }
+        acceptedPosMenuSequenceRef.current = requestSequence;
+        setConfig(configPayload);
+        setHeldOrders(heldPayload.heldOrders || []);
+        setPosMenuState((current) => {
+          const nextStatus = normalizedMenu.itemCount > 0 ? POS_MENU_STATUS.SUCCESS : POS_MENU_STATUS.EMPTY;
+          return {
+            ...current,
+            status: nextStatus,
+            categories: normalizedMenu.categories,
+            lastSuccessfulCategories: normalizedMenu.categories,
+            itemCount: normalizedMenu.itemCount,
+            lastSuccessfulItemCount: normalizedMenu.itemCount,
+            menuVersion: normalizedMenu.menuVersion,
+            tenantId: normalizedMenu.tenantId,
+            locationId: normalizedMenu.locationId,
+            acceptedSequence: requestSequence,
+            requestId,
+            loadedAt: normalizedMenu.generatedAt,
+            error: null,
+            refreshError: null
+          };
+        });
+        debugPosMenu("response-accepted", { requestSequence, requestId, itemCount: normalizedMenu.itemCount, menuVersion: normalizedMenu.menuVersion });
+        if (configPayload.device?.id) {
+          setDeviceId((current) => current === configPayload.device.id ? current : configPayload.device.id);
+          if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
+        }
+        loadedOnceRef.current = true;
+        posPerformanceMark("pos-interactive");
+        posPerformanceMeasure("pos-auth-duration", "pos-route-start", "pos-config-ready");
+        posPerformanceMeasure("pos-config-duration", "pos-route-start", "pos-config-ready");
+        posPerformanceMeasure("pos-menu-duration", "pos-route-start", "pos-menu-ready");
+        posPerformanceMeasure(kioskOnly ? "kiosk-interactive-duration" : "pos-interactive-duration", "pos-route-start", "pos-interactive");
+      } catch (posError) {
+        const entitlementDenied = isPosEntitlementDenied(posError);
+        setPosMenuState((current) => {
+          const canKeepLastMenu = current.lastSuccessfulCategories.length > 0 && !entitlementDenied;
+          return {
+            ...current,
+            status: entitlementDenied ? POS_MENU_STATUS.ENTITLEMENT_DENIED : canKeepLastMenu ? POS_MENU_STATUS.STALE : POS_MENU_STATUS.ERROR,
+            categories: canKeepLastMenu ? current.lastSuccessfulCategories : current.categories,
+            itemCount: canKeepLastMenu ? current.lastSuccessfulItemCount : current.itemCount,
+            error: posError,
+            refreshError: canKeepLastMenu ? posError : null,
+            requestId,
+            requestSequence
+          };
+        });
+        debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(posError), message: posError?.message });
+        setError(posError);
+      } finally {
+        setLoading(false);
+        inflightLoadRef.current = null;
       }
-    } catch (posError) {
-      setError(posError.message);
-    } finally {
-      setLoading(false);
-    }
+    })();
+    return inflightLoadRef.current;
   }
 
   useEffect(() => {
-    loadPos();
-  }, [apiOnline, token, posBasePath, deviceId, fingerprint]);
+    if (!fingerprint) return;
+    loadPos({ silent: loadedOnceRef.current });
+  }, [apiOnline, token, posBasePath, fingerprint]);
 
-  const categoriesForRegister = menuCategories.length ? menuCategories : fallbackCategories;
-  const itemsForRegister = categoriesForRegister.length
-    ? categoriesForRegister.flatMap((category) => (category.items || []).map((item) => ({ ...item, categoryName: category.name, categoryId: category.id })))
-    : fallbackItems;
-  const visibleItems = selectedCategory === "all" ? itemsForRegister : itemsForRegister.filter((item) => item.categoryId === selectedCategory || item.category?.id === selectedCategory);
+  const categoriesForRegister = useMemo(() => (
+    posMenuState.categories.length ? posMenuState.categories : posMenuState.lastSuccessfulCategories
+  ), [posMenuState.categories, posMenuState.lastSuccessfulCategories]);
+  const itemsForRegister = useMemo(() => categoriesForRegister.flatMap((category) => (
+    category.items || []
+  ).map((item) => ({ ...item, categoryName: category.name, categoryId: category.id }))), [categoriesForRegister]);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const visibleItems = itemsForRegister.filter((item) => {
+    const matchesCategory = selectedCategory === "all" || itemCategoryId(item) === selectedCategory;
+    if (!matchesCategory) return false;
+    if (!normalizedSearch) return true;
+    return [item.name, itemCategoryName(item), item.sku, item.searchAliases].filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch);
+  });
+  useEffect(() => {
+    if (selectedCategory === "all") return;
+    if (!categoriesForRegister.some((category) => category.id === selectedCategory)) {
+      setSelectedCategory("all");
+    }
+  }, [categoriesForRegister, selectedCategory]);
   const activeDevice = config?.device;
   const activeShift = config?.shift;
   const firstCashDrawer = config?.cashDrawers?.[0];
@@ -6029,6 +6431,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const canAcceptCash = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.deviceType === "MAIN_TERMINAL" && activeShift?.status === "OPEN" && currentCashDrawer?.status === "OPEN" && (config?.permissions || []).includes("POS_ACCEPT_CASH"));
   const canAcceptCard = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.cardPaymentsEnabled && (config?.permissions || []).includes("POS_ACCEPT_CARD"));
   const cartTotalCents = cart.reduce((sum, line) => sum + (line.priceCents || 0) * line.quantity, 0);
+  const cartItemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const cashDisabledReason = !activeDevice
     ? "Register this device before accepting payments."
     : activeDevice.deviceType !== "MAIN_TERMINAL"
@@ -6036,37 +6439,146 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       : !activeShift
         ? "Open a shift before accepting cash."
         : currentCashDrawer?.status !== "OPEN"
-          ? "Open cash drawer required."
-          : "";
+      ? "Open cash drawer required."
+      : "";
+  const posMenuItemCount = posMenuState.itemCount || countPosMenuItems(categoriesForRegister);
+  const posMenuTone = [POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)
+    ? "good"
+    : posMenuState.status === POS_MENU_STATUS.STALE
+      ? "warn"
+      : posMenuState.status === POS_MENU_STATUS.ENTITLEMENT_DENIED || posMenuState.status === POS_MENU_STATUS.ERROR
+        ? "bad"
+        : "neutral";
+  const posMenuLabel = posMenuState.status === POS_MENU_STATUS.REFRESHING
+    ? `Refreshing ${posMenuItemCount} items`
+    : posMenuState.status === POS_MENU_STATUS.STALE
+      ? `Stale ${posMenuItemCount} items`
+      : posMenuState.status === POS_MENU_STATUS.EMPTY
+        ? "Empty"
+        : posMenuItemCount ? `${posMenuItemCount} items` : readable(posMenuState.status || "loading");
+  const statusChips = [
+    { icon: CreditCard, label: "Device", value: activeDevice ? readable(activeDevice.deviceType) : "Unregistered", tone: activeDevice?.status === "ACTIVE" ? "good" : "warn" },
+    { icon: Clock, label: "Shift", value: activeShift?.status || "Closed", tone: activeShift?.status === "OPEN" ? "good" : "neutral" },
+    { icon: Store, label: "Menu", value: posMenuLabel, tone: posMenuTone },
+    { icon: ReceiptText, label: "Cart", value: `${cartItemCount} item${cartItemCount === 1 ? "" : "s"} / ${money(quote?.totalCents ?? cartTotalCents)}`, tone: cartItemCount ? "good" : "neutral" },
+    { icon: Shield, label: "Kiosk", value: activeDevice?.kioskModeEnabled || kioskOnly ? "Locked" : "Off", tone: activeDevice?.kioskModeEnabled || kioskOnly ? "good" : "neutral" }
+  ];
+  const kioskLocked = Boolean(activeDevice?.kioskModeEnabled || kioskOnly);
+  const canOpenKiosk = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.kioskModeEnabled);
 
   function addToCart(item) {
-    setQuote(null);
-    setLastOrder(null);
-    setCart((current) => {
-      const existing = current.find((line) => line.menuItemId === item.id);
-      if (existing) {
-        return current.map((line) => line.menuItemId === item.id ? { ...line, quantity: line.quantity + 1 } : line);
+    if (normalizePosModifierGroups(item).length) {
+      openModifierDialog(item);
+      return;
+    }
+    addConfiguredItemToCart(item);
+  }
+
+  function openModifierDialog(item) {
+    const defaults = Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+      group.id,
+      group.options.filter((option) => option.isDefault).slice(0, Math.max(1, Number(group.maxSelect || 1))).map((option) => option.id)
+    ]));
+    setCustomizingItem(item);
+    setModifierSelections(defaults);
+    setModifierInstructions("");
+    setModifierError("");
+  }
+
+  function closeModifierDialog() {
+    setCustomizingItem(null);
+    setModifierSelections({});
+    setModifierInstructions("");
+    setModifierError("");
+  }
+
+  function toggleModifierSelection(group, option) {
+    setModifierError("");
+    setModifierSelections((current) => {
+      const currentIds = current[group.id] || [];
+      const selected = currentIds.includes(option.id);
+      const maximum = Math.max(1, Number(group.maxSelect || 1));
+      if (maximum === 1) {
+        return { ...current, [group.id]: selected ? [] : [option.id] };
       }
-      return [...current, {
-        menuItemId: item.id,
-        name: item.name,
-        priceCents: item.priceCents || 0,
-        quantity: 1,
-        specialInstructions: ""
-      }];
+      const nextIds = selected ? currentIds.filter((id) => id !== option.id) : [...currentIds, option.id].slice(0, maximum);
+      return { ...current, [group.id]: nextIds };
     });
   }
 
-  function updateCartLine(menuItemId, changes) {
+  function addConfiguredItemToCart(item = customizingItem, options = {}) {
+    if (!item?.id) return;
+    const selections = options.selections || modifierSelections;
+    const specialInstructions = options.specialInstructions ?? modifierInstructions;
+    const validationErrors = posModifierValidationErrors(item, selections);
+    if (validationErrors.length) {
+      setModifierError(validationErrors[0]);
+      return;
+    }
+    const modifiers = selectedPosModifierRows(item, selections);
+    const optionIds = posModifierOptionIds(selections);
+    const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
+    const unitPriceCents = Number(item.priceCents || 0) + modifierPriceCents;
+    const signature = posModifierSignature(optionIds, specialInstructions);
+    setQuote(null);
+    setLastOrder(null);
+    setMobileCartOpen(true);
+    setCart((current) => {
+      const existing = current.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
+      if (existing) {
+        return current.map((line) => line.cartLineId === existing.cartLineId ? { ...line, quantity: line.quantity + 1 } : line);
+      }
+      return [...current, {
+        cartLineId: posCartLineId(),
+        menuItemId: item.id,
+        name: item.name,
+        basePriceCents: item.priceCents || 0,
+        priceCents: unitPriceCents,
+        quantity: 1,
+        optionIds,
+        modifierOptionIds: optionIds,
+        modifiers,
+        modifierSignature: signature,
+        specialInstructions
+      }];
+    });
+    closeModifierDialog();
+  }
+
+  function setQuantity(cartLineId, quantity) {
+    updateCartLine(cartLineId, { quantity: Math.max(1, Number(quantity) || 1) });
+  }
+
+  function adjustQuantity(cartLineId, delta) {
     setQuote(null);
     setCart((current) => current
-      .map((line) => line.menuItemId === menuItemId ? { ...line, ...changes, quantity: Math.max(1, Number(changes.quantity ?? line.quantity) || 1) } : line)
+      .map((line) => line.cartLineId === cartLineId ? { ...line, quantity: Math.max(1, line.quantity + delta) } : line)
       .filter((line) => line.quantity > 0));
   }
 
-  function removeCartLine(menuItemId) {
+  function setTipPreset(mode) {
     setQuote(null);
-    setCart((current) => current.filter((line) => line.menuItemId !== menuItemId));
+    if (mode === "none") {
+      setTipCents(0);
+      setCustomTip("");
+      return;
+    }
+    if (mode === "custom") return;
+    const percent = Number(mode);
+    setTipCents(Math.round(cartTotalCents * (percent / 100)));
+    setCustomTip("");
+  }
+
+  function updateCartLine(cartLineId, changes) {
+    setQuote(null);
+    setCart((current) => current
+      .map((line) => line.cartLineId === cartLineId ? { ...line, ...changes, quantity: Math.max(1, Number(changes.quantity ?? line.quantity) || 1) } : line)
+      .filter((line) => line.quantity > 0));
+  }
+
+  function removeCartLine(cartLineId) {
+    setQuote(null);
+    setCart((current) => current.filter((line) => line.cartLineId !== cartLineId));
   }
 
   async function registerDevice(event) {
@@ -6089,7 +6601,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("POS device registered for this restaurant.");
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6110,7 +6622,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("POS shift opened.");
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6129,7 +6641,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("POS shift closed.");
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6153,6 +6665,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             menuItemId: line.menuItemId,
             quantity: line.quantity,
             optionIds: line.optionIds || [],
+            modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
             specialInstructions: line.specialInstructions || ""
           }))
         }
@@ -6161,7 +6674,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("Server quote recalculated.");
       return payload.quote;
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
       return null;
     } finally {
       setSaving("");
@@ -6185,6 +6698,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
               menuItemId: line.menuItemId,
               quantity: line.quantity,
               optionIds: line.optionIds || [],
+              modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
+              modifiers: line.modifiers || [],
               specialInstructions: line.specialInstructions || ""
             }))
           }
@@ -6195,7 +6710,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("Order held for later.");
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6222,7 +6737,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("Order sent to the kitchen queue.");
       await onRefresh?.();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6244,7 +6759,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setNotice("Cash payment accepted and receipt recorded.");
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6262,7 +6777,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       });
       setNotice(payload.message || "Hosted card payment request created.");
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6282,9 +6797,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setKioskPin("");
       setExitPin("");
       setNotice(enabled ? "Kiosk mode enabled for this device." : "Kiosk mode exited.");
+      if (!enabled) setShowKioskExit(false);
       await loadPos();
     } catch (posError) {
-      setError(posError.message);
+      setError(posError);
     } finally {
       setSaving("");
     }
@@ -6297,12 +6813,21 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setCustomer({ name: session.customerJson?.name || "Walk-in guest", phone: session.customerJson?.phone || "", email: session.customerJson?.email || "" });
     setCart(lines.map((line) => {
       const item = itemById.get(line.menuItemId) || {};
+      const optionIds = line.modifierOptionIds || line.optionIds || [];
+      const selections = posSelectionsFromOptionIds(item, optionIds);
+      const modifiers = line.modifiers || selectedPosModifierRows(item, selections);
+      const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
       return {
+        cartLineId: posCartLineId(),
         menuItemId: line.menuItemId,
         name: item.name || line.name || "Menu item",
-        priceCents: item.priceCents || line.unitPriceCents || 0,
+        basePriceCents: item.priceCents || line.basePriceCents || line.unitPriceCents || 0,
+        priceCents: line.priceCents || line.unitPriceCents || (Number(item.priceCents || 0) + modifierPriceCents),
         quantity: Number(line.quantity) || 1,
-        optionIds: line.optionIds || [],
+        optionIds,
+        modifierOptionIds: optionIds,
+        modifiers,
+        modifierSignature: posModifierSignature(optionIds, line.specialInstructions || ""),
         specialInstructions: line.specialInstructions || ""
       };
     }));
@@ -6319,73 +6844,124 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   return (
-    <div className={`pos-register ${activeDevice?.kioskModeEnabled ? "kiosk-active" : ""}`}>
+    <div className={`pos-register ${kioskLocked ? "kiosk-active" : ""}`}>
       <div className="pos-command-bar">
         <div>
-          <p className="restaurant-shell-breadcrumb">Restaurant POS</p>
-          <h2>{profile.businessName || profile.name || "POS register"}</h2>
-          <p>Server-priced in-store orders with device, shift, cash, and kiosk controls.</p>
+          <p className="restaurant-shell-breadcrumb">{kioskOnly ? "Secure Kiosk" : "Restaurant POS"}</p>
+          <h2>{kioskOnly ? "Counter register" : profile.businessName || profile.name || "POS register"}</h2>
+          <p>{activeShift?.status === "OPEN" ? `Shift opened ${new Date(activeShift.openedAt).toLocaleTimeString()}` : "Register device, shift, menu, and checkout in one flow."}</p>
         </div>
-        <button className="button-muted" type="button" onClick={loadPos} disabled={loading}><RefreshCw size={18} />Refresh POS</button>
+        <div className="pos-command-actions">
+          {kioskLocked ? <button className="button-muted" type="button" onClick={() => setShowKioskExit(true)}><Shield size={18} />Manager exit</button> : null}
+          {!kioskOnly && ownerOperator && canOpenKiosk ? <a className="button-muted" href={restaurantKey ? `/restaurant/${restaurantKey}/kiosk` : "/restaurant/kiosk"}><Shield size={18} />Open Kiosk</a> : null}
+          {!kioskOnly ? <button className="button-muted" type="button" onClick={() => loadPos()} disabled={loading}><RefreshCw size={18} />Refresh</button> : null}
+        </div>
       </div>
 
-      <InlineError message={error} />
+      <PosNotice error={error} user={user} onRetry={() => loadPos()} subscriptionHref={subscriptionHref} />
       {notice ? <div className="success-box">{notice}</div> : null}
+      {posMenuState.status === POS_MENU_STATUS.STALE ? (
+        <div className="pos-menu-state stale" role="status">
+          Showing the last synced POS menu. Refresh failed, but the current order and menu remain available.
+        </div>
+      ) : null}
+      {posMenuState.status === POS_MENU_STATUS.REFRESHING ? (
+        <div className="pos-menu-state refreshing" role="status">
+          Refreshing menu in the background...
+        </div>
+      ) : null}
+      {posMenuState.status === POS_MENU_STATUS.ENTITLEMENT_DENIED ? (
+        <div className="pos-menu-state denied" role="alert">
+          POS menu access is restricted by the current subscription or tenant status.
+        </div>
+      ) : null}
 
-      {loading ? <div className="panel">Loading POS register...</div> : null}
+      {loading && !loadedOnceRef.current ? <div className="pos-loading-panel">Loading POS register...</div> : null}
 
-      <div className="pos-status-grid">
-        <Stat icon={CreditCard} label="Device" value={activeDevice ? readable(activeDevice.deviceType) : "Unregistered"} detail={activeDevice?.status || "Register browser/device"} />
-        <Stat icon={Clock} label="Shift" value={activeShift?.status || "Closed"} detail={activeShift ? `Opened ${new Date(activeShift.openedAt).toLocaleTimeString()}` : "Open shift to accept payments"} />
-        <Stat icon={ReceiptText} label="Cart" value={money(quote?.totalCents ?? cartTotalCents)} detail={`${cart.reduce((sum, line) => sum + line.quantity, 0)} item(s)`} />
-        <Stat icon={Shield} label="Kiosk" value={activeDevice?.kioskModeEnabled ? "Locked" : "Off"} detail="Server-controlled device mode" />
+      <div className="pos-status-strip" aria-label="POS register status">
+        {statusChips.map(({ icon: Icon, label, value, tone }) => (
+          <div className={`pos-status-chip ${tone}`} key={label}>
+            <Icon size={17} aria-hidden="true" />
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
       </div>
 
       <div className="pos-layout">
         <section className="pos-catalog panel">
-          <div className="pos-section-head">
-            <div>
-              <h3 className="panel-title">Menu</h3>
-              <p>Tap items to add them to the current register cart.</p>
-            </div>
-            <select className="select pos-category-select" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
+          <div className="pos-menu-toolbar">
+            <h3 className="panel-title">Menu</h3>
+            <label className="pos-menu-search">
+              <Search size={17} aria-hidden="true" />
+              <span className="sr-only">Search POS menu items</span>
+              <input value={searchQuery} placeholder="Search items..." onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearchQuery(""); }} />
+              {searchQuery ? <button type="button" onClick={() => setSearchQuery("")} aria-label="Clear search"><X size={16} /></button> : null}
+            </label>
+            <select className="select pos-category-select" aria-label="Filter by menu category" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
               <option value="all">All categories</option>
               {categoriesForRegister.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
           </div>
-          {visibleItems.length === 0 ? <EmptyState title="No POS menu items" detail="Add available menu items before taking in-store orders." /> : (
+          <div className="pos-category-pills" aria-label="POS menu categories">
+            <button className={`pos-category-pill ${selectedCategory === "all" ? "active" : ""}`} type="button" aria-pressed={selectedCategory === "all"} onClick={() => setSelectedCategory("all")}>All</button>
+            {categoriesForRegister.map((category) => (
+              <button className={`pos-category-pill ${selectedCategory === category.id ? "active" : ""}`} type="button" aria-pressed={selectedCategory === category.id} key={category.id} onClick={() => setSelectedCategory(category.id)}>
+                {category.name}
+              </button>
+            ))}
+          </div>
+          {visibleItems.length === 0 ? (
+            <EmptyState
+              title={searchQuery ? "No matching POS items" : posMenuState.status === POS_MENU_STATUS.ERROR ? "POS menu unavailable" : "No POS menu items"}
+              detail={posMenuState.status === POS_MENU_STATUS.ERROR
+                ? "The register could not load a live menu. Retry the POS refresh before taking orders."
+                : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager."}
+            />
+          ) : (
             <div className="pos-item-grid">
               {visibleItems.map((item) => (
                 <button className="pos-menu-item" type="button" key={item.id} onClick={() => addToCart(item)}>
-                  {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" /> : <span className="pos-menu-item-fallback"><Store size={20} /></span>}
+                  {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={handleSafeImageError} /> : <span className="pos-menu-item-fallback"><Store size={20} /></span>}
                   <span>
                     <strong>{item.name}</strong>
-                    <small>{item.categoryName || item.category?.name || "Menu"}</small>
+                    <small>{itemCategoryName(item)}</small>
                   </span>
                   <b>{money(item.priceCents)}</b>
+                  {normalizePosModifierGroups(item).length ? <em className="customizable">Customizable</em> : null}
+                  {item.featured || item.recommended ? <em>Popular</em> : null}
                 </button>
               ))}
             </div>
           )}
         </section>
 
-        <aside className="pos-cart panel">
+        <aside className={`pos-cart panel ${mobileCartOpen ? "open" : ""}`}>
           <div className="pos-section-head">
             <div>
               <h3 className="panel-title">Current order</h3>
-              <p>Prices are recalculated by the backend before submit.</p>
+              <p>{cartItemCount ? `${cartItemCount} item${cartItemCount === 1 ? "" : "s"} in progress` : "Tap menu items to start."}</p>
             </div>
-            <button className="button-muted" type="button" onClick={() => { setCart([]); setQuote(null); setLastOrder(null); }} disabled={!cart.length}><Trash2 size={16} />Clear</button>
+            <div className="pos-cart-head-actions">
+              <button className="button-muted pos-mobile-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button>
+              <button className="button-muted" type="button" onClick={() => { setCart([]); setQuote(null); setLastOrder(null); }} disabled={!cart.length}><Trash2 size={16} />Clear</button>
+            </div>
           </div>
+          <div className="pos-cart-body">
           <div className="pos-form-grid">
             <label>Order type
               <select className="select mt-1" value={orderType} onChange={(event) => { setOrderType(event.target.value); setQuote(null); }}>
                 {posOrderTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
-            <label>Tip cents
-              <input className="input mt-1" type="number" min="0" value={tipCents} onChange={(event) => { setTipCents(Number(event.target.value) || 0); setQuote(null); }} />
-            </label>
+            <div className="pos-tip-panel">
+              <span>Tip</span>
+              <div className="pos-tip-buttons">
+                {["none", "10", "15", "20"].map((mode) => <button className="seg" type="button" key={mode} onClick={() => setTipPreset(mode)}>{mode === "none" ? "No tip" : `${mode}%`}</button>)}
+                <button className="seg" type="button" onClick={() => setTipPreset("custom")}>Custom</button>
+              </div>
+              <input className="input mt-2" inputMode="decimal" placeholder="$0.00" value={customTip} onChange={(event) => { setCustomTip(event.target.value); setTipCents(centsFromDollarInput(event.target.value)); setQuote(null); }} aria-label="Custom tip amount" />
+            </div>
           </div>
           <div className="pos-form-grid mt-3">
             <label>Guest name
@@ -6401,21 +6977,39 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
           <div className="pos-cart-lines">
             {cart.length === 0 ? <EmptyState title="Cart is empty" detail="Select menu items to start a walk-in, dine-in, pickup, or delivery order." /> : cart.map((line) => (
-              <div className="pos-cart-line" key={line.menuItemId}>
+              <div className="pos-cart-line" key={line.cartLineId}>
                 <div>
                   <strong>{line.name}</strong>
-                  <small>{money(line.priceCents)} each</small>
+                  <small>{money(line.priceCents)} each / {money((line.priceCents || 0) * line.quantity)}</small>
+                  {line.modifiers?.length ? (
+                    <ul className="pos-cart-modifiers" aria-label={`${line.name} modifiers`}>
+                      {line.modifiers.map((modifier) => (
+                        <li key={modifier.optionId || modifier.id}>
+                          {modifier.groupName ? `${modifier.groupName}: ` : ""}{modifier.name}
+                          {modifier.priceCents ? ` +${money(modifier.priceCents)}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {line.specialInstructions ? <small className="pos-cart-instructions">Note: {line.specialInstructions}</small> : null}
                 </div>
-                <input className="input" type="number" min="1" value={line.quantity} onChange={(event) => updateCartLine(line.menuItemId, { quantity: event.target.value })} aria-label={`Quantity for ${line.name}`} />
-                <button className="icon-button" type="button" onClick={() => removeCartLine(line.menuItemId)} aria-label={`Remove ${line.name}`}><Trash2 size={16} /></button>
+                <div className="pos-qty-stepper">
+                  <button type="button" onClick={() => adjustQuantity(line.cartLineId, -1)} aria-label={`Decrease ${line.name}`}><Minus size={14} /></button>
+                  <input className="input" type="number" min="1" value={line.quantity} onChange={(event) => setQuantity(line.cartLineId, event.target.value)} aria-label={`Quantity for ${line.name}`} />
+                  <button type="button" onClick={() => adjustQuantity(line.cartLineId, 1)} aria-label={`Increase ${line.name}`}><Plus size={14} /></button>
+                </div>
+                <button className="icon-button" type="button" onClick={() => removeCartLine(line.cartLineId)} aria-label={`Remove ${line.name}`}><Trash2 size={16} /></button>
               </div>
             ))}
           </div>
 
+          </div>
+          <div className="pos-cart-footer">
           <div className="pos-total-box">
             <span>Server quote</span>
             <strong>{money(quote?.totalCents ?? cartTotalCents)}</strong>
             {quote ? <small>Tax {money(quote.taxCents)} · expires {new Date(quote.expiresAt).toLocaleTimeString()}</small> : <small>Recalculate before sending to kitchen.</small>}
+            {quote ? <small className="pos-fee-disclosure">{paymentFeeDisclosureText(quote)}</small> : null}
           </div>
 
           <div className="pos-action-grid">
@@ -6435,12 +7029,13 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
               {!canAcceptCash && cashDisabledReason ? <small className="field-error">{cashDisabledReason}</small> : null}
             </div>
           ) : null}
+          </div>
         </aside>
       </div>
 
-      <div className="pos-admin-grid">
+      {!kioskOnly && ownerOperator ? <div className="pos-admin-grid">
         <section className="panel">
-          <h3 className="panel-title">Device controls</h3>
+          <h3 className="panel-title" id="pos-device-controls">Device controls</h3>
           <form className="pos-device-form" onSubmit={registerDevice}>
             <label>Device name
               <input className="input mt-1" value={deviceForm.name} onChange={(event) => setDeviceForm({ ...deviceForm, name: event.target.value })} />
@@ -6488,9 +7083,64 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             </div>
           )}
         </section>
-      </div>
+      </div> : null}
 
-      {activeDevice?.kioskModeEnabled ? (
+      <button className="pos-mobile-cart-summary" type="button" onClick={() => setMobileCartOpen(true)}>
+        <span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span>
+        <strong>{money(quote?.totalCents ?? cartTotalCents)}</strong>
+        <span>View order</span>
+      </button>
+
+      {customizingItem ? (
+        <div className="pos-modifier-dialog" role="dialog" aria-modal="true" aria-label={`Customize ${customizingItem.name}`}>
+          <div className="pos-modifier-card">
+            <div className="pos-modifier-head">
+              <div>
+                <p className="restaurant-shell-breadcrumb">Customize item</p>
+                <h3>{customizingItem.name}</h3>
+                <span>{money(customizingItem.priceCents)} base price</span>
+              </div>
+              <button className="icon-button" type="button" onClick={closeModifierDialog} aria-label="Close modifier selection"><X size={18} /></button>
+            </div>
+            <div className="pos-modifier-groups">
+              {normalizePosModifierGroups(customizingItem).map((group) => {
+                const selectedIds = modifierSelections[group.id] || [];
+                const maximum = Math.max(1, Number(group.maxSelect || 1));
+                const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+                return (
+                  <fieldset className="pos-modifier-group" key={group.id}>
+                    <legend>
+                      <strong>{group.name}</strong>
+                      <span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span>
+                    </legend>
+                    <div className="pos-modifier-options">
+                      {group.options.map((option) => {
+                        const selected = selectedIds.includes(option.id);
+                        return (
+                          <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
+                            <span>{option.name}</span>
+                            <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                );
+              })}
+            </div>
+            <label className="text-sm font-semibold text-slate-600">Special instructions
+              <textarea className="input mt-1 min-h-20 py-2" value={modifierInstructions} onChange={(event) => setModifierInstructions(event.target.value)} placeholder="No onions, sauce on the side..." />
+            </label>
+            {modifierError ? <div className="field-error">{modifierError}</div> : null}
+            <div className="pos-modifier-actions">
+              <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
+              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>Add to order</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showKioskExit ? (
         <div className="pos-kiosk-lock" role="dialog" aria-modal="true" aria-labelledby="pos-kiosk-title">
           <div className="pos-kiosk-card">
             <Shield size={42} />
@@ -6498,6 +7148,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             <p>This device is locked to POS operations. Manager permission or a valid PIN is required to exit.</p>
             <input className="input" type="password" autoComplete="current-password" placeholder="Manager PIN" value={exitPin} onChange={(event) => setExitPin(event.target.value)} />
             <button className="button-primary justify-center" type="button" onClick={() => setKiosk(false)} disabled={saving === "kiosk-exit"}>Exit kiosk mode</button>
+            <button className="button-muted justify-center" type="button" onClick={() => { setShowKioskExit(false); setExitPin(""); }}>Return to register</button>
           </div>
         </div>
       ) : null}
@@ -6544,10 +7195,292 @@ const restaurantPageComponents = {
   settings: RestaurantSettingsPage
 };
 
+function receiptDocumentKind(kind = "receipt") {
+  const normalized = String(kind || "receipt").toLowerCase();
+  if (normalized === "kitchen" || normalized === "kitchen_ticket") return "kitchen";
+  if (normalized === "driver" || normalized === "driver_slip") return "driver";
+  return "receipt";
+}
+
+function receiptKindLabel(kind = "receipt") {
+  const normalized = receiptDocumentKind(kind);
+  if (normalized === "kitchen") return "Kitchen ticket";
+  if (normalized === "driver") return "Driver slip";
+  return "Customer receipt";
+}
+
+function receiptQrFromPayload(payload, key, fallbackUrl = "") {
+  if (!payload) return null;
+  const qr = payload.qr || {};
+  const qrCodes = payload.qrCodes || {};
+  if (key === "customer") {
+    const source = qr.customer || qr.publicOrder || {};
+    const url = source.url || source.webUrl || qrCodes.customerReorderUrl || fallbackUrl;
+    return url ? { ...source, url, label: source.label || "Order directly next time" } : null;
+  }
+  if (key === "tracking") {
+    const source = qr.tracking || {};
+    const url = source.url || source.webUrl || qrCodes.orderTrackingUrl || fallbackUrl;
+    return url ? { ...source, url, label: source.label || "Track this order" } : null;
+  }
+  if (key === "driver") {
+    const source = qr.driverAppDownload || qr.driver || {};
+    const url = source.url || source.webUrl || qrCodes.driverAppDownloadUrl || fallbackUrl;
+    return url ? { ...source, url, label: source.label || "Deliver with Loohar" } : null;
+  }
+  return null;
+}
+
+function ReceiptQr({ qr, fallbackUrl = "", description = "" }) {
+  const url = qr?.url || qr?.webUrl || fallbackUrl;
+  const [qrData, setQrData] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function renderQr() {
+      if (!url) {
+        setQrData("");
+        return;
+      }
+      try {
+        const data = await qrImageData(url);
+        if (!cancelled) setQrData(data);
+      } catch {
+        if (!cancelled) setQrData("");
+      }
+    }
+    renderQr();
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  if (!url) return null;
+  return (
+    <div className="receipt-qr-card">
+      {qrData ? <img src={qrData} alt={qr?.label || "Receipt QR code"} /> : <div className="receipt-qr-placeholder">QR</div>}
+      <strong>{qr?.label || "Scan QR code"}</strong>
+      {description ? <small>{description}</small> : null}
+      <span>{url}</span>
+    </div>
+  );
+}
+
+function ReceiptPrintDocument({ receipt }) {
+  if (!receipt) return null;
+  const receiptInfo = receipt.receipt || {};
+  const restaurant = receipt.restaurant || {};
+  const order = receipt.order || {};
+  const customer = receipt.customer || {};
+  const payment = receipt.payment || {};
+  const layoutFormat = receipt.layout?.format === "58mm" ? "58mm" : "80mm";
+  const isKitchen = receipt.type === "KITCHEN_TICKET";
+  const isDriver = receipt.type === "DRIVER_SLIP";
+  const customerQr = isKitchen ? null : receiptQrFromPayload(receipt, "customer", restaurant.orderUrl);
+  const trackingQr = isKitchen ? null : receiptQrFromPayload(receipt, "tracking");
+  const driverQr = isKitchen ? null : receiptQrFromPayload(receipt, "driver");
+  const createdLabel = order.displayCreatedAt || (order.createdAt ? new Date(order.createdAt).toLocaleString() : "");
+  const totalsRows = receipt.text?.totals || [];
+  const items = receipt.items || [];
+
+  return (
+    <article className={`tenant-receipt receipt-thermal ${layoutFormat === "58mm" ? "receipt-thermal--58mm" : ""}`} style={{ "--receipt-brand": restaurant.brandColor || "#111827", "--receipt-accent": restaurant.accentColor || "#10b981" }}>
+      <header className="receipt-center">
+        {restaurant.logoUrl ? <img className="receipt-logo" src={resolveImage(restaurant.logoUrl, "", defaultLooharImage)} alt={`${restaurant.name || "Restaurant"} logo`} onError={handleSafeImageError} /> : null}
+        <h2>{restaurant.name || "Restaurant"}</h2>
+        {restaurant.legalName && restaurant.legalName !== restaurant.name ? <p>{restaurant.legalName}</p> : null}
+        {restaurant.address ? <p>{restaurant.address}</p> : null}
+        {restaurant.phone || restaurant.email ? <p>{[restaurant.phone, restaurant.email].filter(Boolean).join(" | ")}</p> : null}
+      </header>
+
+      <div className="receipt-rule" />
+      <section className="receipt-meta">
+        <span>{receipt.title || receiptKindLabel(receipt.kind)}</span>
+        <strong>{receiptInfo.receiptNumber || receipt.receiptNumber}</strong>
+      </section>
+      {receiptInfo.isReprint || receipt.isReprint ? <p className="receipt-center receipt-stamp">REPRINT</p> : null}
+      <section className="receipt-meta">
+        <span>Order</span>
+        <strong>#{order.publicOrderNumber || order.orderNumber || order.id}</strong>
+      </section>
+      <section className="receipt-meta">
+        <span>Type</span>
+        <strong>{readable(order.type || receipt.kind || "ORDER")}</strong>
+      </section>
+      {createdLabel ? <section className="receipt-meta"><span>Placed</span><strong>{createdLabel}</strong></section> : null}
+      {order.status ? <section className="receipt-meta"><span>Status</span><strong>{readable(order.status)}</strong></section> : null}
+      {customer.name && !isKitchen ? <section className="receipt-meta"><span>Customer</span><strong>{customer.name}</strong></section> : null}
+      {customer.phone && isDriver ? <section className="receipt-meta"><span>Phone</span><strong>{customer.phone}</strong></section> : null}
+      {order.deliveryAddress && isDriver ? <p className="receipt-subtle">Dropoff: {order.deliveryAddress}</p> : null}
+      {order.notes ? <p className="receipt-subtle">Notes: {order.notes}</p> : null}
+
+      <div className="receipt-rule" />
+      <section aria-label="Receipt items">
+        {items.length === 0 ? <p className="receipt-center receipt-subtle">No items</p> : items.map((item) => {
+          const modifiers = item.modifiers || item.options || [];
+          return (
+            <div className="receipt-line" key={item.id || `${item.name}-${item.quantity}`}>
+              <div className="receipt-line-name">
+                <strong>{item.quantity || 1} x {item.name}</strong>
+                {item.specialInstructions ? <span className="receipt-modifier">Note: {item.specialInstructions}</span> : null}
+                {modifiers.map((modifier, index) => <span className="receipt-modifier" key={`${item.id || item.name}-modifier-${index}`}>+ {modifier.name}{modifier.priceCents ? ` (${money(modifier.priceCents)})` : ""}</span>)}
+              </div>
+              {!isKitchen ? <strong className="receipt-line-price">{money(item.totalCents || ((item.quantity || 1) * (item.unitPriceCents || item.priceCents || 0)))}</strong> : null}
+            </div>
+          );
+        })}
+      </section>
+
+      {!isKitchen ? (
+        <>
+          <div className="receipt-rule" />
+          <section aria-label="Receipt totals">
+            {totalsRows.map(([label, value]) => (
+              <div className={`receipt-total-row ${String(label).toLowerCase() === "total" ? "receipt-grand-total" : ""}`} key={`${label}-${value}`}>
+                <span>{label}</span>
+                <strong>{value}</strong>
+              </div>
+            ))}
+          </section>
+          <div className="receipt-rule" />
+          <section aria-label="Receipt payment">
+            <div className="receipt-meta"><span>Payment</span><strong>{readable(payment.status || "PENDING")}</strong></div>
+            {payment.provider ? <div className="receipt-meta"><span>Provider</span><strong>{payment.provider}</strong></div> : null}
+            {payment.reference ? <div className="receipt-meta"><span>Reference</span><strong>{payment.reference}</strong></div> : null}
+          </section>
+        </>
+      ) : null}
+
+      <div className="receipt-rule" />
+      <section className="receipt-qr-grid" aria-label="Receipt QR codes">
+        {customerQr ? <ReceiptQr qr={customerQr} description="Skip marketplaces and order from this restaurant directly." /> : null}
+        {trackingQr ? <ReceiptQr qr={trackingQr} description="Track this order from a secure customer link." /> : null}
+        {driverQr ? <ReceiptQr qr={driverQr} description="Install the lightweight Loohar driver app." /> : null}
+      </section>
+      <p className="receipt-powered">{receipt.text?.footer || "Powered by Loohar"}</p>
+    </article>
+  );
+}
+
+function RestaurantReceiptPreviewPage({ apiOnline, token, restaurantId, orderId, onBack }) {
+  const initialQuery = new window.URLSearchParams(window.location.search);
+  const [selectedFormat, setSelectedFormat] = useState(initialQuery.get("format") === "58mm" ? "58mm" : "80mm");
+  const [receipt, setReceipt] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [printing, setPrinting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const kind = receiptDocumentKind(initialQuery.get("kind") || "receipt");
+  const reprintRequested = initialQuery.get("reprint") === "1" || initialQuery.get("reprint") === "true";
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadReceiptPreview() {
+      if (!apiOnline || !token || !restaurantId || !orderId) {
+        setLoading(false);
+        setError("Live API is required to preview and print receipts.");
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const params = new window.URLSearchParams({ kind, format: selectedFormat, reprint: reprintRequested ? "1" : "0" });
+        const payload = await api(`/api/restaurants/${restaurantId}/orders/${encodeURIComponent(orderId)}/receipt?${params.toString()}`, { token });
+        if (!cancelled) setReceipt(payload.receipt);
+      } catch (receiptError) {
+        if (!cancelled) setError(receiptError.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    loadReceiptPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiOnline, token, restaurantId, orderId, kind, selectedFormat, reprintRequested]);
+
+  async function requestPrint({ reprint = reprintRequested } = {}) {
+    if (!apiOnline || !token) {
+      setError("Live API is required to preview and print receipts.");
+      return;
+    }
+    setPrinting(true);
+    setError("");
+    setMessage("");
+    try {
+      const path = kind === "kitchen" ? "print-kitchen-ticket" : kind === "driver" ? "print-driver-slip" : "print-customer-receipt";
+      const payload = await api(`/api/restaurants/${restaurantId}/orders/${encodeURIComponent(orderId)}/${path}`, {
+        method: "POST",
+        token,
+        body: { kind, format: selectedFormat, reprint }
+      });
+      setReceipt(payload.receipt);
+      setMessage(reprint ? "Reprint authorized." : "Receipt print authorized.");
+      window.setTimeout(() => window.print(), 150);
+    } catch (printError) {
+      setError(printError.message);
+    } finally {
+      setPrinting(false);
+    }
+  }
+
+  return (
+    <div className="receipt-preview-shell">
+      <div className="receipt-toolbar">
+        <div>
+          <p className="eyebrow">Receipt preview</p>
+          <h2 className="panel-title">{receiptKindLabel(kind)}</h2>
+          <p className="mt-1 text-sm text-slate-500">Server-generated tenant receipt for order #{receipt?.order?.orderNumber || orderId}.</p>
+        </div>
+        <div className="receipt-toolbar-actions">
+          <button className="button-muted" type="button" onClick={onBack}>Back to Orders</button>
+          <button className={`button-muted ${selectedFormat === "58mm" ? "active" : ""}`} type="button" onClick={() => setSelectedFormat("58mm")}>58mm</button>
+          <button className={`button-muted ${selectedFormat === "80mm" ? "active" : ""}`} type="button" onClick={() => setSelectedFormat("80mm")}>80mm</button>
+          <button className="button-primary" type="button" onClick={() => requestPrint()} disabled={printing || loading}><ReceiptText size={16} />{printing ? "Printing..." : "Print"}</button>
+          <button className="button-muted" type="button" onClick={() => requestPrint({ reprint: true })} disabled={printing || loading}><RefreshCw size={16} />Reprint</button>
+        </div>
+      </div>
+      <InlineError message={error} />
+      {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+      {loading ? <AppLoadingState /> : receipt ? <ReceiptPrintDocument receipt={{ ...receipt, layout: { ...(receipt.layout || {}), format: selectedFormat } }} /> : <EmptyState title="Receipt unavailable" detail="The server did not return receipt data for this order." />}
+    </div>
+  );
+}
+
+function DriverAppDownloadPage() {
+  return (
+    <div className="driver-download-page">
+      <div className="driver-download-hero">
+        <LooharPlatformBrand size="default" />
+        <p className="eyebrow mt-6">Driver app</p>
+        <h1>Deliver with Loohar</h1>
+        <p>Open the lightweight Loohar Driver PWA to accept assignments, update delivery status, and track tips and earnings.</p>
+        <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+          <a className="button-primary justify-center" href="/driver"><Truck size={18} />Open Driver App</a>
+          <a className="button-muted justify-center" href="/"><ArrowRight size={18} />Back to Loohar</a>
+        </div>
+      </div>
+      <div className="driver-download-card">
+        <h2 className="panel-title">Install from your browser</h2>
+        <p className="mt-3 text-sm leading-6 text-slate-500">For now, drivers can install the PWA from Safari or Chrome using Add to Home Screen. Native App Store and Google Play packaging can use this route as the public download destination later.</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <StatusPill tone="good">Delivery only</StatusPill>
+          <StatusPill tone="neutral">PWA ready</StatusPill>
+          <StatusPill tone="neutral">Mobile app ready path</StatusPill>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = "dashboard" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
   const restaurantId = user?.restaurantId || routeRestaurantId;
-  const [profile, setProfile] = useState(demoRestaurant);
+  const initialProfile = useMemo(
+    () => restaurantProfilePlaceholder(user, initialSlug),
+    [user?.restaurantId, user?.restaurantSlug, user?.restaurantName, user?.tenantName, initialSlug]
+  );
+  const [profile, setProfile] = useState(initialProfile);
   const [stats, setStats] = useState({ ordersToday: demoOrders.length, pendingOrders: 2, activeDrivers: demoDrivers.filter((driver) => driver.available).length, sales: { amountCents: 9621, driverTipCents: 1500 } });
   const [categories, setCategories] = useState(demoRestaurant.categories);
   const [items, setItems] = useState(demoRestaurant.categories.flatMap((category) => category.items.map((item) => ({ ...item, category }))));
@@ -6580,6 +7513,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const [uploadingAsset, setUploadingAsset] = useState("");
   const [savingAction, setSavingAction] = useState("");
   const [menuValidation, setMenuValidation] = useState({});
+  const [modifierDrafts, setModifierDrafts] = useState({});
   const [websiteSaveState, setWebsiteSaveState] = useState("idle");
   const [websiteDirty, setWebsiteDirty] = useState(false);
   const [websiteLastSavedAt, setWebsiteLastSavedAt] = useState(null);
@@ -6589,7 +7523,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const [employeeForm, setEmployeeForm] = useState({ name: "", email: "", phone: "", role: "KITCHEN_STAFF" });
   const [zoneForm, setZoneForm] = useState({ name: "Zone A", radiusMiles: 3, deliveryFeeCents: 399, minimumOrderCents: 1500 });
   const [inventoryForm, setInventoryForm] = useState({ name: "Chicken", quantity: 10, unit: "lb", costCents: 2500 });
-  const publicPreviewPath = publicPathForSlug(profile.slug || "demo-bistro");
+  const loadRestaurantInFlightRef = useRef(null);
+  const loadRestaurantRequestIdRef = useRef(0);
+  const realtimeRefreshTimerRef = useRef(null);
+  const publicPreviewPath = publicPathForSlug(profile.slug || user?.restaurantSlug || initialSlug || "restaurant");
   const publicSiteUrl = canonicalTenantUrlFor(profile, domain);
 
   function showToast(message, tone = "good") {
@@ -6675,6 +7612,66 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     setItems((current) => current.map((item) => item.id === itemId ? { ...item, ...data } : item));
   }
 
+  function modifierDraftKey(itemId, optionGroupId = "new") {
+    return `${itemId}:${optionGroupId || "new"}`;
+  }
+
+  function draftFromModifierGroup(group = {}) {
+    return {
+      id: group.id || "",
+      name: group.name || "",
+      required: Boolean(group.required),
+      minSelect: Number(group.minSelect || 0),
+      maxSelect: Number(group.maxSelect || 1),
+      optionsText: (group.options || []).map((option) => `${option.name}${option.priceCents ? ` | ${option.priceCents}` : ""}`).join("\n")
+    };
+  }
+
+  function modifierDraftFor(item, group = null) {
+    const key = modifierDraftKey(item.id, group?.id || "new");
+    return modifierDrafts[key] || draftFromModifierGroup(group || { name: "", maxSelect: 1, options: [] });
+  }
+
+  function updateModifierDraft(item, groupId, data) {
+    const key = modifierDraftKey(item.id, groupId || "new");
+    const fallback = groupId ? draftFromModifierGroup((item.optionGroups || []).find((group) => group.id === groupId) || {}) : modifierDraftFor(item);
+    setModifierDrafts((current) => ({ ...current, [key]: { ...fallback, ...(current[key] || {}), ...data } }));
+  }
+
+  function parseModifierOptionsText(optionsText = "") {
+    return String(optionsText)
+      .split(/\n|,/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, index) => {
+        const [namePart, pricePart = "0"] = line.split("|").map((part) => part.trim());
+        return {
+          name: namePart,
+          priceCents: Math.max(0, Number(pricePart.replace(/[^0-9.-]/g, "")) || 0),
+          available: true,
+          sortOrder: index + 1
+        };
+      })
+      .filter((option) => option.name.length > 0);
+  }
+
+  function modifierPayloadFromDraft(draft = {}) {
+    const maxSelect = Math.max(1, Number(draft.maxSelect || 1));
+    const minSelect = Math.max(0, Math.min(maxSelect, Number(draft.minSelect || 0)));
+    return {
+      name: String(draft.name || "").trim(),
+      required: Boolean(draft.required),
+      minSelect: draft.required ? Math.max(1, minSelect) : minSelect,
+      maxSelect,
+      sortOrder: 0,
+      options: parseModifierOptionsText(draft.optionsText)
+    };
+  }
+
+  useEffect(() => {
+    setProfile((current) => (current?.id || current?.slug ? current : initialProfile));
+  }, [initialProfile]);
+
   useEffect(() => {
     async function resolveRouteRestaurant() {
       if (!apiOnline || !token || user?.restaurantId || !initialSlug || user?.role !== "SUPER_ADMIN") return;
@@ -6699,10 +7696,14 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     resolveRouteRestaurant();
   }, [apiOnline, token, user?.restaurantId, user?.role, initialSlug]);
 
-  async function loadRestaurant() {
-    if (!apiOnline || !token || !restaurantId) return;
-    setError("");
-    try {
+  async function loadRestaurant(options = {}) {
+    if (!apiOnline || !token || !restaurantId) return null;
+    if (loadRestaurantInFlightRef.current && !options.force) return loadRestaurantInFlightRef.current;
+    const requestId = loadRestaurantRequestIdRef.current + 1;
+    loadRestaurantRequestIdRef.current = requestId;
+    const request = (async () => {
+      setError("");
+      try {
       const lockedFeatures = {};
       const optionalApi = async (feature, path, fallback) => {
         try {
@@ -6754,9 +7755,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
         optionalApi("NOTIFICATIONS", `/api/restaurants/${restaurantId}/notification-settings`, { settings: {} }),
         optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations`, { sales: {}, items: {}, customers: {}, drivers: [] })
       ]);
+      if (requestId !== loadRestaurantRequestIdRef.current) return null;
       setFeatureLocks(lockedFeatures);
       setStats(dashboardPayload);
-      setProfile(profilePayload.restaurant || demoRestaurant);
+      setProfile(profilePayload.restaurant || initialProfile);
       setCategories(categoriesPayload.categories || []);
       setItems(itemsPayload.items || []);
       setOrders(ordersPayload.orders || []);
@@ -6779,19 +7781,29 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setPrinterSettings(printingPayload.settings || {});
       setNotificationSettings(notificationsPayload.settings || {});
       setOperationsReport(operationsPayload || { sales: {}, items: {}, customers: {}, drivers: [] });
-    } catch (loadError) {
-      setError(loadError.message);
-    }
+      return true;
+      } catch (loadError) {
+        if (requestId === loadRestaurantRequestIdRef.current) setError(loadError.message);
+        return null;
+      } finally {
+        if (loadRestaurantInFlightRef.current === request) loadRestaurantInFlightRef.current = null;
+      }
+    })();
+    loadRestaurantInFlightRef.current = request;
+    return request;
   }
 
   useEffect(() => {
-    loadRestaurant();
+    loadRestaurant({ force: true });
   }, [apiOnline, token, restaurantId]);
 
   useEffect(() => {
     if (!apiOnline || !restaurantId) return undefined;
     const socket = io(API_ORIGIN, { transports: ["websocket", "polling"] });
-    const refresh = () => loadRestaurant();
+    const refresh = () => {
+      window.clearTimeout(realtimeRefreshTimerRef.current);
+      realtimeRefreshTimerRef.current = window.setTimeout(() => loadRestaurant({ force: true }), 500);
+    };
     socket.on("connect", () => {
       socket.emit("join:restaurant", restaurantId);
       socket.emit("join:kitchen", restaurantId);
@@ -6799,7 +7811,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     socket.on("order:update", refresh);
     socket.on("delivery:update", refresh);
     socket.on("kitchen:update", refresh);
-    return () => socket.disconnect();
+    return () => {
+      window.clearTimeout(realtimeRefreshTimerRef.current);
+      socket.disconnect();
+    };
   }, [apiOnline, restaurantId, token]);
 
   async function uploadRestaurantImage(kind, file, extra = {}) {
@@ -7093,6 +8108,73 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setError(updateError.message);
       showToast(updateError.message, "bad");
       await loadRestaurant();
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function saveModifierGroup(item, group = null) {
+    const draft = modifierDraftFor(item, group);
+    const payload = modifierPayloadFromDraft(draft);
+    if (!payload.name || payload.name.length < 2) {
+      return showToast("Modifier group name must be at least 2 characters.", "bad");
+    }
+    if (!payload.options.length) {
+      return showToast("Add at least one modifier option.", "bad");
+    }
+    if (!apiOnline || !token || !restaurantId) {
+      return showToast("Live API connection and restaurant login are required to save modifiers.", "bad");
+    }
+    const actionKey = `modifier:${item.id}:${group?.id || "new"}`;
+    setSavingAction(actionKey);
+    try {
+      const path = group?.id
+        ? `/api/restaurants/${restaurantId}/menu-items/${item.id}/options/${group.id}`
+        : `/api/restaurants/${restaurantId}/menu-items/${item.id}/options`;
+      const result = await api(path, { method: group?.id ? "PATCH" : "POST", token, body: payload });
+      if (result.optionGroup) {
+        setItems((current) => current.map((row) => {
+          if (row.id !== item.id) return row;
+          const groups = row.optionGroups || [];
+          const nextGroups = group?.id
+            ? groups.map((currentGroup) => currentGroup.id === group.id ? result.optionGroup : currentGroup)
+            : [...groups, result.optionGroup];
+          return { ...row, optionGroups: nextGroups };
+        }));
+      }
+      if (!group?.id) {
+        const key = modifierDraftKey(item.id, "new");
+        setModifierDrafts((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }
+      showToast(group?.id ? "Modifier group updated." : "Modifier group created.");
+      await loadRestaurant();
+    } catch (modifierError) {
+      setError(modifierError.message);
+      showToast(modifierError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function deleteModifierGroup(item, group) {
+    if (!group?.id) return;
+    if (!apiOnline || !token || !restaurantId) {
+      return showToast("Live API connection and restaurant login are required to delete modifiers.", "bad");
+    }
+    const actionKey = `modifier:${item.id}:${group.id}:delete`;
+    setSavingAction(actionKey);
+    try {
+      await api(`/api/restaurants/${restaurantId}/menu-items/${item.id}/options/${group.id}`, { method: "DELETE", token });
+      setItems((current) => current.map((row) => row.id === item.id ? { ...row, optionGroups: (row.optionGroups || []).filter((currentGroup) => currentGroup.id !== group.id) } : row));
+      showToast("Modifier group deleted.");
+      await loadRestaurant();
+    } catch (modifierError) {
+      setError(modifierError.message);
+      showToast(modifierError.message, "bad");
     } finally {
       setSavingAction("");
     }
@@ -7414,46 +8496,35 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     }
   }
 
-  async function printTestReceipt() {
-    try {
-      await openReceiptPrintWindow({
-        kind: "test",
-        order: { id: "test", orderNumber: "TEST", type: "PICKUP", status: "READY", createdAt: new Date().toISOString(), notes: "Local printer test" },
-        restaurant: { name: profile.businessName || profile.name || "Loohar Restaurant", logoUrl: profile.logoUrl || "", address: fullRestaurantAddress(profile), phone: profile.phone || "" },
-        customer: { name: "Printer Test" },
-        items: [
-          { id: "test-1", quantity: 1, name: "Kitchen ticket line", totalCents: 0, modifiers: [{ name: "Thermal printer check", priceCents: 0 }] },
-          { id: "test-2", quantity: 1, name: "Customer receipt line", totalCents: 0, modifiers: [] }
-        ],
-        text: { totals: [["Subtotal", "$0.00"], ["Tax", "$0.00"], ["Total", "$0.00"]] },
-        payment: { status: "TEST" },
-        qr: { customer: null, driver: null }
-      });
-    } catch (printError) {
-      setError(printError.message);
-    }
+  const restaurantBasePath = profile.slug ? `/restaurant/${profile.slug}` : restaurantId ? `/restaurant/${restaurantId}` : "/restaurant";
+
+  function receiptPathForOrder(order, kind = "receipt", { reprint = false } = {}) {
+    const params = new window.URLSearchParams();
+    const normalizedKind = receiptDocumentKind(kind);
+    if (normalizedKind !== "receipt") params.set("kind", normalizedKind);
+    if (reprint) params.set("reprint", "1");
+    const query = params.toString();
+    return `${restaurantBasePath}/orders/${encodeURIComponent(order.id)}/receipt${query ? `?${query}` : ""}`;
   }
 
-  async function printOrderTicket(order, kind) {
+  function printTestReceipt() {
+    if (!orders[0]) {
+      setError("Create an order before printing a test receipt.");
+      return showToast("Create an order before printing a test receipt.", "bad");
+    }
+    printOrderTicket(orders[0], "receipt");
+  }
+
+  function printOrderTicket(order, kind, options = {}) {
+    if (!order?.id) {
+      setError("Select an order before printing a receipt.");
+      return showToast("Select an order before printing a receipt.", "bad");
+    }
     if (!apiOnline) {
-      return openReceiptPrintWindow({
-        kind,
-        order: { id: order.id, orderNumber: order.orderNumber, type: order.type || "PICKUP", status: order.status || "PENDING", createdAt: order.createdAt || new Date().toISOString(), notes: order.notes || "" },
-        restaurant: { name: profile.businessName || profile.name || "Loohar Restaurant", logoUrl: profile.logoUrl || "", address: fullRestaurantAddress(profile), phone: profile.phone || "" },
-        customer: { name: order.customer?.name || "Customer" },
-        items: (order.items || []).map((item) => ({ ...item, totalCents: (item.quantity || 1) * (item.unitPriceCents || item.priceCents || 0), modifiers: [] })),
-        text: { totals: [["Subtotal", money(order.subtotalCents || order.totalCents || 0)], ["Restaurant tip", money(order.restaurantTipCents || 0)], ["Driver tip", money(order.driverTipCents ?? order.tipCents ?? 0)], ["Total", money(order.totalCents || 0)]] },
-        payment: { status: order.payment?.status || "PENDING" },
-        qr: { customer: null, driver: null }
-      });
+      setError("Live API is required to preview and print receipts.");
+      return showToast("Live API is required to preview and print receipts.", "bad");
     }
-    try {
-      const path = kind === "kitchen" ? "print-kitchen-ticket" : kind === "driver" ? "print-driver-slip" : "print-customer-receipt";
-      const payload = await api(`/api/restaurants/${restaurantId}/orders/${order.id}/${path}`, { method: "POST", token });
-      await openReceiptPrintWindow(payload.receipt);
-    } catch (printError) {
-      setError(printError.message);
-    }
+    navigateInApp(receiptPathForOrder(order, kind, options));
   }
 
   async function saveNotificationSettings(next = notificationSettings) {
@@ -7516,6 +8587,19 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     }
   }
 
+  const currentRestaurantPage = restaurantPageDefinitions[activePage] ? activePage : "dashboard";
+  const RestaurantPageComponent = restaurantPageComponents[currentRestaurantPage] || RestaurantDashboardPage;
+  const selectedSettingsSectionId = currentRestaurantPage === "settings" ? restaurantSettingsSectionFromPath(window.location.pathname, window.location.hash) : "";
+  const restaurantOperationsTitle = `${profile.businessName || profile.name || "Restaurant"} operations`;
+
+  useEffect(() => {
+    if (currentRestaurantPage !== "settings" || !selectedSettingsSectionId) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`settings-${selectedSettingsSectionId}`)?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentRestaurantPage, selectedSettingsSectionId]);
+
   const businessType = profile.businessType || "RESTAURANT";
   if (!isOrderingBusiness(businessType)) {
     const moduleNotice = { title: "Food catalog", detail: "This food-retail tenant can manage its profile and website now. Full catalog ordering comes after restaurant direct ordering and delivery are hardened." };
@@ -7538,23 +8622,47 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
+  const settingsStoreHours = Object.entries(website.storeHoursJson || profile.storeHoursJson || {});
+  const orderingModuleEnabled = (profile.enabledModules || []).includes("RESTAURANT_ORDERING");
   const lockFor = (feature) => featureLocks[feature];
   const hasLock = (feature) => Boolean(lockFor(feature));
   const entitlementSummary = profile.entitlements || {};
   const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY") || (lockFor("PRINTING") ? { ...lockFor("PRINTING"), featureLabel: featureLabels.KITCHEN_DISPLAY, requiredPlan: featureRequiredPlans.KITCHEN_DISPLAY } : null);
-  const restaurantBasePath = profile.slug ? `/restaurant/${profile.slug}` : restaurantId ? `/restaurant/${restaurantId}` : "/restaurant";
-  const currentRestaurantPage = restaurantPageDefinitions[activePage] ? activePage : "dashboard";
-  const RestaurantPageComponent = restaurantPageComponents[currentRestaurantPage] || RestaurantDashboardPage;
-  const settingsCenterLinks = restaurantSettingsLinks.map((item) => item.id === "payments" ? { ...item, href: `${restaurantBasePath}/onboarding#payments` } : item);
+  const settingsCenterLinks = restaurantSettingsLinks.map((item) => {
+    const normalizedId = normalizeRestaurantSettingsSectionId(item.id);
+    const lock = item.feature ? lockFor(item.feature) : null;
+    return {
+      ...item,
+      id: normalizedId,
+      href: item.id === "payments" ? `${restaurantBasePath}/onboarding#payments` : restaurantSettingPath(restaurantBasePath, normalizedId),
+      status: lock ? "PLAN_RESTRICTED" : item.status,
+      selected: selectedSettingsSectionId === normalizedId
+    };
+  });
   const dashboardShortcuts = [
     { label: "POS register", detail: "Create in-store orders, manage shifts, cash, card, and kiosk mode.", icon: CreditCard, href: `${restaurantBasePath}/pos`, value: "Open" },
     { label: "Pending orders", detail: "Open live orders and kitchen queue.", icon: ReceiptText, href: `${restaurantBasePath}/orders?status=pending`, value: stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length },
     { label: "Today's sales", detail: "Review current-day sales and performance.", icon: CreditCard, href: `${restaurantBasePath}/reports?range=today`, value: money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || 0) },
     { label: "Available drivers", detail: "Manage delivery coverage and dispatch.", icon: Truck, href: `${restaurantBasePath}/drivers?filter=available`, value: stats.activeDrivers ?? drivers.filter((driver) => driver.available).length },
     { label: "Customers", detail: "Open customer CRM and loyalty activity.", icon: Users, href: `${restaurantBasePath}/customers`, value: customerSummary.totalCustomers || customers.length },
-    { label: "Website", detail: "Edit branding, website content, and gallery.", icon: Store, href: `${restaurantBasePath}/settings#settings-website-branding`, value: website.websiteEnabled === false ? "Disabled" : "Active" },
-    { label: "Menu", detail: "Manage categories, food items, photos, and availability.", icon: MenuIcon, href: `${restaurantBasePath}/settings#settings-menu-catalog`, value: items.length }
+    { label: "Website", detail: "Edit branding, website content, and gallery.", icon: Store, href: restaurantSettingPath(restaurantBasePath, "website-branding"), value: website.websiteEnabled === false ? "Disabled" : "Active" },
+    { label: "Menu", detail: "Manage categories, food items, photos, and availability.", icon: MenuIcon, href: restaurantSettingPath(restaurantBasePath, "menu-catalog"), value: items.length }
   ];
+  const receiptRouteMatch = window.location.pathname.match(/^\/restaurant\/[^/]+\/orders\/([^/]+)\/receipt\/?$/);
+
+  if (receiptRouteMatch) {
+    return (
+      <RestaurantPageComponent>
+        <RestaurantReceiptPreviewPage
+          apiOnline={apiOnline}
+          token={token}
+          restaurantId={restaurantId}
+          orderId={decodeURIComponent(receiptRouteMatch[1])}
+          onBack={() => navigateInApp(`${restaurantBasePath}/orders`)}
+        />
+      </RestaurantPageComponent>
+    );
+  }
 
   if (currentRestaurantPage === "pos") {
     return (
@@ -7566,8 +8674,6 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           restaurantId={restaurantId}
           restaurantSlug={profile.slug || initialSlug || user?.restaurantSlug || ""}
           profile={profile}
-          fallbackCategories={categories}
-          fallbackItems={items}
           onRefresh={loadRestaurant}
         />
       </RestaurantPageComponent>
@@ -7577,7 +8683,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   return (
     <RestaurantPageComponent>
       <div className={`space-y-6 restaurant-dashboard restaurant-dashboard-${currentRestaurantPage}`}>
-        <SectionHeader eyebrow={`${restaurantPageDefinitions[currentRestaurantPage].label} workspace`} title={currentRestaurantPage === "dashboard" ? (apiOnline ? "Live restaurant operations" : "Demo Bistro operations") : restaurantPageDefinitions[currentRestaurantPage].title} icon={restaurantPageDefinitions[currentRestaurantPage].icon || ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
+        <SectionHeader eyebrow={`${restaurantPageDefinitions[currentRestaurantPage].label} workspace`} title={currentRestaurantPage === "dashboard" ? restaurantOperationsTitle : restaurantPageDefinitions[currentRestaurantPage].title} icon={restaurantPageDefinitions[currentRestaurantPage].icon || ChefHat} action={<button className="button-muted" onClick={loadRestaurant}><RefreshCw size={18} />Refresh</button>} />
         <InlineError message={error} />
         {toast ? <div className={`rounded-md border px-4 py-3 text-sm font-bold ${toast.tone === "bad" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{toast.message}</div> : null}
         {entitlementSummary.planCode ? (
@@ -7702,6 +8808,57 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
                             {item.featured ? <StatusPill tone="good">Featured</StatusPill> : null}
                             {item.recommended ? <StatusPill tone="neutral">Recommended</StatusPill> : null}
                           </div>
+                          <details className="menu-modifier-builder">
+                            <summary>
+                              <span>Modifiers</span>
+                              <StatusPill tone={(item.optionGroups || []).length ? "good" : "neutral"}>{(item.optionGroups || []).length ? `${(item.optionGroups || []).length} groups` : "None"}</StatusPill>
+                            </summary>
+                            <div className="menu-modifier-list">
+                              {(item.optionGroups || []).map((group) => {
+                                const draft = modifierDraftFor(item, group);
+                                const actionKey = `modifier:${item.id}:${group.id}`;
+                                return (
+                                  <div className="menu-modifier-panel" key={group.id}>
+                                    <div className="menu-modifier-panel-head">
+                                      <strong>{group.name}</strong>
+                                      <span>{group.required ? "Required" : "Optional"} · max {group.maxSelect || 1}</span>
+                                    </div>
+                                    <div className="menu-modifier-form">
+                                      <input className="input" value={draft.name} placeholder="Group name" onChange={(event) => updateModifierDraft(item, group.id, { name: event.target.value })} />
+                                      <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierDraft(item, group.id, { required: event.target.checked })} />Required</label>
+                                      <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierDraft(item, group.id, { minSelect: event.target.value })} />
+                                      <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierDraft(item, group.id, { maxSelect: event.target.value })} />
+                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents\nExtra cheese | 150"} onChange={(event) => updateModifierDraft(item, group.id, { optionsText: event.target.value })} />
+                                    </div>
+                                    <div className="menu-modifier-actions">
+                                      <button className="button-primary" type="button" onClick={() => saveModifierGroup(item, group)} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Save modifiers"}</button>
+                                      <button className="button-muted" type="button" onClick={() => deleteModifierGroup(item, group)} disabled={savingAction === `${actionKey}:delete`}><Trash2 size={15} />Delete group</button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {(() => {
+                                const draft = modifierDraftFor(item);
+                                const actionKey = `modifier:${item.id}:new`;
+                                return (
+                                  <div className="menu-modifier-panel new">
+                                    <div className="menu-modifier-panel-head">
+                                      <strong>Add modifier group</strong>
+                                      <span>Examples: Size, protein, spice level, sides</span>
+                                    </div>
+                                    <div className="menu-modifier-form">
+                                      <input className="input" value={draft.name} placeholder="Group name" onChange={(event) => updateModifierDraft(item, "new", { name: event.target.value })} />
+                                      <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierDraft(item, "new", { required: event.target.checked })} />Required</label>
+                                      <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierDraft(item, "new", { minSelect: event.target.value })} />
+                                      <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierDraft(item, "new", { maxSelect: event.target.value })} />
+                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents\nMild | 0\nMedium | 0\nExtra spicy | 50"} onChange={(event) => updateModifierDraft(item, "new", { optionsText: event.target.value })} />
+                                    </div>
+                                    <button className="button-primary menu-modifier-save" type="button" onClick={() => saveModifierGroup(item)} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Create modifier group"}</button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          </details>
                           <div className="flex flex-wrap items-center gap-2">
                             <button className="button-primary" type="button" onClick={() => updateItem(item)} disabled={savingAction === `item:${item.id}`}>{savingAction === `item:${item.id}` ? "Saving..." : "Save Item"}</button>
                             <button className="button-muted" type="button" onClick={() => updateItem(item, { available: item.available === false }, item.available === false ? "Item marked available." : "Item marked unavailable.")}>{item.available === false ? "Mark available" : "Mark unavailable"}</button>
@@ -7733,7 +8890,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
                   <StatusPill tone={order.status === "DELIVERED" ? "good" : order.status === "READY" ? "warn" : "neutral"}>{order.status}</StatusPill>
                   {["ACCEPTED", "PREPARING", "READY", "PICKED_UP", "DELIVERED", "CANCELLED"].map((status) => <button className="button-muted" key={status} onClick={() => updateOrderStatus(order, status)}>{status.replaceAll("_", " ")}</button>)}
                   <button className="button-muted" onClick={() => printOrderTicket(order, "receipt")}><ReceiptText size={16} />Print Receipt</button>
-                  <button className="button-muted" onClick={() => printOrderTicket(order, "receipt")}><RefreshCw size={16} />Reprint</button>
+                  <button className="button-muted" onClick={() => printOrderTicket(order, "receipt", { reprint: true })}><RefreshCw size={16} />Reprint</button>
                   <button className="button-muted" onClick={() => printOrderTicket(order, "kitchen")}>Kitchen Ticket</button>
                   {order.type === "DELIVERY" ? <button className="button-muted" onClick={() => printOrderTicket(order, "driver")}>Driver Slip</button> : null}
                   {order.type === "DELIVERY" ? <button className="button-primary" onClick={() => assignDriver(order)}><Truck size={16} />Assign</button> : null}
@@ -7995,7 +9152,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             ))}
           </div>}
         </div>
-        <div className="panel" id="settings-ordering">
+        <div className="panel" id="settings-receipts-printing">
           <h3 className="panel-title">Receipt and ticket printing</h3>
           {hasLock("PRINTING") ? <div className="mt-4"><UpgradeRequired feature="PRINTING" lock={lockFor("PRINTING")} /></div> : <>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -8017,7 +9174,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="panel" id="settings-staff-access">
+        <div className="panel" id="settings-staff-roles">
           <h3 className="panel-title">Employees</h3>
           {hasLock("EMPLOYEE_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="EMPLOYEE_MANAGEMENT" lock={lockFor("EMPLOYEE_MANAGEMENT")} /></div> : <>
           <form className="mt-4 form-grid" onSubmit={createEmployee}>
@@ -8077,7 +9234,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
         </div>
       </div>
       <div className="grid gap-5 xl:grid-cols-3">
-        <div className="panel" id="settings-delivery">
+        <div className="panel" id="settings-delivery-zones">
           <h3 className="panel-title">Delivery Zones</h3>
           {hasLock("DELIVERY_ZONES") ? <div className="mt-4"><UpgradeRequired feature="DELIVERY_ZONES" lock={lockFor("DELIVERY_ZONES")} /></div> : <>
           <form className="mt-4 grid gap-2" onSubmit={createDeliveryZone}>
@@ -8195,8 +9352,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {settingsCenterLinks.map((item) => (
-              <a className="rounded-md border border-line bg-white p-4 transition hover:border-mint hover:shadow-soft" href={item.href} key={item.id}>
-                <span className="text-xs font-black uppercase tracking-wide text-mint">{item.status}</span>
+              <a className={`rounded-md border p-4 transition hover:border-mint hover:shadow-soft ${item.selected ? "border-mint bg-mint/5 shadow-soft" : "border-line bg-white"}`} href={item.href} key={item.id}>
+                <StatusPill tone={settingsStatusTone(item.status)}>{settingsStatusLabel(item.status)}</StatusPill>
                 <strong className="mt-2 block text-lg text-ink">{item.label}</strong>
                 <span className="mt-1 block text-sm text-slate-500">{item.detail}</span>
               </a>
@@ -8211,7 +9368,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Role</span><strong>{readable(user?.role || "TENANT_OWNER")}</strong></div>
           </div>
         </div>
-        <div className="panel" id="settings-profile">
+        <div className="panel" id="settings-restaurant-profile">
           <h3 className="panel-title">Restaurant profile</h3>
           <p className="mt-2 text-sm text-slate-500">Business name, public contact details, address, and restaurant identity are edited in Website & Branding and saved to the live restaurant profile.</p>
           <div className="mt-4 grid gap-2 text-sm text-slate-600">
@@ -8221,6 +9378,33 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           <a className="button-primary mt-4" href="#settings-website-branding"><Store size={16} />Edit profile</a>
         </div>
+        <div className="panel" id="settings-business-hours">
+          <h3 className="panel-title">Business Hours</h3>
+          <p className="mt-2 text-sm text-slate-500">Public website hours are stored on the tenant website settings record and shown across ordering surfaces.</p>
+          <div className="mt-4 space-y-2 text-sm text-slate-600">
+            {settingsStoreHours.length === 0 ? <EmptyState title="No hours configured" detail="Add store hours in Website & Branding before public launch." /> : settingsStoreHours.map(([day, hours]) => (
+              <div className="summary-line rounded-md bg-slate-50 px-3" key={day}>
+                <span>{readable(day)}</span>
+                <strong>{Array.isArray(hours) ? hours.join(", ") : String(hours || "Closed")}</strong>
+              </div>
+            ))}
+          </div>
+          <a className="button-muted mt-4" href="#settings-website-branding"><Clock size={16} />Edit website hours</a>
+        </div>
+        <div className="panel" id="settings-ordering">
+          <h3 className="panel-title">Ordering</h3>
+          <p className="mt-2 text-sm text-slate-500">Pickup, delivery, order readiness, and kitchen workflow state are read from the live restaurant tenant.</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600">
+            <div className="summary-line"><span>Ordering module</span><strong>{orderingModuleEnabled ? "Enabled" : "Tenant controlled"}</strong></div>
+            <div className="summary-line"><span>Pickup</span><strong>{profile.pickupEnabled === false ? "Disabled" : "Enabled"}</strong></div>
+            <div className="summary-line"><span>Delivery</span><strong>{profile.deliveryEnabled === false ? "Disabled" : "Enabled"}</strong></div>
+            <div className="summary-line"><span>Kitchen workflow</span><strong>{kitchenDisplayLock ? "Upgrade required" : "Available"}</strong></div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <StatusPill tone="neutral">Read only</StatusPill>
+            <a className="button-muted" href={`${restaurantBasePath}/orders`}><ReceiptText size={16} />Open orders</a>
+          </div>
+        </div>
         <div className="panel" id="settings-restaurants-ownership">
           <h3 className="panel-title">Restaurants & Ownership</h3>
           <p className="mt-2 text-sm text-slate-500">This account opens only the assigned restaurant tenant. Platform-owner controls remain in the Master Admin portal.</p>
@@ -8229,8 +9413,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Slug</span><strong>{profile.slug || user?.restaurantSlug || "Not set"}</strong></div>
           </div>
         </div>
-        <div className="panel" id="settings-chains-locations">
-          <h3 className="panel-title">Chains & Locations</h3>
+        <div className="panel" id="settings-locations">
+          <h3 className="panel-title">Locations</h3>
           <p className="mt-2 text-sm text-slate-500">Location records are ready for future chain workflows without changing the restaurant owner navigation.</p>
           <div className="mt-4 space-y-2 text-sm text-slate-600">
             {locations.length === 0 ? <EmptyState title="No location records" detail="Primary restaurant location is active; additional location controls are a future phase." /> : locations.map((location) => (
@@ -8246,16 +9430,35 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           <p className="mt-2 text-sm text-slate-500">Restaurant payment provider onboarding and payout readiness are managed through the secure onboarding flow.</p>
           <a className="button-primary mt-4" href={`${restaurantBasePath}/onboarding#payments`}><CreditCard size={16} />Open payment setup</a>
         </div>
-        <div className="panel" id="settings-billing">
-          <h3 className="panel-title">Billing</h3>
+        <div className="panel" id="settings-billing-subscription">
+          <h3 className="panel-title">Billing & Subscription</h3>
           <p className="mt-2 text-sm text-slate-500">Subscription plan and account billing state are enforced server-side by Loohar entitlements.</p>
           <div className="mt-4 space-y-2 text-sm text-slate-600">
             <div className="summary-line"><span>Plan</span><strong>{readable(entitlementSummary.planCode || "STARTER")}</strong></div>
             <div className="summary-line"><span>Status</span><strong>{readable(entitlementSummary.subscriptionStatus || "ACTIVE")}</strong></div>
           </div>
         </div>
-        <div className="panel" id="settings-security">
-          <h3 className="panel-title">Security</h3>
+        <div className="panel" id="settings-pos-kiosk">
+          <h3 className="panel-title">POS & Kiosk</h3>
+          <p className="mt-2 text-sm text-slate-500">Register devices, shifts, cash controls, card payment flow, and kiosk mode are managed in the POS workspace.</p>
+          <div className="mt-4 grid gap-2 text-sm text-slate-600">
+            <div className="summary-line"><span>POS register</span><strong>{hasLock("POS_REGISTER") ? "Upgrade required" : "Available"}</strong></div>
+            <div className="summary-line"><span>Kiosk mode</span><strong>{hasLock("POS_REGISTER") ? "Plan restricted" : "Available"}</strong></div>
+            <div className="summary-line"><span>Payments</span><strong>{hasLock("ORDER_PAYMENTS") ? "Setup required" : "Ready to configure"}</strong></div>
+          </div>
+          <a className="button-primary mt-4" href={`${restaurantBasePath}/pos`}><CreditCard size={16} />Open POS</a>
+        </div>
+        <div className="panel" id="settings-integrations">
+          <h3 className="panel-title">Integrations</h3>
+          <p className="mt-2 text-sm text-slate-500">Delivery, accounting, marketing, and external POS integrations are intentionally not editable until provider-specific connections are implemented.</p>
+          <div className="mt-4 grid gap-2">
+            <StatusPill tone="warn">Coming soon</StatusPill>
+            <StatusPill tone="neutral">No external providers connected</StatusPill>
+          </div>
+        </div>
+        <DevelopmentEntitlementSimulator apiOnline={apiOnline} token={token} restaurantKey={profile.slug || restaurantId} />
+        <div className="panel" id="settings-security-audit">
+          <h3 className="panel-title">Security & Audit Logs</h3>
           <p className="mt-2 text-sm text-slate-500">Password policy, role-based access, session checks, and audit logging protect tenant operations.</p>
           <div className="mt-4 grid gap-2">
             <StatusPill tone="good">RBAC active</StatusPill>
@@ -8263,13 +9466,95 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <StatusPill tone="neutral">Audit logs retained</StatusPill>
           </div>
         </div>
-        <div className="panel" id="settings-advanced">
-          <h3 className="panel-title">Advanced</h3>
-          {hasLock("MULTI_LOCATION") ? <div className="mt-4"><UpgradeRequired feature="MULTI_LOCATION" lock={lockFor("MULTI_LOCATION")} /></div> : <p className="mt-2 text-sm text-slate-500">{locations.length} configured location records. Future support will separate menus, drivers, and reporting by location.</p>}
+        <div className="panel" id="settings-developer-api">
+          <h3 className="panel-title">Developer/API</h3>
+          <p className="mt-2 text-sm text-slate-500">API keys, webhook delivery logs, and developer docs are planned for a future release. Nothing is exposed until the backend key management flow is implemented.</p>
+          <div className="mt-4 grid gap-2">
+            <StatusPill tone="warn">Coming soon</StatusPill>
+            <StatusPill tone="neutral">No API keys issued</StatusPill>
+          </div>
         </div>
         </div>
       </div>
     </RestaurantPageComponent>
+  );
+}
+
+function DevelopmentEntitlementSimulator({ apiOnline, token, restaurantKey }) {
+  const [state, setState] = useState({ loading: true, available: false, payload: null, error: "" });
+  const [saving, setSaving] = useState("");
+
+  async function loadSimulation() {
+    if (!apiOnline || !token || !restaurantKey) return setState({ loading: false, available: false, payload: null, error: "" });
+    setState((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const payload = await api(`/api/restaurants/${restaurantKey}/entitlements/simulation`, { token });
+      setState({ loading: false, available: true, payload, error: "" });
+    } catch (simulationError) {
+      const code = simulationError?.payload?.code || "";
+      if (simulationError?.status === 403 || code === "ENTITLEMENT_SIMULATION_NOT_AVAILABLE") {
+        setState({ loading: false, available: false, payload: null, error: "" });
+        return;
+      }
+      setState({ loading: false, available: false, payload: null, error: simulationError.message || "Could not load entitlement simulation." });
+    }
+  }
+
+  useEffect(() => {
+    loadSimulation();
+  }, [apiOnline, token, restaurantKey]);
+
+  async function applySimulation(label, body) {
+    setSaving(label);
+    setState((current) => ({ ...current, error: "" }));
+    try {
+      const payload = await api(`/api/restaurants/${restaurantKey}/entitlements/simulation`, { method: "PATCH", token, body });
+      setState((current) => ({ ...current, available: true, payload: { ...(current.payload || {}), ...payload }, error: "" }));
+    } catch (simulationError) {
+      setState((current) => ({ ...current, error: simulationError.message || "Could not update entitlement simulation." }));
+    } finally {
+      setSaving("");
+    }
+  }
+
+  if (state.loading) return null;
+  if (!state.available) return state.error ? <InlineError message={state.error} /> : null;
+  const entitlement = state.payload?.entitlements || {};
+  const simulation = state.payload?.simulation || {};
+  const actions = [
+    { label: "Full access", body: { enabled: true, mode: "FULL_ACCESS" } },
+    { label: "Starter", body: { enabled: true, mode: "SIMULATE_PLAN", simulatedPlan: "STARTER" } },
+    { label: "Professional", body: { enabled: true, mode: "SIMULATE_PLAN", simulatedPlan: "PROFESSIONAL" } },
+    { label: "Enterprise", body: { enabled: true, mode: "SIMULATE_PLAN", simulatedPlan: "ENTERPRISE" } },
+    { label: "Past due", body: { enabled: true, mode: "SIMULATE_PAST_DUE" } },
+    { label: "Suspended", body: { enabled: true, mode: "SIMULATE_SUSPENDED" } },
+    { label: "Cancelled", body: { enabled: true, mode: "SIMULATE_CANCELLED" } },
+    { label: "Disable simulation", body: { enabled: false, mode: "SIMULATE_PLAN", simulatedPlan: entitlement.actualPlanCode || "STARTER" } }
+  ];
+
+  return (
+    <div className="panel" id="settings-development-entitlements">
+      <h3 className="panel-title">Development entitlement simulator</h3>
+      <p className="mt-2 text-sm text-slate-500">Internal/private-beta controls for testing plan restrictions. Real Stripe subscriptions, billing, payments, and payout records are not changed.</p>
+      {state.error ? <InlineError message={state.error} /> : null}
+      <div className="mt-4 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
+        <div className="summary-line"><span>Effective plan</span><strong>{readable(entitlement.planCode || "STARTER")}</strong></div>
+        <div className="summary-line"><span>Effective status</span><strong>{readable(entitlement.subscriptionStatus || "ACTIVE")}</strong></div>
+        <div className="summary-line"><span>Actual plan</span><strong>{readable(entitlement.actualPlanCode || entitlement.planCode || "STARTER")}</strong></div>
+        <div className="summary-line"><span>Actual status</span><strong>{readable(entitlement.actualSubscriptionStatus || entitlement.subscriptionStatus || "ACTIVE")}</strong></div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <StatusPill tone={simulation.active ? "good" : "neutral"}>{simulation.active ? readable(simulation.mode) : "Actual billing"}</StatusPill>
+        {entitlement.fullAccess ? <StatusPill tone="good">Full access</StatusPill> : null}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {actions.map((action) => (
+          <button className="button-muted" type="button" key={action.label} disabled={Boolean(saving)} onClick={() => applySimulation(action.label, action.body)}>
+            {saving === action.label ? "Saving..." : action.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -8882,6 +10167,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
             <div className="summary-line"><span>Restaurant tip</span><strong>{money(displayRestaurantTip)}</strong></div>
             {serviceType === "DELIVERY" ? <div className="summary-line"><span>Driver tip</span><strong>{money(displayDriverTip)}</strong></div> : null}
             <div className="summary-line total"><span>Total</span><strong>{money(orderTotal)}</strong></div>
+            {quote ? <p className="payment-fee-disclosure">{paymentFeeDisclosureText(quote)}</p> : null}
           </div>
           <button className="button-primary mt-5 w-full justify-center" disabled={!orderingEnabled || cart.length === 0 || quoteLoading || Boolean(quoteError)} onClick={placeOrder}><CreditCard size={18} />Continue to secure payment</button>
           {paymentClientSecret ? (
@@ -8891,7 +10177,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
               <button className="button-primary mt-4 w-full justify-center" type="button" onClick={confirmRestaurantPayment} disabled={!paymentElementReady || paying}>
                 <CreditCard size={18} />{paying ? "Processing..." : `Pay ${money(orderStatus?.totalCents || orderTotal)}`}
               </button>
-              <p className="mt-2 text-xs text-slate-500">Payment is processed by the restaurant's connected merchant account. Loohar platform billing is separate.</p>
+              <p className="mt-2 text-xs text-slate-500">Payment is processed by the restaurant's connected merchant account. No Loohar transaction fee is added to this order; processor fees may still apply.</p>
             </div>
           ) : null}
           <div className="mt-5 rounded-md bg-slate-50 p-3 text-sm text-slate-600">
@@ -9371,6 +10657,7 @@ export default function App() {
   const isPublicInfoRoute = ["/about", "/security", "/support", "/privacy", "/terms", "/resources"].includes(initialPath) || initialPath.startsWith("/resources/");
   const isDriverHost = window.location.hostname.startsWith("driver.");
   const tenantHost = tenantHostRouteInfo();
+  const isDriverAppDownloadRoute = initialPath === "/driver-app";
   const isDriverRoute = initialPath === "/driver" || initialPath.startsWith("/driver/") || (isDriverHost && /^\/order\/[^/]+\/?$/.test(initialPath));
   const isDiscoverRoute = initialPath === "/discover";
   const isAdminRoute = initialPath === "/admin" || initialPath.startsWith("/admin/");
@@ -9404,15 +10691,48 @@ export default function App() {
   }, [isAdminRoute, isRestaurantRoute, isDriverRoute, isKitchenRoute, isCustomerRoute, isSiteAdminRoute, isLoginRoute, isForgotPasswordRoute, resetPasswordMatch, appOrderMatch]);
 
   useEffect(() => {
-    checkApiHealth()
-      .then(() => {
-        setApiOnline(true);
-        setApiMode("LIVE");
-      })
-      .catch(() => {
-        setApiOnline(false);
-        setApiMode("DEMO");
-      });
+    let cancelled = false;
+    let timerId;
+    let inFlight = false;
+
+    async function probeApiHealth() {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      let nextOnline = false;
+      try {
+        await checkApiHealth();
+        nextOnline = true;
+        if (!cancelled) {
+          setApiOnline(true);
+          setApiMode("LIVE");
+        }
+      } catch {
+        if (!cancelled) {
+          setApiOnline(false);
+          setApiMode("DEMO");
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled) {
+          timerId = window.setTimeout(probeApiHealth, nextOnline ? 30000 : 5000);
+        }
+      }
+    }
+
+    function retryApiHealthNow() {
+      if (timerId) window.clearTimeout(timerId);
+      probeApiHealth();
+    }
+
+    probeApiHealth();
+    window.addEventListener("focus", retryApiHealthNow);
+    window.addEventListener("online", retryApiHealthNow);
+    return () => {
+      cancelled = true;
+      if (timerId) window.clearTimeout(timerId);
+      window.removeEventListener("focus", retryApiHealthNow);
+      window.removeEventListener("online", retryApiHealthNow);
+    };
   }, []);
 
   useEffect(() => {
@@ -9590,6 +10910,10 @@ export default function App() {
     return <DiscoveryPage apiOnline={apiOnline} />;
   }
 
+  if (isDriverAppDownloadRoute) {
+    return <DriverAppDownloadPage />;
+  }
+
   if (isDriverRoute) {
     if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <div className="min-h-screen bg-[#f7f8fb] px-4 py-6 text-slate-700"><AppLoadingState /></div>;
     if (apiOnline && !user) return <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/login")} detail="Driver login is required for this route." />;
@@ -9644,7 +10968,7 @@ export default function App() {
     const restaurantPage = restaurantPageFromPath(initialPath);
     const legacyRestaurantRedirect = user ? legacyRestaurantRedirectPath(initialPath, user) : "";
     const restaurantShellSlug = restaurantSlug || primaryRestaurantSlugFor(user);
-    const allowedRestaurantRouteRoles = restaurantPage === "kitchen" ? kitchenRoles : restaurantRoles;
+    const allowedRestaurantRouteRoles = restaurantPage === "kitchen" || restaurantPage === "kiosk" ? restaurantStaffRoles : restaurantRoles;
     const canOpenRestaurant = allowedRestaurantRouteRoles.includes(user?.role) && canAccessTenantRoute(user, initialPath, "restaurant") && !requiresPasswordChange(user);
     const shouldResumeOnboarding = canOpenRestaurant && restaurantRoles.includes(user?.role) && !restaurantOnboardingComplete(user) && !isRestaurantOnboardingRoute && (initialPath === "/restaurant" || initialPath === `/restaurant/${restaurantSlug}`);
     const restaurantContent = isRestaurantOnboardingRoute
@@ -9656,7 +10980,17 @@ export default function App() {
           : <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} activePage={restaurantPage} />;
     if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <AppLoadingState />;
     if (legacyRestaurantRedirect) return <Redirecting to={legacyRestaurantRedirect} />;
-    if (!canOpenRestaurant) return !user ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." /> : <AccessDenied loginHref="/restaurant/login" detail="This route is only for the assigned restaurant owner, manager, or admin." />;
+    if (!canOpenRestaurant) {
+      const deniedDetail = restaurantPage === "kiosk"
+        ? "This secure kiosk route is only for assigned restaurant staff with POS access."
+        : "This route is only for the assigned restaurant owner, manager, or admin.";
+      return !user
+        ? <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/restaurant/login")} detail="Restaurant login is required for this route." />
+        : <AccessDenied loginHref="/restaurant/login" detail={deniedDetail} />;
+    }
+    if (restaurantPage === "kiosk") {
+      return <RestaurantKioskShell apiOnline={apiOnline} apiMode={apiMode} token={token} user={user} restaurantSlug={restaurantShellSlug} onLogout={logout} />;
+    }
     return (
       <RestaurantAppShell user={user} restaurantSlug={restaurantShellSlug} activePage={restaurantPage} apiOnline={apiOnline} apiMode={apiMode} authChecking={authChecking} onLogout={logout}>
         {restaurantContent}

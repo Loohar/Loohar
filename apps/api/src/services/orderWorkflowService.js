@@ -64,12 +64,13 @@ export async function issueOrderTrackingToken(orderId) {
 
 export function receiptOrderInclude() {
   return {
-    restaurant: { include: { websiteSettings: true, domains: true } },
+    restaurant: { include: { websiteSettings: true, domains: true, locations: true } },
     customer: true,
     items: true,
     statusHistory: { orderBy: { createdAt: "asc" } },
     delivery: { include: { driver: { include: { user: true } }, statusHistory: { orderBy: { createdAt: "asc" } } } },
-    payment: true
+    payment: true,
+    restaurantOrderPayment: { include: { refunds: true } }
   };
 }
 
@@ -108,7 +109,7 @@ export function normalizeTipInput({ body = {}, orderType = "PICKUP", subtotalCen
 export function customerTrackingUrls(order, trackingToken) {
   const webUrl = `${webAppOrigin()}/app/order/${encodeURIComponent(order.id)}?token=${encodeURIComponent(trackingToken)}`;
   return {
-    label: "Scan to track your order or reorder in Loohar",
+    label: "Scan to track your order",
     url: webUrl,
     webUrl,
     deepLink: `${mobileScheme()}://order/${encodeURIComponent(order.id)}`
@@ -125,85 +126,276 @@ export function driverOrderUrls(order) {
   };
 }
 
+export function driverAppDownloadUrls() {
+  const webUrl = `${webAppOrigin().replace(/\/+$/, "")}/driver-app`;
+  return {
+    label: "Deliver with Loohar",
+    url: webUrl,
+    webUrl,
+    deepLink: `${driverMobileScheme()}://download`
+  };
+}
+
 export function publicRestaurantOrderUrls(order) {
   const webUrl = publicUrlForRestaurant(order.restaurant || { slug: order.restaurantSlug || "restaurant" }, "/order");
   return {
-    label: "Order direct from this restaurant",
+    label: "Order directly next time",
     url: webUrl,
     webUrl
   };
 }
 
-function receiptItems(order) {
-  return (order.items || []).map((item) => ({
-    id: item.id,
-    name: item.name,
-    quantity: item.quantity,
-    unitPriceCents: item.unitPriceCents,
-    totalCents: item.quantity * item.unitPriceCents,
-    modifiers: Array.isArray(item.optionsJson) ? item.optionsJson : []
+function safeText(value, fallback = "") {
+  const text = value === null || value === undefined ? "" : String(value);
+  return text.trim() || fallback;
+}
+
+function asCents(value) {
+  const cents = Number(value || 0);
+  return Number.isFinite(cents) ? Math.round(cents) : 0;
+}
+
+function firstActiveLocation(restaurant) {
+  return (restaurant?.locations || []).find((location) => location.active) || restaurant?.locations?.[0] || null;
+}
+
+function compactAddress(parts = []) {
+  return parts.map((part) => safeText(part)).filter(Boolean).join(", ");
+}
+
+function receiptTypeForKind(kind = "customer") {
+  const normalized = String(kind || "customer").toLowerCase();
+  if (normalized === "kitchen" || normalized === "kitchen_ticket") return "KITCHEN_TICKET";
+  if (normalized === "driver" || normalized === "driver_slip") return "DRIVER_SLIP";
+  if (normalized === "test") return "TEST_RECEIPT";
+  return "CUSTOMER_RECEIPT";
+}
+
+function receiptTitleForType(type) {
+  if (type === "KITCHEN_TICKET") return "Kitchen ticket";
+  if (type === "DRIVER_SLIP") return "Driver delivery slip";
+  if (type === "TEST_RECEIPT") return "Printer test receipt";
+  return "Customer receipt";
+}
+
+function formatReceiptDate(value, timeZone) {
+  const date = value ? new Date(value) : new Date();
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: timeZone || undefined
+    }).format(date);
+  } catch {
+    return date.toLocaleString("en-US");
+  }
+}
+
+function normalizeOrderItemModifiers(optionsJson) {
+  const rawModifiers = Array.isArray(optionsJson)
+    ? optionsJson
+    : Array.isArray(optionsJson?.modifiers)
+      ? optionsJson.modifiers
+      : Array.isArray(optionsJson?.options)
+        ? optionsJson.options
+        : [];
+  return rawModifiers.map((modifier) => ({
+    group: safeText(modifier.group || modifier.groupName || modifier.optionGroupName),
+    name: safeText(modifier.name || modifier.label || modifier.optionName || modifier.value, "Modifier"),
+    priceCents: asCents(modifier.priceCents)
   }));
 }
 
-export function buildReceiptPayload(order, { kind = "customer", trackingToken } = {}) {
-  const isDelivery = order.type === "DELIVERY";
+function lineItemTotal(item, modifiers) {
+  const modifierTotal = modifiers.reduce((sum, modifier) => sum + asCents(modifier.priceCents), 0);
+  return asCents(item.quantity || 1) * (asCents(item.unitPriceCents) + modifierTotal);
+}
+
+function receiptItems(order) {
+  return (order.items || []).map((item) => {
+    const modifiers = normalizeOrderItemModifiers(item.optionsJson);
+    return {
+      id: item.id,
+      name: safeText(item.name, "Menu item"),
+      quantity: asCents(item.quantity || 1),
+      unitPriceCents: asCents(item.unitPriceCents),
+      totalCents: lineItemTotal(item, modifiers),
+      modifiers
+    };
+  });
+}
+
+function refundedCentsFor(payment) {
+  return (payment?.refunds || [])
+    .filter((refund) => ["SUCCEEDED", "PENDING"].includes(refund.status))
+    .reduce((sum, refund) => sum + asCents(refund.amountCents), 0);
+}
+
+function maskedReference(value = "") {
+  const text = safeText(value);
+  if (!text) return null;
+  if (text.length <= 8) return `...${text}`;
+  return `${text.slice(0, 4)}...${text.slice(-4)}`;
+}
+
+function receiptTotals(order) {
+  const payment = order.restaurantOrderPayment || null;
+  const subtotalCents = asCents(payment?.subtotalCents ?? order.subtotalCents);
+  const discountCents = asCents(payment?.discountCents ?? order.discountCents);
+  const taxCents = asCents(payment?.taxCents ?? order.taxCents);
+  const deliveryFeeCents = asCents(payment?.deliveryFeeCents ?? order.deliveryFeeCents);
+  const serviceFeeCents = asCents(payment?.serviceFeeCents ?? order.payment?.technologyFeeCents);
+  const restaurantTipCents = asCents(payment?.restaurantTipCents ?? order.restaurantTipCents);
+  const driverTipCents = asCents(payment?.driverTipCents ?? order.driverTipCents ?? order.tipCents);
+  const customTipCents = asCents(order.customTipCents);
+  const totalCents = asCents(payment?.totalCents ?? order.totalCents);
+  const expectedTotalCents = subtotalCents - discountCents + taxCents + deliveryFeeCents + serviceFeeCents + restaurantTipCents + driverTipCents;
+  const otherFeesCents = Math.max(0, totalCents - expectedTotalCents);
+  return { subtotalCents, discountCents, taxCents, deliveryFeeCents, serviceFeeCents, restaurantTipCents, driverTipCents, customTipCents, otherFeesCents, totalCents, currency: "USD" };
+}
+
+function receiptPayment(order, totals) {
+  const payment = order.restaurantOrderPayment || order.payment || null;
+  const provider = safeText(payment?.provider || order.payment?.provider, "Manual");
+  const status = safeText(payment?.status || order.payment?.status, "PENDING");
+  const refundedCents = refundedCentsFor(payment) || (order.payment?.refundedAt ? asCents(order.payment?.amountCents) : 0);
+  const paidStatuses = new Set(["PAID", "AUTHORIZED", "PARTIALLY_REFUNDED", "REFUNDED", "SUCCEEDED", "COMPLETED", "CAPTURED"]);
+  const paidCents = paidStatuses.has(status) ? asCents(payment?.totalCents || order.payment?.amountCents || totals.totalCents) : 0;
+  return {
+    provider,
+    status,
+    paidAt: payment?.paidAt || order.payment?.paidAt || null,
+    authorizedAt: payment?.authorizedAt || null,
+    refundedAt: payment?.refundedAt || order.payment?.refundedAt || null,
+    refundedCents,
+    balanceCents: Math.max(0, totals.totalCents - paidCents),
+    reference: maskedReference(payment?.providerPaymentIntentId || payment?.providerChargeId || order.payment?.providerPaymentId || order.payment?.stripePaymentIntentId)
+  };
+}
+
+function receiptRestaurant(order) {
   const restaurant = order.restaurant || {};
   const website = restaurant.websiteSettings || {};
-  const totals = {
-    subtotalCents: order.subtotalCents,
-    discountCents: order.discountCents || 0,
-    taxCents: order.taxCents || 0,
-    restaurantTipCents: order.restaurantTipCents || 0,
-    driverTipCents: order.driverTipCents ?? order.tipCents ?? 0,
-    deliveryFeeCents: order.deliveryFeeCents || 0,
-    serviceFeeCents: order.payment?.technologyFeeCents || 0,
-    totalCents: order.totalCents
+  const location = firstActiveLocation(restaurant);
+  const locationAddress = safeText(location?.address);
+  const address = locationAddress || compactAddress([restaurant.address, restaurant.city, restaurant.state, restaurant.zip]);
+  const name = safeText(restaurant.publicBusinessName || restaurant.businessName || restaurant.name, "Restaurant");
+  return {
+    id: restaurant.id,
+    name,
+    legalName: safeText(restaurant.businessName || restaurant.name, name),
+    slug: restaurant.slug,
+    businessType: restaurant.businessType || "RESTAURANT",
+    logoUrl: website.logoUrl || restaurant.logoUrl || null,
+    address,
+    phone: safeText(location?.phone || restaurant.phone),
+    email: safeText(restaurant.email || restaurant.businessEmail),
+    websiteUrl: publicUrlForRestaurant(restaurant, ""),
+    orderUrl: publicRestaurantOrderUrls(order).webUrl,
+    timezone: safeText(location?.timezone || restaurant.timezone, "America/Denver"),
+    brandColor: safeText(website.brandColor || website.primaryColor || restaurant.brandingJson?.brandColor, "#111827"),
+    accentColor: safeText(website.accentColor || website.secondaryColor || restaurant.brandingJson?.accentColor, "#10b981"),
+    location: location ? { id: location.id, name: location.name, address: locationAddress, phone: location.phone, timezone: location.timezone } : null
   };
+}
+
+function totalsTextRows(totals, payment) {
+  return [
+    ["Subtotal", money(totals.subtotalCents)],
+    totals.discountCents ? ["Discount", `-${money(totals.discountCents)}`] : null,
+    ["Tax", money(totals.taxCents)],
+    totals.restaurantTipCents ? ["Restaurant tip", money(totals.restaurantTipCents)] : null,
+    totals.driverTipCents ? ["Driver tip", money(totals.driverTipCents)] : null,
+    totals.deliveryFeeCents ? ["Delivery fee", money(totals.deliveryFeeCents)] : null,
+    totals.serviceFeeCents ? ["Service fee", money(totals.serviceFeeCents)] : null,
+    totals.otherFeesCents ? ["Other fees", money(totals.otherFeesCents)] : null,
+    ["Total", money(totals.totalCents)],
+    payment.refundedCents ? ["Refunded", `-${money(payment.refundedCents)}`] : null,
+    payment.balanceCents ? ["Balance due", money(payment.balanceCents)] : null
+  ].filter(Boolean);
+}
+
+function receiptQrCodes(order, trackingToken, receiptType) {
+  const publicOrder = publicRestaurantOrderUrls(order);
+  const tracking = trackingToken ? customerTrackingUrls(order, trackingToken) : null;
+  const driverDownload = ["CUSTOMER_RECEIPT", "DRIVER_SLIP"].includes(receiptType) ? driverAppDownloadUrls() : null;
+  return {
+    customer: publicOrder,
+    publicOrder,
+    tracking,
+    driver: driverDownload,
+    driverAppDownload: driverDownload
+  };
+}
+
+export function buildReceiptPayload(order, { kind = "customer", trackingToken, format = "80mm", isReprint = false } = {}) {
+  const isDelivery = order.type === "DELIVERY";
+  const receiptType = receiptTypeForKind(kind);
+  const receiptNumberSuffix = receiptType === "KITCHEN_TICKET" ? "K" : receiptType === "DRIVER_SLIP" ? "D" : receiptType === "TEST_RECEIPT" ? "T" : "C";
+  const receiptNumber = `R-${order.orderNumber}-${receiptNumberSuffix}`;
+  const receiptId = `${order.id}:${receiptType}`;
+  const restaurant = receiptRestaurant(order);
+  const totals = receiptTotals(order);
+  const payment = receiptPayment(order, totals);
+  const qr = receiptQrCodes(order, trackingToken, receiptType);
+  const issuedAt = new Date();
 
   return {
+    receipt: {
+      id: receiptId,
+      receiptNumber,
+      type: receiptType,
+      issuedAt,
+      reprintCount: null,
+      isReprint: Boolean(isReprint)
+    },
+    receiptNumber,
     kind,
-    layout: { format: "80mm", provider: "browser_print" },
+    type: receiptType,
+    title: receiptTitleForType(receiptType),
+    issuedAt,
+    isReprint: Boolean(isReprint),
+    layout: { format: format === "58mm" ? "58mm" : "80mm", provider: "browser_print" },
     order: {
       id: order.id,
       orderNumber: order.orderNumber,
+      publicOrderNumber: order.orderNumber,
       type: order.type,
       status: order.status,
       createdAt: order.createdAt,
-      notes: order.notes || "",
-      deliveryAddress: isDelivery ? order.deliveryAddress : null
+      printedAt: issuedAt,
+      displayCreatedAt: formatReceiptDate(order.createdAt, restaurant.timezone),
+      notes: safeText(order.notes),
+      deliveryAddress: isDelivery ? order.deliveryAddress : null,
+      couponCode: safeText(order.couponCode)
     },
-    restaurant: {
-      id: restaurant.id,
-      name: restaurant.businessName || restaurant.name,
-      logoUrl: website.logoUrl || restaurant.logoUrl || null,
-      address: [restaurant.address, restaurant.city, restaurant.state, restaurant.zip].filter(Boolean).join(", "),
-      phone: restaurant.phone || null
-    },
+    restaurant,
     customer: {
-      name: order.customer?.name || "Customer"
+      name: safeText(order.customer?.name, "Customer"),
+      email: safeText(order.customer?.email),
+      phone: safeText(order.customer?.phone)
     },
     items: receiptItems(order),
     totals,
-    payment: {
-      method: order.payment?.provider || "Pending",
-      status: order.payment?.status || "PENDING"
+    payment,
+    qr,
+    qrCodes: {
+      customerReorderUrl: qr.customer?.webUrl || null,
+      customerReorderToken: null,
+      orderTrackingUrl: qr.tracking?.webUrl || null,
+      driverAppDownloadUrl: qr.driverAppDownload?.webUrl || null
     },
-    qr: {
-      customer: trackingToken ? customerTrackingUrls(order, trackingToken) : null,
-      driver: isDelivery && ["driver", "delivery", "customer"].includes(kind) ? driverOrderUrls(order) : null,
-      publicOrder: publicRestaurantOrderUrls(order)
+    platform: {
+      name: "Loohar",
+      supportEmail: "support@loohar.com",
+      websiteUrl: webAppOrigin()
     },
     text: {
-      totals: [
-        ["Subtotal", money(totals.subtotalCents)],
-        totals.discountCents ? ["Discount", `-${money(totals.discountCents)}`] : null,
-        ["Tax", money(totals.taxCents)],
-        totals.restaurantTipCents ? ["Restaurant tip", money(totals.restaurantTipCents)] : null,
-        totals.driverTipCents ? ["Driver tip", money(totals.driverTipCents)] : null,
-        totals.deliveryFeeCents ? ["Delivery fee", money(totals.deliveryFeeCents)] : null,
-        totals.serviceFeeCents ? ["Service fee", money(totals.serviceFeeCents)] : null,
-        ["Total", money(totals.totalCents)]
-      ].filter(Boolean)
+      totals: totalsTextRows(totals, payment),
+      footer: "Powered by Loohar"
     }
   };
 }

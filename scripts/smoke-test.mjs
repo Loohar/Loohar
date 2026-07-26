@@ -96,9 +96,9 @@ if (ownerToken) {
         "Receipt payload with QR",
         `${apiOrigin}/api/restaurants/${restaurantId}/orders/${receiptOrder.id}/receipt?kind=customer`,
         { headers: { Authorization: `Bearer ${ownerToken}` } },
-        (response, body) => response.ok && Boolean(body?.receipt?.qr?.customer?.webUrl) && Array.isArray(body?.receipt?.items)
+        (response, body) => response.ok && Boolean(body?.receipt?.qr?.customer?.webUrl) && Boolean(body?.receipt?.qr?.tracking?.webUrl) && Array.isArray(body?.receipt?.items)
       );
-      const trackingUrl = receiptPayload.payload?.receipt?.qr?.customer?.webUrl || "";
+      const trackingUrl = receiptPayload.payload?.receipt?.qr?.tracking?.webUrl || receiptPayload.payload?.receipt?.qrCodes?.orderTrackingUrl || "";
       const trackingToken = trackingUrl ? new URL(trackingUrl).searchParams.get("token") : "";
       await requestJson("Customer QR tracking", `${apiOrigin}/api/orders/${receiptOrder.id}/track?token=${encodeURIComponent(trackingToken || "")}`, {}, (response, body) => response.ok && body?.order?.id === receiptOrder.id && !body?.order?.customer?.email);
     } else {

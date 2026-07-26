@@ -90,22 +90,24 @@ export async function createMerchantOnboardingLink({ user }) {
 
 async function createStripePaymentIntent({ quote, order, payment, merchant }) {
   assertStripeConnectConfigured();
+  const feeParams = quote.platformFeeCents > 0 ? { application_fee_amount: quote.platformFeeCents } : {};
   const body = stripeForm({
     amount: quote.totalCents,
     currency: quote.currency,
     "automatic_payment_methods[enabled]": "true",
-    application_fee_amount: quote.platformFeeCents,
-    "transfer_data[destination]": merchant.stripeAccountId,
+    ...feeParams,
     "metadata[domain]": "RESTAURANT_ORDER_PAYMENT",
     "metadata[restaurantId]": order.restaurantId,
     "metadata[orderId]": order.id,
     "metadata[orderPaymentId]": payment.id,
-    "metadata[orderNumber]": order.orderNumber
+    "metadata[orderNumber]": order.orderNumber,
+    "metadata[connectedAccountId]": merchant.stripeAccountId
   });
   return stripeRequest({
     secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
     path: "/payment_intents",
-    body
+    body,
+    stripeAccount: merchant.stripeAccountId
   });
 }
 
@@ -156,8 +158,11 @@ export async function createOrderPayment({ body }) {
             menuItemId: item.menuItemId,
             name: item.name,
             quantity: item.quantity,
-            unitPriceCents: item.baseUnitPriceCents,
-            optionsJson: item.options
+            unitPriceCents: item.unitPriceCents,
+            optionsJson: {
+              options: item.options || [],
+              modifiers: item.modifiers || item.options || []
+            }
           }))
         },
         statusHistory: { create: { status: "PENDING", note: "Order placed by customer; awaiting payment" } }
@@ -187,7 +192,11 @@ export async function createOrderPayment({ body }) {
           items: quote.items,
           breakdown: quote.breakdown,
           couponCode: quote.couponCode,
-          taxRateBps: quote.taxRateBps
+          taxRateBps: quote.taxRateBps,
+          zeroLooharPlatformFee: quote.zeroLooharPlatformFee,
+          looharPlatformFeeCents: quote.looharPlatformFeeCents,
+          processorFeesMayApply: quote.processorFeesMayApply,
+          paymentFeeDisclosure: quote.paymentFeeDisclosure
         }
       }
     });
