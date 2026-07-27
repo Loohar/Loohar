@@ -64,13 +64,16 @@ function isTenantSubdomainOrigin(origin = "") {
     return false;
   }
 }
+function isCorsOriginAllowed(origin = "") {
+  return !origin ||
+    configuredCorsOrigins.includes(origin) ||
+    isTenantSubdomainOrigin(origin) ||
+    (!isProduction && configuredCorsOrigins.includes("*")) ||
+    (allowLocalCors && isLocalDevOrigin(origin));
+}
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || configuredCorsOrigins.includes(origin) || isTenantSubdomainOrigin(origin) || (!isProduction && configuredCorsOrigins.includes("*")) || (allowLocalCors && isLocalDevOrigin(origin))) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error(`CORS origin not allowed: ${origin}`));
+    callback(null, isCorsOriginAllowed(origin));
   },
   credentials: true
 };
@@ -82,6 +85,12 @@ const io = new Server(server, {
 bindRealtime(io);
 
 app.use(helmet());
+app.use((req, res, next) => {
+  if (!isCorsOriginAllowed(req.headers.origin)) {
+    return res.status(403).json({ error: "CORS origin not allowed.", code: "CORS_ORIGIN_DENIED" });
+  }
+  next();
+});
 app.use(cors(corsOptions));
 app.use("/api/payments/webhook", express.raw({ type: "application/json", limit: "2mb" }));
 app.use("/api/webhooks/stripe-platform", express.raw({ type: "application/json", limit: "2mb" }), stripePlatformWebhookRouter);

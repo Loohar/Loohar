@@ -71,8 +71,14 @@ export function requireRole(...roles) {
 
 export function requireTenantAccess(req, res, next) {
   if (req.user?.role === "SUPER_ADMIN") return next();
-  const requestedTenant = req.params.restaurantId || req.body.restaurantId || req.query.restaurantId;
-  if (!req.tenantId || (requestedTenant && requestedTenant !== req.tenantId)) {
+  if (!req.tenantId) {
+    return res.status(403).json({ error: "Tenant access denied" });
+  }
+  const requestedTenant = req.body.restaurantId || req.query.restaurantId;
+  if (requestedTenant && requestedTenant !== req.tenantId) {
+    return res.status(403).json({ error: "Tenant access denied" });
+  }
+  if (req.resolvedRestaurantId && req.resolvedRestaurantId !== req.tenantId) {
     return res.status(403).json({ error: "Tenant access denied" });
   }
   next();

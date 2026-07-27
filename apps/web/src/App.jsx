@@ -218,6 +218,39 @@ const demoOperationsReport = {
   customers: { newCustomers: 18, returningCustomers: 92, vipCustomers: 14 },
   drivers: [{ driverId: "drv-1", name: "Alex Driver", deliveries: 18, tipsCents: 4100, earningsCents: 10300 }]
 };
+const emptyRestaurantStats = () => ({
+  ordersToday: 0,
+  pendingOrders: 0,
+  activeDrivers: 0,
+  sales: { amountCents: 0, driverTipCents: 0, restaurantNetCents: 0 }
+});
+const emptyCustomerSummary = () => ({
+  totalCustomers: 0,
+  newCustomersThisMonth: 0,
+  repeatCustomerPercentage: 0,
+  vipCustomerCount: 0
+});
+const emptyLoyaltyAnalytics = () => ({ analytics: {}, rewards: [], topCustomers: [] });
+const emptyPromotionsAnalytics = () => ({ activePromotions: [], redemptions: [], performance: {} });
+const emptyGrowthAnalytics = () => ({ metrics: {}, salesTrend: [], ordersTrend: [], customerGrowth: [], loyaltyGrowth: [] });
+const emptyMenuInsights = () => ({ bestSellingItems: [], worstSellingItems: [], categoryPerformance: [] });
+const emptyWebsiteSettings = () => ({
+  websiteEnabled: true,
+  sectionSettingsJson: { ...websiteSectionDefaults },
+  storeHoursJson: {}
+});
+const emptyDomainSettings = (slug = "") => ({
+  defaultSubdomain: slug,
+  primaryDomain: slug ? `${slug}.${tenantRootDomain}` : "",
+  canonicalDomain: slug ? `${slug}.${tenantRootDomain}` : "",
+  customDomain: "",
+  domainStatus: "NOT_CONFIGURED",
+  sslStatus: "NOT_CONFIGURED"
+});
+const emptyDispatchCenter = () => ({ availableDrivers: [], busyDrivers: [], offlineDrivers: [], deliveries: [] });
+const emptyOperationsReport = () => ({ sales: {}, items: {}, customers: {}, drivers: [] });
+const emptyPrinterSettings = () => ({});
+const emptyNotificationSettings = () => ({});
 
 function slugify(value = "") {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -717,7 +750,7 @@ function restaurantMembershipSlugs(user) {
 }
 
 function primaryRestaurantSlugFor(user) {
-  return restaurantMembershipSlugs(user)[0] || user?.restaurantId || "";
+  return restaurantMembershipSlugs(user)[0] || "";
 }
 
 function legacyRestaurantRedirectPath(path = "", user) {
@@ -2320,7 +2353,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
   const tenantName = user?.restaurantName || readable(restaurantSlug || "Restaurant");
   const roleLabel = readable(user?.role || "Restaurant user");
   const pageInfo = restaurantPageDefinitions[safePage];
-  const publicWebsitePath = restaurantSlug ? publicPathForSlug(restaurantSlug) : "/sites/demo-bistro";
+  const publicWebsitePath = restaurantSlug ? publicPathForSlug(restaurantSlug) : "";
 
   function openDrawer() {
     previousFocusRef.current = document.activeElement;
@@ -2385,7 +2418,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
         </div>
         {renderSidebarNav()}
         <div className="restaurant-shell-sidebar-footer">
-          <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer"><Store size={16} />Public site</a>
+          {publicWebsitePath ? <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer"><Store size={16} />Public site</a> : null}
           <a className="restaurant-shell-secondary-link" href="mailto:support@loohar.com"><Shield size={16} />Support</a>
           <button className="restaurant-shell-secondary-link" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
         </div>
@@ -2402,7 +2435,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
           <div className="restaurant-shell-topbar-actions">
             <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill>
             {authChecking ? <StatusPill tone="neutral">Session check</StatusPill> : null}
-            <a className="restaurant-shell-icon-link" href={publicWebsitePath} target="_blank" rel="noreferrer" aria-label="Open public restaurant website"><Store size={18} /></a>
+            {publicWebsitePath ? <a className="restaurant-shell-icon-link" href={publicWebsitePath} target="_blank" rel="noreferrer" aria-label="Open public restaurant website"><Store size={18} /></a> : null}
             <button className="restaurant-shell-icon-link" type="button" onClick={onLogout} aria-label="Log out"><LogOut size={18} /></button>
           </div>
         </header>
@@ -2431,7 +2464,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
           </div>
           {renderSidebarNav(closeDrawer)}
           <div className="restaurant-shell-sidebar-footer mobile">
-            <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer" onClick={closeDrawer}><Store size={16} />Public site</a>
+            {publicWebsitePath ? <a className="restaurant-shell-secondary-link" href={publicWebsitePath} target="_blank" rel="noreferrer" onClick={closeDrawer}><Store size={16} />Public site</a> : null}
             <button className="restaurant-shell-secondary-link" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
           </div>
         </div>
@@ -4088,7 +4121,7 @@ function RegistrationResultPage({ type }) {
 
 function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
-  const restaurantKey = user?.restaurantId || routeRestaurantId || initialSlug || user?.restaurantSlug || "";
+  const restaurantKey = initialSlug || user?.restaurantSlug || routeRestaurantId || user?.restaurantId || "";
   const apiBase = restaurantKey ? `/api/restaurants/${restaurantKey}` : "/api/restaurant";
   const [payload, setPayload] = useState(null);
   const [activeStep, setActiveStep] = useState(user?.onboardingCurrentStep || "business");
@@ -7475,35 +7508,35 @@ function DriverAppDownloadPage() {
 
 function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = "dashboard" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
-  const restaurantId = user?.restaurantId || routeRestaurantId;
+  const restaurantId = initialSlug || user?.restaurantSlug || routeRestaurantId || user?.restaurantId || "";
   const initialProfile = useMemo(
     () => restaurantProfilePlaceholder(user, initialSlug),
     [user?.restaurantId, user?.restaurantSlug, user?.restaurantName, user?.tenantName, initialSlug]
   );
   const [profile, setProfile] = useState(initialProfile);
-  const [stats, setStats] = useState({ ordersToday: demoOrders.length, pendingOrders: 2, activeDrivers: demoDrivers.filter((driver) => driver.available).length, sales: { amountCents: 9621, driverTipCents: 1500 } });
-  const [categories, setCategories] = useState(demoRestaurant.categories);
-  const [items, setItems] = useState(demoRestaurant.categories.flatMap((category) => category.items.map((item) => ({ ...item, category }))));
-  const [orders, setOrders] = useState(demoOrders);
-  const [drivers, setDrivers] = useState(demoDrivers);
-  const [customers, setCustomers] = useState(demoCustomers);
-  const [customerSummary, setCustomerSummary] = useState(demoCustomerSummary);
-  const [loyalty, setLoyalty] = useState(demoGrowth.loyalty);
-  const [promotions, setPromotions] = useState(demoGrowth.promotions);
-  const [growthAnalytics, setGrowthAnalytics] = useState(demoGrowth.analytics);
-  const [menuInsights, setMenuInsights] = useState(demoGrowth.menuInsights);
-  const [locations, setLocations] = useState(demoGrowth.locations);
-  const [website, setWebsite] = useState(demoWebsiteSettings);
-  const [domain, setDomain] = useState(demoDomain);
-  const [gallery, setGallery] = useState(demoGallery);
-  const [socialLinks, setSocialLinks] = useState(demoSocialLinks);
-  const [employees, setEmployees] = useState(demoEmployees);
-  const [dispatch, setDispatch] = useState(demoDispatch);
-  const [deliveryZones, setDeliveryZones] = useState(demoDeliveryZones);
-  const [inventoryItems, setInventoryItems] = useState(demoInventoryItems);
-  const [printerSettings, setPrinterSettings] = useState(demoPrinterSettings);
-  const [notificationSettings, setNotificationSettings] = useState(demoNotificationSettings);
-  const [operationsReport, setOperationsReport] = useState(demoOperationsReport);
+  const [stats, setStats] = useState(() => emptyRestaurantStats());
+  const [categories, setCategories] = useState([]);
+  const [items, setItems] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [customerSummary, setCustomerSummary] = useState(() => emptyCustomerSummary());
+  const [loyalty, setLoyalty] = useState(() => emptyLoyaltyAnalytics());
+  const [promotions, setPromotions] = useState(() => emptyPromotionsAnalytics());
+  const [growthAnalytics, setGrowthAnalytics] = useState(() => emptyGrowthAnalytics());
+  const [menuInsights, setMenuInsights] = useState(() => emptyMenuInsights());
+  const [locations, setLocations] = useState([]);
+  const [website, setWebsite] = useState(() => emptyWebsiteSettings());
+  const [domain, setDomain] = useState(() => emptyDomainSettings(initialProfile.slug));
+  const [gallery, setGallery] = useState([]);
+  const [socialLinks, setSocialLinks] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [dispatch, setDispatch] = useState(() => emptyDispatchCenter());
+  const [deliveryZones, setDeliveryZones] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [printerSettings, setPrinterSettings] = useState(() => emptyPrinterSettings());
+  const [notificationSettings, setNotificationSettings] = useState(() => emptyNotificationSettings());
+  const [operationsReport, setOperationsReport] = useState(() => emptyOperationsReport());
   const [featureLocks, setFeatureLocks] = useState({});
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
@@ -7533,6 +7566,43 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     setToast({ message, tone, id: Date.now() });
     window.clearTimeout(showToast.timeoutId);
     showToast.timeoutId = window.setTimeout(() => setToast(null), 4200);
+  }
+
+  function liveRestaurantRequired(message = "Live API connection and restaurant login are required for restaurant operations.") {
+    setError(message);
+    showToast(message, "bad");
+    return false;
+  }
+
+  function resetRestaurantLiveState(nextProfile = initialProfile) {
+    setProfile(nextProfile);
+    setStats(emptyRestaurantStats());
+    setCategories([]);
+    setItems([]);
+    setOrders([]);
+    setDrivers([]);
+    setCustomers([]);
+    setCustomerSummary(emptyCustomerSummary());
+    setLoyalty(emptyLoyaltyAnalytics());
+    setPromotions(emptyPromotionsAnalytics());
+    setGrowthAnalytics(emptyGrowthAnalytics());
+    setMenuInsights(emptyMenuInsights());
+    setLocations([]);
+    setWebsite(emptyWebsiteSettings());
+    setDomain(emptyDomainSettings(nextProfile?.slug || initialSlug || user?.restaurantSlug || ""));
+    setGallery([]);
+    setSocialLinks([]);
+    setEmployees([]);
+    setDispatch(emptyDispatchCenter());
+    setDeliveryZones([]);
+    setInventoryItems([]);
+    setPrinterSettings(emptyPrinterSettings());
+    setNotificationSettings(emptyNotificationSettings());
+    setOperationsReport(emptyOperationsReport());
+    setFeatureLocks({});
+    setWebsiteDirty(false);
+    setWebsiteSaveState("idle");
+    setWebsiteLastSavedAt(null);
   }
 
   function setWebsiteField(field, value) {
@@ -7744,7 +7814,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
         optionalApi("MENU_INSIGHTS", `/api/restaurants/${restaurantId}/menu/insights`, { bestSellingItems: [], worstSellingItems: [], categoryPerformance: [] }),
         optionalApi("MULTI_LOCATION", `/api/restaurants/${restaurantId}/locations`, { locations: [] }),
         api(`/api/restaurants/${restaurantId}/website`, { token }),
-        optionalApi("CUSTOM_DOMAIN", `/api/restaurants/${restaurantId}/domain`, { domain: demoDomain }),
+        optionalApi("CUSTOM_DOMAIN", `/api/restaurants/${restaurantId}/domain`, { domain: emptyDomainSettings(initialProfile.slug) }),
         api(`/api/restaurants/${restaurantId}/gallery`, { token }),
         api(`/api/restaurants/${restaurantId}/social-links`, { token }),
         optionalApi("EMPLOYEE_MANAGEMENT", `/api/restaurants/${restaurantId}/employees`, { employees: [] }),
@@ -7770,20 +7840,23 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setGrowthAnalytics(analyticsPayload);
       setMenuInsights(menuInsightsPayload);
       setLocations(locationsPayload.locations || []);
-      setWebsite(websitePayload.website || demoWebsiteSettings);
-      setDomain(domainPayload.domain || demoDomain);
+      setWebsite(websitePayload.website || emptyWebsiteSettings());
+      setDomain(domainPayload.domain || emptyDomainSettings((profilePayload.restaurant || initialProfile).slug));
       setGallery(galleryPayload.gallery || []);
       setSocialLinks(socialPayload.socialLinks || []);
       setEmployees(employeesPayload.employees || []);
-      setDispatch(dispatchPayload || { availableDrivers: [], busyDrivers: [], offlineDrivers: [], deliveries: [] });
+      setDispatch(dispatchPayload || emptyDispatchCenter());
       setDeliveryZones(zonesPayload.zones || []);
       setInventoryItems(inventoryPayload.items || []);
       setPrinterSettings(printingPayload.settings || {});
       setNotificationSettings(notificationsPayload.settings || {});
-      setOperationsReport(operationsPayload || { sales: {}, items: {}, customers: {}, drivers: [] });
+      setOperationsReport(operationsPayload || emptyOperationsReport());
       return true;
       } catch (loadError) {
-        if (requestId === loadRestaurantRequestIdRef.current) setError(loadError.message);
+        if (requestId === loadRestaurantRequestIdRef.current) {
+          resetRestaurantLiveState(initialProfile);
+          setError(loadError.message);
+        }
         return null;
       } finally {
         if (loadRestaurantInFlightRef.current === request) loadRestaurantInFlightRef.current = null;
@@ -7913,11 +7986,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       return showToast("Category name must be at least 2 characters.", "bad");
     }
     setSavingAction("category:create");
-    if (!apiOnline) {
-      setCategories((current) => [...current, { id: crypto.randomUUID(), name, active: true, sortOrder: current.length + 1, items: [] }]);
-      setCategoryName("");
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Category created in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to create menu categories.");
     }
     try {
       await api(`/api/restaurants/${restaurantId}/menu/categories`, { method: "POST", token, body: { name, sortOrder: categories.length + 1, active: true } });
@@ -7938,12 +8009,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setError("Category name must be at least 2 characters.");
       return showToast("Category name must be at least 2 characters.", "bad");
     }
-    setCategories((current) => current.map((item) => item.id === category.id ? next : item).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
     setSavingAction(`category:${category.id}`);
-    if (!apiOnline) {
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast(message);
+      return liveRestaurantRequired("Live API connection and restaurant login are required to update menu categories.");
     }
+    setCategories((current) => current.map((item) => item.id === category.id ? next : item).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
     try {
       await api(`/api/restaurants/${restaurantId}/menu/categories/${category.id}`, { method: "PATCH", token, body: { name: next.name, sortOrder: Number(next.sortOrder || 0), active: next.active !== false } });
       await loadRestaurant();
@@ -7978,15 +8049,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     const currentSort = sorted[index].sortOrder || index + 1;
     const swapSort = sorted[swapIndex].sortOrder || swapIndex + 1;
     setSavingAction(`gallery:${image.id}`);
+    if (!apiOnline || !token || !restaurantId) {
+      setSavingAction("");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to reorder gallery photos.");
+    }
     setGallery((current) => current.map((item) => {
       if (item.id === sorted[index].id) return { ...item, sortOrder: swapSort };
       if (item.id === sorted[swapIndex].id) return { ...item, sortOrder: currentSort };
       return item;
     }).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
-    if (!apiOnline) {
-      setSavingAction("");
-      return showToast("Gallery order updated.");
-    }
     try {
       await Promise.all([
         api(`/api/restaurants/${restaurantId}/gallery/${sorted[index].id}`, { method: "PATCH", token, body: { sortOrder: swapSort } }),
@@ -8005,11 +8076,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function updateGalleryImage(image, updates, message = "Gallery photo updated.") {
     setSavingAction(`gallery:${image.id}:update`);
-    setGallery((current) => current.map((item) => (item.id === image.id ? { ...item, ...updates } : item)));
-    if (!apiOnline) {
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast(message);
+      return liveRestaurantRequired("Live API connection and restaurant login are required to update gallery photos.");
     }
+    setGallery((current) => current.map((item) => (item.id === image.id ? { ...item, ...updates } : item)));
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/gallery/${image.id}`, { method: "PATCH", token, body: updates });
       setGallery((current) => current.map((item) => (item.id === image.id ? payload.image : item)));
@@ -8026,10 +8097,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   async function deleteCategory(categoryId) {
     const category = categories.find((item) => item.id === categoryId);
     setSavingAction(`category:${categoryId}`);
-    if (!apiOnline) {
-      setCategories((current) => current.filter((item) => item.id !== categoryId));
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Category removed in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to delete menu categories.");
     }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/menu/categories/${categoryId}`, { method: "DELETE", token });
@@ -8058,13 +8128,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       return showToast(imageValidationError, "bad");
     }
     setSavingAction("item:create");
-    if (!apiOnline) {
-      setItems((current) => [...current, { ...payload, id: crypto.randomUUID(), imageUrl: newItemImage ? globalThis.URL.createObjectURL(newItemImage) : "", available: true }]);
-      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
-      setNewItemImage(null);
-      setItemFileInputKey((key) => key + 1);
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Menu item created in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to create menu items.");
     }
     try {
       const created = await api(`/api/restaurants/${restaurantId}/menu/items`, { method: "POST", token, body: payload });
@@ -8094,10 +8160,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     }
     setMenuValidation({});
     setSavingAction(`item:${item.id}`);
-    if (!apiOnline) {
-      setItems((current) => current.map((currentItem) => currentItem.id === item.id ? { ...currentItem, ...payload } : currentItem));
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast(message);
+      return liveRestaurantRequired("Live API connection and restaurant login are required to update menu items.");
     }
     try {
       const updated = await api(`/api/restaurants/${restaurantId}/menu/items/${item.id}`, { method: "PATCH", token, body: payload });
@@ -8184,10 +8249,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     const source = itemPayloadFromRow(item);
     const payload = { ...source, name: `${source.name} Copy`, available: false, featured: false, recommended: false, options: [] };
     setSavingAction(`item:${item.id}:duplicate`);
-    if (!apiOnline) {
-      setItems((current) => [...current, { ...item, ...payload, id: crypto.randomUUID(), imageUrl: item.imageUrl }]);
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Menu item duplicated in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to duplicate menu items.");
     }
     try {
       const created = await api(`/api/restaurants/${restaurantId}/menu/items`, { method: "POST", token, body: payload });
@@ -8204,10 +8268,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function deleteItem(itemId) {
     setSavingAction(`item:${itemId}:delete`);
-    if (!apiOnline) {
-      setItems((current) => current.filter((item) => item.id !== itemId));
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Menu item deleted in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to delete menu items.");
     }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/menu/items/${itemId}`, { method: "DELETE", token });
@@ -8223,7 +8286,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function updateOrderStatus(order, status) {
-    if (!apiOnline) return setOrders((current) => current.map((currentOrder) => currentOrder.id === order.id ? { ...currentOrder, status } : currentOrder));
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to update orders.");
     try {
       await api(`/api/restaurants/${restaurantId}/orders/${order.id}/status`, { method: "PATCH", token, body: { status } });
       await loadRestaurant();
@@ -8235,7 +8298,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   async function assignDriver(order) {
     const driver = drivers[0];
     if (!driver) return setError("Create a driver before assigning delivery.");
-    if (!apiOnline) return setOrders((current) => current.map((currentOrder) => currentOrder.id === order.id ? { ...currentOrder, delivery: { driver } } : currentOrder));
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to assign drivers.");
     try {
       await api(`/api/restaurants/${restaurantId}/orders/${order.id}/assign-driver`, { method: "POST", token, body: { driverId: driver.id } });
       await loadRestaurant();
@@ -8247,12 +8310,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   async function saveWebsiteBuilder() {
     setWebsiteSaveState("saving");
     setSavingAction("website:save");
-    if (!apiOnline) {
-      setWebsiteDirty(false);
-      setWebsiteSaveState("saved");
-      setWebsiteLastSavedAt(new Date());
+    if (!apiOnline || !token || !restaurantId) {
+      setWebsiteSaveState("failed");
       setSavingAction("");
-      return showToast("Website settings saved in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to save website settings.");
     }
     try {
       const profilePayload = await api(`/api/restaurants/${restaurantId}/profile`, {
@@ -8296,13 +8357,13 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function removeWebsiteImage(field) {
     const isLogo = field === "logoUrl";
+    setSavingAction(`website:${field}:remove`);
+    if (!apiOnline || !token || !restaurantId) {
+      setSavingAction("");
+      return liveRestaurantRequired(`Live API connection and restaurant login are required to remove the ${isLogo ? "logo" : "hero image"}.`);
+    }
     setWebsiteField(field, null);
     if (isLogo) setProfileField("logoUrl", null);
-    setSavingAction(`website:${field}:remove`);
-    if (!apiOnline) {
-      setSavingAction("");
-      return showToast(`${isLogo ? "Logo" : "Hero image"} removed in demo mode.`);
-    }
     try {
       const websitePayload = await api(`/api/restaurants/${restaurantId}/website`, { method: "PATCH", token, body: { [field]: null } });
       setWebsite(websitePayload.website);
@@ -8326,10 +8387,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function saveDomain(data = domain) {
     setSavingAction("domain:save");
-    if (!apiOnline) {
-      setDomain(data);
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Domain settings saved in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to save domain settings.");
     }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/domain`, { method: "PATCH", token, body: data });
@@ -8345,10 +8405,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function verifyDomain() {
     setSavingAction("domain:verify");
-    if (!apiOnline) {
-      setDomain({ ...domain, domainStatus: "VERIFIED", sslStatus: "SSL_PENDING" });
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Domain marked verified in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to verify domains.");
     }
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/domain/verify`, { method: "POST", token, body: { canonicalDomain: domain.customDomain || domain.canonicalDomain } });
@@ -8376,10 +8435,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       return showToast("Enter a valid https social URL.", "bad");
     }
     setSavingAction("social:save");
-    if (!apiOnline) {
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      setError("Live API connection is required to save social links.");
-      return showToast("Live API connection is required to save social links.", "bad");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to save social links.");
     }
     try {
       await api(`/api/restaurants/${restaurantId}/social-links`, { method: "POST", token, body: socialForm });
@@ -8395,7 +8453,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function updateSocialLink(link, updates, message = "Social link updated.") {
-    if (!apiOnline) return showToast("Live API connection is required to update social links.", "bad");
+    if (!apiOnline || !token || !restaurantId) {
+      return liveRestaurantRequired("Live API connection and restaurant login are required to update social links.");
+    }
     setSavingAction(`social:${link.id}:update`);
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/social-links/${link.id}`, { method: "PATCH", token, body: updates });
@@ -8410,7 +8470,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function deleteSocialLink(linkId) {
-    if (!apiOnline) return;
+    if (!apiOnline || !token || !restaurantId) {
+      return liveRestaurantRequired("Live API connection and restaurant login are required to remove social links.");
+    }
     setSavingAction(`social:${linkId}:delete`);
     try {
       await api(`/api/restaurants/${restaurantId}/social-links/${linkId}`, { method: "DELETE", token });
@@ -8426,10 +8488,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function deleteGalleryImage(imageId) {
     setSavingAction(`gallery:${imageId}:delete`);
-    if (!apiOnline) {
-      setGallery((current) => current.filter((image) => image.id !== imageId));
+    if (!apiOnline || !token || !restaurantId) {
       setSavingAction("");
-      return showToast("Gallery photo removed in demo mode.");
+      return liveRestaurantRequired("Live API connection and restaurant login are required to delete gallery photos.");
     }
     try {
       await api(`/api/restaurants/${restaurantId}/gallery/${imageId}`, { method: "DELETE", token });
@@ -8445,7 +8506,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function createEmployee(event) {
     event.preventDefault();
-    if (!apiOnline) return setError("Live API connection is required to create employees.");
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to create employees.");
     try {
       await api(`/api/restaurants/${restaurantId}/employees`, { method: "POST", token, body: employeeForm });
       setEmployeeForm({ name: "", email: "", phone: "", role: "KITCHEN_STAFF" });
@@ -8456,7 +8517,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function disableEmployee(employee) {
-    if (!apiOnline) return;
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to disable employees.");
     try {
       await api(`/api/restaurants/${restaurantId}/employees/${employee.id}/disable`, { method: "PATCH", token });
       await loadRestaurant();
@@ -8467,7 +8528,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function assignDispatchDelivery(delivery, driverId) {
     if (!driverId) return setError("Select or create an available driver first.");
-    if (!apiOnline) return setError("Live API connection is required to assign deliveries.");
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to assign deliveries.");
     try {
       await api(`/api/restaurants/${restaurantId}/deliveries/${delivery.id}/assign-driver`, { method: "PATCH", token, body: { driverId } });
       await loadRestaurant();
@@ -8477,7 +8538,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function cancelDispatchAssignment(delivery) {
-    if (!apiOnline) return setError("Live API connection is required to cancel dispatch assignments.");
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to cancel dispatch assignments.");
     try {
       await api(`/api/restaurants/${restaurantId}/deliveries/${delivery.id}/cancel-assignment`, { method: "PATCH", token });
       await loadRestaurant();
@@ -8487,7 +8548,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function savePrinterSettings(next = printerSettings) {
-    if (!apiOnline) return setPrinterSettings(next);
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to save printer settings.");
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/printing`, { method: "PATCH", token, body: next });
       setPrinterSettings(payload.settings);
@@ -8496,7 +8557,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     }
   }
 
-  const restaurantBasePath = profile.slug ? `/restaurant/${profile.slug}` : restaurantId ? `/restaurant/${restaurantId}` : "/restaurant";
+  const restaurantBasePath = profile.slug || initialSlug ? `/restaurant/${profile.slug || initialSlug}` : "/restaurant";
 
   function receiptPathForOrder(order, kind = "receipt", { reprint = false } = {}) {
     const params = new window.URLSearchParams();
@@ -8520,15 +8581,14 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setError("Select an order before printing a receipt.");
       return showToast("Select an order before printing a receipt.", "bad");
     }
-    if (!apiOnline) {
-      setError("Live API is required to preview and print receipts.");
-      return showToast("Live API is required to preview and print receipts.", "bad");
+    if (!apiOnline || !token || !restaurantId) {
+      return liveRestaurantRequired("Live API connection and restaurant login are required to preview and print receipts.");
     }
     navigateInApp(receiptPathForOrder(order, kind, options));
   }
 
   async function saveNotificationSettings(next = notificationSettings) {
-    if (!apiOnline) return setNotificationSettings(next);
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to save notification settings.");
     try {
       const payload = await api(`/api/restaurants/${restaurantId}/notification-settings`, { method: "PATCH", token, body: next });
       setNotificationSettings(payload.settings);
@@ -8539,10 +8599,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function createDeliveryZone(event) {
     event.preventDefault();
-    if (!apiOnline) {
-      setDeliveryZones((current) => [...current, { ...zoneForm, id: crypto.randomUUID(), active: true }]);
-      return setZoneForm({ name: `Zone ${String.fromCharCode(65 + deliveryZones.length + 1)}`, radiusMiles: 3, deliveryFeeCents: 399, minimumOrderCents: 1500 });
-    }
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to create delivery zones.");
     try {
       await api(`/api/restaurants/${restaurantId}/delivery-zones`, { method: "POST", token, body: zoneForm });
       setZoneForm({ name: `Zone ${String.fromCharCode(65 + deliveryZones.length + 1)}`, radiusMiles: 3, deliveryFeeCents: 399, minimumOrderCents: 1500 });
@@ -8553,7 +8610,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function disableDeliveryZone(zone) {
-    if (!apiOnline) return setDeliveryZones((current) => current.filter((item) => item.id !== zone.id));
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to disable delivery zones.");
     try {
       await api(`/api/restaurants/${restaurantId}/delivery-zones/${zone.id}`, { method: "DELETE", token });
       await loadRestaurant();
@@ -8564,10 +8621,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   async function createInventoryItem(event) {
     event.preventDefault();
-    if (!apiOnline) {
-      setInventoryItems((current) => [...current, { ...inventoryForm, id: crypto.randomUUID(), active: true }]);
-      return setInventoryForm({ name: "", quantity: 0, unit: "unit", costCents: 0 });
-    }
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to create inventory items.");
     try {
       await api(`/api/restaurants/${restaurantId}/inventory`, { method: "POST", token, body: inventoryForm });
       setInventoryForm({ name: "", quantity: 0, unit: "unit", costCents: 0 });
@@ -8578,7 +8632,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }
 
   async function updateInventoryItem(item, data) {
-    if (!apiOnline) return setInventoryItems((current) => current.map((currentItem) => currentItem.id === item.id ? { ...currentItem, ...data } : currentItem));
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to update inventory items.");
     try {
       await api(`/api/restaurants/${restaurantId}/inventory/${item.id}`, { method: "PATCH", token, body: data });
       await loadRestaurant();

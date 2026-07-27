@@ -9,19 +9,24 @@ function assert(condition, message) {
 }
 
 const requiredDestinations = [
-  "settings-profile",
+  "settings-account",
+  "settings-restaurant-profile",
+  "settings-business-hours",
   "settings-website-branding",
   "settings-menu-catalog",
   "settings-gallery-social",
   "settings-ordering",
-  "settings-delivery",
+  "settings-delivery-zones",
   "settings-domains-seo",
   "settings-payments",
-  "settings-staff-access",
+  "settings-receipts-printing",
+  "settings-staff-roles",
   "settings-notifications",
-  "settings-billing",
-  "settings-security",
-  "settings-advanced"
+  "settings-billing-subscription",
+  "settings-security-audit",
+  "settings-pos-kiosk",
+  "settings-integrations",
+  "settings-developer-api"
 ];
 
 for (const destination of requiredDestinations) {

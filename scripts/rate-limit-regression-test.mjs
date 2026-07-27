@@ -14,7 +14,10 @@ function assertIncludes(fragment, label = fragment) {
   "restaurantSafeReadPathPattern",
   "posSafeReadPathPattern",
   "rateLimit",
-  "skip: (req) => req.method === \"GET\" && isSafeReadBurstPath(req)"
+  "skip: (req) => req.method === \"GET\" && isSafeReadBurstPath(req)",
+  "function isCorsOriginAllowed",
+  "CORS_ORIGIN_DENIED",
+  "callback(null, isCorsOriginAllowed(origin))"
 ].forEach((fragment) => assertIncludes(fragment));
 
 if (server.includes("limit: 1000") || server.includes("max: 1000")) {
