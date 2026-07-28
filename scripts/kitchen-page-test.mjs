@@ -24,13 +24,16 @@ function sliceBetween(content, startNeedle, endNeedle) {
 
 const kitchenRoute = sliceBetween(app, "if (isKitchenRoute)", "\n  if (isAdminRoute)");
 const restaurantRoute = sliceBetween(app, "if (isRestaurantRoute || isSiteAdminRoute)", "\n  if (isSiteRoute)");
+const restaurantApp = sliceBetween(app, "function RestaurantApp(", "\nfunction DevelopmentEntitlementSimulator");
+const kitchenApp = sliceBetween(app, "function KitchenApp(", "\nfunction CustomerApp");
 
 assertCheck(packageJson.scripts?.["test:kitchen-page"] === "node scripts/kitchen-page-test.mjs", "Kitchen page test script is registered");
 assertCheck(app.includes('kitchen: {') && app.includes('title: "Kitchen"'), "Kitchen page is in the restaurant route inventory");
 assertCheck(app.includes('path === "/kitchen" || path.startsWith("/kitchen/")'), "Legacy /kitchen route maps to the kitchen page");
 assertCheck(kitchenRoute.includes("<RestaurantAppShell") && kitchenRoute.includes('activePage="kitchen"'), "Standalone kitchen route uses the shared restaurant shell");
 assertCheck(restaurantRoute.includes('restaurantPage === "kitchen"') && restaurantRoute.includes("<KitchenApp"), "Restaurant kitchen page renders KitchenApp content");
-assertCheck(app.includes('id="kitchen"') && app.includes('id="kitchen-summary"'), "Kitchen workspace keeps the KDS panel anchors");
+assertCheck(kitchenApp.includes('id="kitchen"') && kitchenApp.includes('id="kitchen-summary"'), "Kitchen workspace keeps the KDS panel anchors inside KitchenApp");
+assertCheck(!restaurantApp.includes('id="kitchen-summary"'), "RestaurantApp does not mount the Kitchen summary on non-Kitchen routes");
 assertCheck(app.includes("Print Kitchen Ticket") && app.includes("kdsStatusFor"), "Kitchen page keeps ticket printing and KDS status logic");
 assertCheck(!app.includes("function kitchenNavigation"), "Kitchen no longer owns a page-specific navbar helper");
 

@@ -142,12 +142,13 @@ const onboardingSteps = [
 const restaurantSettingsLinks = [
   { id: "account", label: "Account", detail: "Owner identity, session, password recovery, and account access.", status: "READ_ONLY" },
   { id: "restaurant-profile", label: "Restaurant Profile", detail: "Business name, public contact details, address, timezone, and public identity.", status: "IMPLEMENTED" },
-  { id: "locations", label: "Locations", detail: "Primary location today and multi-location foundation for Enterprise tenants.", status: "READ_ONLY", feature: "MULTI_LOCATION" },
+  { id: "locations", label: "Locations", detail: "Primary location details, address, contact information, timezone, and multi-location foundation.", status: "IMPLEMENTED" },
   { id: "business-hours", label: "Business Hours", detail: "Store hours used by the public website and ordering surfaces.", status: "IMPLEMENTED" },
   { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order readiness, and kitchen workflow configuration.", status: "READ_ONLY" },
   { id: "menu-catalog", label: "Menu/Catalog", detail: "Menu categories, food items, photos, modifiers, availability, and food catalog controls.", status: "IMPLEMENTED", feature: "MENU_MANAGEMENT" },
   { id: "payments", label: "Payments", detail: "Customer checkout, Stripe Connect, and payout readiness.", status: "READ_ONLY", feature: "ORDER_PAYMENTS" },
   { id: "receipts-printing", label: "Receipts & Printing", detail: "Kitchen tickets, customer receipts, printer targets, and future thermal printer integrations.", status: "IMPLEMENTED", feature: "PRINTING" },
+  { id: "inventory", label: "Inventory", detail: "Ingredients, stock levels, units, cost tracking, and future automatic depletion.", status: "IMPLEMENTED", feature: "INVENTORY" },
   { id: "website-branding", label: "Website & Branding", detail: "Logo, hero image, brand colors, homepage content, and section visibility.", status: "IMPLEMENTED" },
   { id: "gallery-social", label: "Gallery & Social", detail: "Public gallery photos, captions, visibility, and restaurant social links.", status: "IMPLEMENTED" },
   { id: "domains-seo", label: "Domains & SEO", detail: "Loohar subdomain, custom domain, SSL state, canonical URL, and search metadata.", status: "IMPLEMENTED", feature: "CUSTOM_DOMAIN" },
@@ -162,6 +163,33 @@ const restaurantSettingsLinks = [
   { id: "integrations", label: "Integrations", detail: "Future partner integrations for delivery, accounting, marketing, and POS ecosystems.", status: "COMING_SOON" },
   { id: "developer-api", label: "Developer/API", detail: "Future API keys, webhook delivery logs, and developer docs.", status: "COMING_SOON" }
 ];
+const restaurantSettingsGroups = [
+  { id: "organization", label: "Organization", items: ["account", "restaurant-profile", "locations", "business-hours", "billing-subscription"] },
+  { id: "operations", label: "Operations", items: ["menu-catalog", "ordering", "payments", "pos-kiosk", "receipts-printing", "inventory", "delivery-zones"] },
+  { id: "people", label: "People", items: ["staff-roles", "customers"] },
+  { id: "growth", label: "Growth", items: ["loyalty", "coupons", "notifications", "website-branding", "gallery-social", "domains-seo"] },
+  { id: "governance", label: "Governance", items: ["reports", "security-audit", "integrations", "developer-api"] }
+];
+
+function groupRestaurantSettingsLinks(links = restaurantSettingsLinks) {
+  const normalized = links.map((item) => ({ ...item, id: normalizeRestaurantSettingsSectionId(item.id) }));
+  const used = new Set();
+  const groups = restaurantSettingsGroups
+    .map((group) => ({
+      ...group,
+      items: group.items
+        .map(normalizeRestaurantSettingsSectionId)
+        .map((id) => {
+          const match = normalized.find((item) => item.id === id);
+          if (match) used.add(match.id);
+          return match;
+        })
+        .filter(Boolean)
+    }))
+    .filter((group) => group.items.length);
+  const ungrouped = normalized.filter((item) => !used.has(item.id));
+  return ungrouped.length ? [...groups, { id: "other", label: "Other", items: ungrouped }] : groups;
+}
 const socialPlatformLabels = {
   facebook: "Facebook",
   instagram: "Instagram",
@@ -227,8 +255,17 @@ const emptyRestaurantStats = () => ({
 const emptyCustomerSummary = () => ({
   totalCustomers: 0,
   newCustomersThisMonth: 0,
+  newCustomersInRange: 0,
+  returningCustomers: 0,
   repeatCustomerPercentage: 0,
-  vipCustomerCount: 0
+  vipCustomerCount: 0,
+  activeCustomers: 0,
+  atRiskCustomers: 0,
+  inactiveCustomers: 0,
+  lifetimeSpendCents: 0,
+  averageOrderValueCents: 0,
+  contactableCustomers: 0,
+  guestCustomers: 0
 });
 const emptyLoyaltyAnalytics = () => ({ analytics: {}, rewards: [], topCustomers: [] });
 const emptyPromotionsAnalytics = () => ({ activePromotions: [], redemptions: [], performance: {} });
@@ -247,8 +284,89 @@ const emptyDomainSettings = (slug = "") => ({
   domainStatus: "NOT_CONFIGURED",
   sslStatus: "NOT_CONFIGURED"
 });
-const emptyDispatchCenter = () => ({ availableDrivers: [], busyDrivers: [], offlineDrivers: [], deliveries: [] });
-const emptyOperationsReport = () => ({ sales: {}, items: {}, customers: {}, drivers: [] });
+const emptyDispatchCenter = () => ({
+  drivers: [],
+  availableDrivers: [],
+  busyDrivers: [],
+  offlineDrivers: [],
+  deliveries: [],
+  summary: {
+    totalDrivers: 0,
+    availableDrivers: 0,
+    busyDrivers: 0,
+    offlineDrivers: 0,
+    activeDeliveries: 0,
+    completedDeliveries: 0,
+    deliveryPayoutCents: 0,
+    driverTipsCents: 0,
+    averageDeliveryMinutes: null,
+    onTimeStatus: "Not Tracked",
+    mileageStatus: "Not Tracked",
+    schedulingStatus: "Setup Required"
+  }
+});
+const emptyOperationsReport = () => ({
+  range: {},
+  sales: {
+    grossSalesCents: 0,
+    netSalesCents: 0,
+    totalCollectedCents: 0,
+    dailySalesCents: 0,
+    weeklySalesCents: 0,
+    monthlySalesCents: 0,
+    totalOrders: 0,
+    completedOrders: 0,
+    openOrders: 0,
+    cancelledOrders: 0,
+    refundedOrders: 0,
+    averageOrderValueCents: 0,
+    discountsCents: 0,
+    taxesCents: 0,
+    tipsCents: 0,
+    restaurantTipsCents: 0,
+    driverTipsCents: 0,
+    deliveryFeesCents: 0,
+    serviceFeesCents: 0,
+    refundsCents: 0,
+    deliveryOrders: 0,
+    pickupOrders: 0,
+    dineInOrders: 0,
+    walkInOrders: 0,
+    completionRate: 0,
+    cancellationRate: 0,
+    refundRate: 0,
+    laborCostStatus: "Setup Required",
+    estimatedProfitStatus: "Setup Required"
+  },
+  items: { topSellingItems: [], leastSellingItems: [], revenuePerItem: [], mostProfitableCategories: [] },
+  customers: emptyCustomerSummary(),
+  drivers: [],
+  driverSummary: emptyDispatchCenter().summary,
+  charts: {
+    salesTrend: [],
+    ordersTrend: [],
+    customerGrowth: [],
+    loyaltyGrowth: [],
+    orderTypeBreakdown: [],
+    refundsTrend: [],
+    tipsTrend: [],
+    driverPerformance: []
+  },
+  drilldowns: { recentOrders: [], refunds: [], ordersByStatus: [] },
+  definitions: {}
+});
+const withDefaultDispatch = (payload = {}) => ({ ...emptyDispatchCenter(), ...(payload || {}), summary: { ...emptyDispatchCenter().summary, ...(payload?.summary || {}) } });
+const withDefaultOperationsReport = (payload = {}) => ({
+  ...emptyOperationsReport(),
+  ...(payload || {}),
+  sales: { ...emptyOperationsReport().sales, ...(payload?.sales || {}) },
+  items: { ...emptyOperationsReport().items, ...(payload?.items || {}) },
+  customers: { ...emptyOperationsReport().customers, ...(payload?.customers || {}) },
+  driverSummary: { ...emptyOperationsReport().driverSummary, ...(payload?.driverSummary || {}) },
+  charts: { ...emptyOperationsReport().charts, ...(payload?.charts || {}) },
+  drilldowns: { ...emptyOperationsReport().drilldowns, ...(payload?.drilldowns || {}) },
+  definitions: { ...emptyOperationsReport().definitions, ...(payload?.definitions || {}) }
+});
 const emptyPrinterSettings = () => ({});
 const emptyNotificationSettings = () => ({});
 
@@ -496,6 +614,54 @@ function readable(value = "") {
   return value.toLowerCase().replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
+function integer(value = 0) {
+  return Number(value || 0).toLocaleString();
+}
+
+function percentText(value = 0) {
+  const numeric = Number(value || 0);
+  return `${Number.isInteger(numeric) ? numeric : numeric.toFixed(1)}%`;
+}
+
+function dateText(value) {
+  if (!value) return "No data";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "No data" : date.toLocaleDateString();
+}
+
+function minutesText(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "Not Tracked";
+  return `${Math.round(Number(value))} min`;
+}
+
+function safeCustomerContact(customer = {}) {
+  return customer.safeEmail || customer.email || customer.safePhone || customer.phone || customer.contactLabel || "Customer contact unavailable";
+}
+
+function metricMax(rows = [], key = "value") {
+  return Math.max(1, ...rows.map((row) => Number(row?.[key] || 0)));
+}
+
+function chartValuePercent(value, max) {
+  return `${Math.max(3, Math.min(100, Math.round((Number(value || 0) / Math.max(1, Number(max || 1))) * 100)))}%`;
+}
+
+function locationDraftFrom(location = {}, profile = {}) {
+  return {
+    name: location.name || profile.businessName || profile.name || "Primary location",
+    address: location.address || profile.address || "",
+    address2: location.address2 || "",
+    city: location.city || profile.city || "",
+    state: location.state || profile.state || "",
+    zip: location.zip || profile.zip || "",
+    country: location.country || "US",
+    phone: location.phone || profile.phone || "",
+    timezone: location.timezone || profile.timezone || "America/Denver",
+    active: location.active !== false,
+    primary: location.primary !== false
+  };
+}
+
 function planFor(restaurant = {}) {
   return restaurant.subscriptions?.find((subscription) => subscription.active !== false)?.plan?.code || restaurant.subscriptions?.[0]?.plan?.code || "STARTER";
 }
@@ -686,7 +852,7 @@ function restaurantSettingsSectionFromPath(path = "", hash = "") {
   if (parts[0] === "restaurant" && parts[2] === "settings" && parts[3]) return normalizeRestaurantSettingsSectionId(parts[3]);
   if (parts[0] === "restaurant" && restaurantSettingsChildRoutes.has(parts[2])) return normalizeRestaurantSettingsSectionId(parts[2]);
   if (hash) return normalizeRestaurantSettingsSectionId(hash);
-  return "account";
+  return "";
 }
 
 function restaurantSettingPath(basePath = "/restaurant", sectionId = "account") {
@@ -993,6 +1159,37 @@ function EmptyState({ title, detail }) {
     <div className="empty-state">
       <p className="font-bold text-ink">{title}</p>
       <p className="mt-1 text-sm text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function MetricBarList({ title, description, rows = [], valueKey = "value", labelKey = "label", valueFormatter = (value) => integer(value), emptyTitle = "No data yet" }) {
+  const max = metricMax(rows, valueKey);
+  return (
+    <div className="metric-bar-card">
+      <div className="metric-bar-card-head">
+        <h4>{title}</h4>
+        {description ? <p>{description}</p> : null}
+      </div>
+      <div className="metric-bar-list">
+        {rows.length === 0 ? (
+          <EmptyState title={emptyTitle} detail="Live records will appear here once activity is available." />
+        ) : rows.map((row, index) => {
+          const label = row[labelKey] || row.label || row.name || row.date || `Row ${index + 1}`;
+          const value = Number(row[valueKey] ?? row.value ?? 0);
+          return (
+            <div className="metric-bar-row" key={`${label}-${index}`}>
+              <div className="metric-bar-row-head">
+                <span>{label}</span>
+                <strong>{valueFormatter(value, row)}</strong>
+              </div>
+              <div className="metric-bar-track" aria-hidden="true">
+                <span style={{ width: chartValuePercent(value, max) }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2354,6 +2551,19 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
   const roleLabel = readable(user?.role || "Restaurant user");
   const pageInfo = restaurantPageDefinitions[safePage];
   const publicWebsitePath = restaurantSlug ? publicPathForSlug(restaurantSlug) : "";
+  const navHash = typeof window !== "undefined" ? window.location.hash : "";
+  const restaurantBasePathForShell = restaurantSlug ? `/restaurant/${restaurantSlug}` : "/restaurant";
+  const selectedSettingsSectionForShell = safePage === "settings" ? restaurantSettingsSectionFromPath(navPath, navHash) : "";
+  const shellSettingsLinks = restaurantSettingsLinks.map((item) => {
+    const normalizedId = normalizeRestaurantSettingsSectionId(item.id);
+    return {
+      ...item,
+      id: normalizedId,
+      href: item.id === "payments" ? `${restaurantBasePathForShell}/onboarding#payments` : restaurantSettingPath(restaurantBasePathForShell, normalizedId),
+      selected: selectedSettingsSectionForShell === normalizedId
+    };
+  });
+  const shellSettingsGroups = groupRestaurantSettingsLinks(shellSettingsLinks);
 
   function openDrawer() {
     previousFocusRef.current = document.activeElement;
@@ -2395,12 +2605,32 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
   function renderSidebarNav(onNavigate) {
     return (
       <nav className="restaurant-shell-nav" aria-label="Restaurant operations navigation">
-        {navItems.map(({ href, label, icon: Icon, active }) => (
-          <a className={`restaurant-shell-nav-item ${active ? "active" : ""}`} href={href} aria-current={active ? "page" : undefined} key={`${label}-${href}`} onClick={onNavigate}>
-            {Icon ? <Icon size={18} aria-hidden="true" /> : null}
-            <span>{label}</span>
-          </a>
-        ))}
+        {navItems.map(({ href, label, icon: Icon, active }) => {
+          const isSettingsItem = label === "Settings";
+          return (
+            <div className="restaurant-shell-nav-block" key={`${label}-${href}`}>
+              <a className={`restaurant-shell-nav-item ${active ? "active" : ""}`} href={href} aria-current={active ? "page" : undefined} onClick={onNavigate}>
+                {Icon ? <Icon size={18} aria-hidden="true" /> : null}
+                <span>{label}</span>
+              </a>
+              {isSettingsItem && active ? (
+                <div className="restaurant-settings-subnav" aria-label="Restaurant settings sections">
+                  {shellSettingsGroups.map((group) => (
+                    <div className="restaurant-settings-subnav-group" key={group.id}>
+                      <span>{group.label}</span>
+                      {group.items.map((item) => (
+                        <a className={`restaurant-settings-subnav-link ${item.selected ? "active" : ""}`} href={item.href} key={item.id} onClick={onNavigate}>
+                          {item.label}
+                          <b>{item.status === "COMING_SOON" ? "Soon" : item.status === "READ_ONLY" ? "View" : ""}</b>
+                        </a>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </nav>
     );
   }
@@ -7537,6 +7767,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const [printerSettings, setPrinterSettings] = useState(() => emptyPrinterSettings());
   const [notificationSettings, setNotificationSettings] = useState(() => emptyNotificationSettings());
   const [operationsReport, setOperationsReport] = useState(() => emptyOperationsReport());
+  const [reportRange, setReportRange] = useState("30d");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerSegmentFilter, setCustomerSegmentFilter] = useState("ALL");
+  const [customerTypeFilter, setCustomerTypeFilter] = useState("ALL");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [selectedDriverId, setSelectedDriverId] = useState("");
+  const [locationDrafts, setLocationDrafts] = useState({});
+  const [savingLocationId, setSavingLocationId] = useState("");
+  const [savingCustomerId, setSavingCustomerId] = useState("");
   const [featureLocks, setFeatureLocks] = useState({});
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
@@ -7599,6 +7838,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     setPrinterSettings(emptyPrinterSettings());
     setNotificationSettings(emptyNotificationSettings());
     setOperationsReport(emptyOperationsReport());
+    setSelectedCustomerId("");
+    setSelectedDriverId("");
+    setLocationDrafts({});
+    setSavingLocationId("");
+    setSavingCustomerId("");
     setFeatureLocks({});
     setWebsiteDirty(false);
     setWebsiteSaveState("idle");
@@ -7799,33 +8043,41 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           return fallback;
         }
       };
+      const reportParams = new window.URLSearchParams();
+      if (reportRange) reportParams.set("range", reportRange);
+      const reportQuery = reportParams.toString() ? `?${reportParams.toString()}` : "";
+      const customerParams = new window.URLSearchParams(reportParams);
+      customerParams.set("pageSize", "100");
+      const customerQuery = `?${customerParams.toString()}`;
       const [dashboardPayload, profilePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload] = await Promise.all([
         api(`/api/restaurants/${restaurantId}/dashboard`, { token }),
         api(`/api/restaurants/${restaurantId}/profile`, { token }),
         api(`/api/restaurants/${restaurantId}/menu/categories`, { token }),
         api(`/api/restaurants/${restaurantId}/menu/items`, { token }),
         api(`/api/restaurants/${restaurantId}/orders`, { token }),
-        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/drivers`, { drivers: [] }),
-        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers`, { customers: [] }),
-        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers/summary`, { totalCustomers: 0, newCustomersThisMonth: 0, repeatCustomerPercentage: 0, vipCustomerCount: 0 }),
+        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/drivers${reportQuery}`, { drivers: [], summary: emptyDispatchCenter().summary }),
+        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers${customerQuery}`, { customers: [], summary: emptyCustomerSummary() }),
+        optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers/summary${reportQuery}`, emptyCustomerSummary()),
         optionalApi("LOYALTY", `/api/restaurants/${restaurantId}/loyalty`, { analytics: {}, rewards: [], topCustomers: [] }),
         optionalApi("COUPONS", `/api/restaurants/${restaurantId}/promotions/analytics`, { activePromotions: [], redemptions: [], performance: {} }),
-        optionalApi("ANALYTICS", `/api/restaurants/${restaurantId}/analytics`, { metrics: {}, salesTrend: [], ordersTrend: [], customerGrowth: [], loyaltyGrowth: [] }),
+        optionalApi("ANALYTICS", `/api/restaurants/${restaurantId}/analytics${reportQuery}`, { metrics: {}, salesTrend: [], ordersTrend: [], customerGrowth: [], loyaltyGrowth: [] }),
         optionalApi("MENU_INSIGHTS", `/api/restaurants/${restaurantId}/menu/insights`, { bestSellingItems: [], worstSellingItems: [], categoryPerformance: [] }),
-        optionalApi("MULTI_LOCATION", `/api/restaurants/${restaurantId}/locations`, { locations: [] }),
+        api(`/api/restaurants/${restaurantId}/locations`, { token }),
         api(`/api/restaurants/${restaurantId}/website`, { token }),
         optionalApi("CUSTOM_DOMAIN", `/api/restaurants/${restaurantId}/domain`, { domain: emptyDomainSettings(initialProfile.slug) }),
         api(`/api/restaurants/${restaurantId}/gallery`, { token }),
         api(`/api/restaurants/${restaurantId}/social-links`, { token }),
         optionalApi("EMPLOYEE_MANAGEMENT", `/api/restaurants/${restaurantId}/employees`, { employees: [] }),
-        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/dispatch`, { availableDrivers: [], busyDrivers: [], offlineDrivers: [], deliveries: [] }),
+        optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/dispatch${reportQuery}`, emptyDispatchCenter()),
         optionalApi("DELIVERY_ZONES", `/api/restaurants/${restaurantId}/delivery-zones`, { zones: [] }),
         optionalApi("INVENTORY", `/api/restaurants/${restaurantId}/inventory`, { items: [] }),
         optionalApi("PRINTING", `/api/restaurants/${restaurantId}/printing`, { settings: {} }),
         optionalApi("NOTIFICATIONS", `/api/restaurants/${restaurantId}/notification-settings`, { settings: {} }),
-        optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations`, { sales: {}, items: {}, customers: {}, drivers: [] })
+        optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations${reportQuery}`, emptyOperationsReport())
       ]);
       if (requestId !== loadRestaurantRequestIdRef.current) return null;
+      const nextProfile = profilePayload.restaurant || initialProfile;
+      const nextLocations = locationsPayload.locations || [];
       setFeatureLocks(lockedFeatures);
       setStats(dashboardPayload);
       setProfile(profilePayload.restaurant || initialProfile);
@@ -7834,23 +8086,24 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       setOrders(ordersPayload.orders || []);
       setDrivers(driversPayload.drivers || []);
       setCustomers(customersPayload.customers || []);
-      setCustomerSummary(customerSummaryPayload);
+      setCustomerSummary(customersPayload.summary || customerSummaryPayload || emptyCustomerSummary());
       setLoyalty(loyaltyPayload);
       setPromotions(promotionsPayload);
       setGrowthAnalytics(analyticsPayload);
       setMenuInsights(menuInsightsPayload);
-      setLocations(locationsPayload.locations || []);
+      setLocations(nextLocations);
+      setLocationDrafts(Object.fromEntries(nextLocations.map((location) => [location.id, locationDraftFrom(location, nextProfile)])));
       setWebsite(websitePayload.website || emptyWebsiteSettings());
-      setDomain(domainPayload.domain || emptyDomainSettings((profilePayload.restaurant || initialProfile).slug));
+      setDomain(domainPayload.domain || emptyDomainSettings(nextProfile.slug));
       setGallery(galleryPayload.gallery || []);
       setSocialLinks(socialPayload.socialLinks || []);
       setEmployees(employeesPayload.employees || []);
-      setDispatch(dispatchPayload || emptyDispatchCenter());
+      setDispatch(withDefaultDispatch(dispatchPayload));
       setDeliveryZones(zonesPayload.zones || []);
       setInventoryItems(inventoryPayload.items || []);
       setPrinterSettings(printingPayload.settings || {});
       setNotificationSettings(notificationsPayload.settings || {});
-      setOperationsReport(operationsPayload || emptyOperationsReport());
+      setOperationsReport(withDefaultOperationsReport(operationsPayload));
       return true;
       } catch (loadError) {
         if (requestId === loadRestaurantRequestIdRef.current) {
@@ -7866,9 +8119,68 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     return request;
   }
 
+  function updateCustomerDraft(customerId, updates) {
+    setCustomers((current) => current.map((customer) => customer.id === customerId ? { ...customer, ...updates } : customer));
+  }
+
+  async function saveCustomerNotes(customer) {
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to save customer notes.");
+    setSavingCustomerId(customer.id);
+    try {
+      const payload = await api(`/api/restaurants/${restaurantId}/customers/${customer.id}/notes`, {
+        method: "PATCH",
+        token,
+        body: { notes: customer.notes || "", segment: customer.segment }
+      });
+      const updatedCustomer = payload.customer || {};
+      setCustomers((current) => current.map((row) => row.id === customer.id ? {
+        ...row,
+        notes: updatedCustomer.notes ?? customer.notes ?? "",
+        segment: updatedCustomer.segment ?? customer.segment
+      } : row));
+      showToast("Customer profile saved.");
+    } catch (saveError) {
+      setError(saveError.message);
+      showToast(saveError.message, "bad");
+    } finally {
+      setSavingCustomerId("");
+    }
+  }
+
+  function updateLocationDraft(location, updates) {
+    setLocationDrafts((current) => ({
+      ...current,
+      [location.id]: { ...locationDraftFrom(location, profile), ...(current[location.id] || {}), ...updates }
+    }));
+  }
+
+  async function saveLocation(location) {
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to save location settings.");
+    const draft = locationDrafts[location.id] || locationDraftFrom(location, profile);
+    setSavingLocationId(location.id);
+    try {
+      const payload = await api(`/api/restaurants/${restaurantId}/locations/${location.id}`, {
+        method: "PATCH",
+        token,
+        body: draft
+      });
+      const nextLocations = payload.locations || (payload.location ? locations.map((row) => row.id === location.id ? payload.location : row) : locations);
+      const nextProfile = payload.restaurant || profile;
+      setLocations(nextLocations);
+      setProfile(nextProfile);
+      setLocationDrafts(Object.fromEntries(nextLocations.map((row) => [row.id, locationDraftFrom(row, nextProfile)])));
+      showToast("Location saved.");
+    } catch (saveError) {
+      setError(saveError.message);
+      showToast(saveError.message, "bad");
+    } finally {
+      setSavingLocationId("");
+    }
+  }
+
   useEffect(() => {
     loadRestaurant({ force: true });
-  }, [apiOnline, token, restaurantId]);
+  }, [apiOnline, token, restaurantId, reportRange]);
 
   useEffect(() => {
     if (!apiOnline || !restaurantId) return undefined;
@@ -8702,6 +9014,38 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
     { label: "Website", detail: "Edit branding, website content, and gallery.", icon: Store, href: restaurantSettingPath(restaurantBasePath, "website-branding"), value: website.websiteEnabled === false ? "Disabled" : "Active" },
     { label: "Menu", detail: "Manage categories, food items, photos, and availability.", icon: MenuIcon, href: restaurantSettingPath(restaurantBasePath, "menu-catalog"), value: items.length }
   ];
+  const isDashboardPage = currentRestaurantPage === "dashboard";
+  const isOrdersPage = currentRestaurantPage === "orders";
+  const isCustomersPage = currentRestaurantPage === "customers";
+  const isDriversPage = currentRestaurantPage === "drivers";
+  const isReportsPage = currentRestaurantPage === "reports";
+  const isSettingsPage = currentRestaurantPage === "settings";
+  const isSettingsCenterPage = isSettingsPage && !selectedSettingsSectionId;
+  const showSettingsSection = (sectionId) => isSettingsPage && selectedSettingsSectionId === normalizeRestaurantSettingsSectionId(sectionId);
+  const settingsCenterGroups = groupRestaurantSettingsLinks(settingsCenterLinks);
+  const filteredCustomers = customers.filter((customer) => {
+    const query = customerSearch.trim().toLowerCase();
+    const haystack = [
+      customer.safeName || customer.name,
+      safeCustomerContact(customer),
+      customer.segment,
+      customer.computedSegment,
+      customer.customerType,
+      customer.notes
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (query && !haystack.includes(query)) return false;
+    if (customerSegmentFilter !== "ALL" && customer.segment !== customerSegmentFilter && customer.computedSegment !== customerSegmentFilter) return false;
+    if (customerTypeFilter !== "ALL" && customer.customerType !== customerTypeFilter) return false;
+    return true;
+  });
+  const selectedCustomer = filteredCustomers.find((customer) => customer.id === selectedCustomerId) || filteredCustomers[0] || null;
+  const dispatchWithDefaults = withDefaultDispatch(dispatch);
+  const dispatchSummary = dispatchWithDefaults.summary || emptyDispatchCenter().summary;
+  const driverRoster = dispatchWithDefaults.drivers?.length ? dispatchWithDefaults.drivers : drivers;
+  const selectedDriver = driverRoster.find((driver) => driver.id === selectedDriverId) || driverRoster[0] || null;
+  const operationsWithDefaults = withDefaultOperationsReport(operationsReport);
+  const reportSales = operationsWithDefaults.sales || {};
+  const reportCharts = operationsWithDefaults.charts || {};
   const receiptRouteMatch = window.location.pathname.match(/^\/restaurant\/[^/]+\/orders\/([^/]+)\/receipt\/?$/);
 
   if (receiptRouteMatch) {
@@ -8746,13 +9090,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             {entitlementSummary.subscriptionStatus ? <> - Status: <strong className="text-ink">{readable(entitlementSummary.subscriptionStatus)}</strong></> : null}
           </div>
         ) : null}
-        <div className="grid gap-4 md:grid-cols-4">
-        <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
-        <Stat icon={ReceiptText} label="Today's sales" value={money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || orders.reduce((sum, order) => sum + order.totalCents, 0))} detail="Tips separated" />
-        <Stat icon={Truck} label="Available drivers" value={stats.activeDrivers ?? drivers.filter((driver) => driver.available).length} detail="Internal fleet" />
-        <Stat icon={TicketPercent} label="Orders today" value={stats.ordersToday ?? orders.length} detail="Pickup and delivery" />
-      </div>
-      {currentRestaurantPage === "dashboard" ? (
+        {isDashboardPage ? (
+          <div className="grid gap-4 md:grid-cols-4">
+            <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
+            <Stat icon={ReceiptText} label="Today's sales" value={money(stats.sales?.amountCents || stats.sales?.restaurantNetCents || orders.reduce((sum, order) => sum + order.totalCents, 0))} detail="Tips separated" />
+            <Stat icon={Truck} label="Available drivers" value={stats.activeDrivers ?? drivers.filter((driver) => driver.available).length} detail="Internal fleet" />
+            <Stat icon={TicketPercent} label="Orders today" value={stats.ordersToday ?? orders.length} detail="Pickup and delivery" />
+          </div>
+        ) : null}
+      {isDashboardPage ? (
         <div className="restaurant-dashboard-shortcuts" aria-label="Restaurant dashboard shortcuts">
           {dashboardShortcuts.map(({ label, detail, icon: Icon, href, value }) => (
             <a className="restaurant-dashboard-shortcut" href={href} key={label}>
@@ -8766,7 +9112,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           ))}
         </div>
       ) : null}
+      {(showSettingsSection("menu-catalog") || isOrdersPage) ? (
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+        {showSettingsSection("menu-catalog") ? (
         <div className="panel" id="settings-menu-catalog">
           <h3 className="panel-title">Menu management</h3>
           <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={createCategory}>
@@ -8930,6 +9278,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             ))}
           </div>
         </div>
+        ) : null}
+        {isOrdersPage ? (
         <div className="panel" id="orders">
           <h3 className="panel-title">Live orders</h3>
           <div className="mt-4 space-y-3">
@@ -8953,31 +9303,122 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             ))}
           </div>
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {isCustomersPage ? (
       <div className="grid gap-4 md:grid-cols-4" id="customers-summary">
-        <Stat icon={Users} label="Customers" value={customerSummary.totalCustomers || customers.length} detail={`${customerSummary.newCustomersThisMonth || 0} new this month`} />
-        <Stat icon={RefreshCw} label="Repeat rate" value={`${customerSummary.repeatCustomerPercentage || 0}%`} detail="Customers with orders" />
-        <Stat icon={TicketPercent} label="VIP customers" value={customerSummary.vipCustomerCount || 0} detail="High-value guests" />
-        <Stat icon={CreditCard} label="Average order" value={money(growthAnalytics.metrics?.averageOrderValueCents)} detail="All completed orders" />
+        <Stat icon={Users} label="Total customers" value={integer(customerSummary.totalCustomers || customers.length)} detail={`${integer(customerSummary.newCustomersThisMonth || 0)} new this month`} />
+        <Stat icon={RefreshCw} label="Repeat rate" value={percentText(customerSummary.repeatCustomerPercentage)} detail={`${integer(customerSummary.returningCustomers || 0)} returning customers`} />
+        <Stat icon={TicketPercent} label="VIP customers" value={integer(customerSummary.vipCustomerCount || 0)} detail={`${integer(customerSummary.atRiskCustomers || 0)} at risk`} />
+        <Stat icon={CreditCard} label="Lifetime spend" value={money(customerSummary.lifetimeSpendCents)} detail={`${money(customerSummary.averageOrderValueCents)} average order`} />
       </div>
-      <div className="grid gap-5 xl:grid-cols-2" id="customers">
+      ) : null}
+      {(isCustomersPage || showSettingsSection("loyalty")) ? (
+      <div className="grid gap-5 xl:grid-cols-2" id={isCustomersPage ? "customers" : undefined}>
+        {isCustomersPage ? (
         <div className="panel" id="customers-crm">
-          <h3 className="panel-title">Customer CRM</h3>
-          {hasLock("CUSTOMER_CRM") ? <div className="mt-4"><UpgradeRequired feature="CUSTOMER_CRM" lock={lockFor("CUSTOMER_CRM")} /></div> : <div className="mt-4 space-y-3">
-            {customers.length === 0 ? <EmptyState title="No customers yet" detail="Customer profiles appear after orders are placed." /> : customers.slice(0, 6).map((customerRow) => (
-              <div className="menu-row" key={customerRow.id}>
-                <div>
-                  <p className="font-semibold text-ink">{customerRow.name}</p>
-                  <p className="text-sm text-slate-500">{customerRow.email} - {readable(customerRow.segment || "NEW_CUSTOMER")}</p>
-                </div>
-                <div className="text-right">
-                  <strong>{money(customerRow.lifetimeSpendCents)}</strong>
-                  <p className="text-xs text-slate-500">{customerRow.totalOrders} orders - {customerRow.loyaltyPointBalance} pts</p>
-                </div>
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+            <div>
+              <h3 className="panel-title">Customer CRM</h3>
+              <p className="mt-2 text-sm text-slate-500">Live customer profiles, segmentation, order history, loyalty points, favorites, and owner notes.</p>
+            </div>
+            <StatusPill tone="good">{integer(customerSummary.contactableCustomers || 0)} contactable</StatusPill>
+          </div>
+          {hasLock("CUSTOMER_CRM") ? <div className="mt-4"><UpgradeRequired feature="CUSTOMER_CRM" lock={lockFor("CUSTOMER_CRM")} /></div> : (
+          <>
+          <div className="crm-toolbar mt-4">
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input className="input pl-9" id="customer-search" placeholder="Search customers, notes, contact..." value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} />
+            </div>
+            <select className="select" value={customerSegmentFilter} onChange={(event) => setCustomerSegmentFilter(event.target.value)}>
+              <option value="ALL">All segments</option>
+              {["NEW_CUSTOMER", "ACTIVE_CUSTOMER", "VIP_CUSTOMER", "AT_RISK_CUSTOMER", "INACTIVE_CUSTOMER"].map((segment) => <option value={segment} key={segment}>{readable(segment)}</option>)}
+            </select>
+            <select className="select" value={customerTypeFilter} onChange={(event) => setCustomerTypeFilter(event.target.value)}>
+              <option value="ALL">All customer types</option>
+              <option value="REGISTERED">Registered</option>
+              <option value="GUEST_CONTACTABLE">Guest contactable</option>
+              <option value="WALK_IN_GUEST">Walk-in guest</option>
+            </select>
+          </div>
+          <div className="crm-layout mt-5">
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="font-bold text-ink">Customer list</h4>
+                <span className="text-sm font-bold text-slate-500">{integer(filteredCustomers.length)} shown</span>
               </div>
-            ))}
-          </div>}
+              <div className="customer-list mt-3">
+                {filteredCustomers.length === 0 ? <EmptyState title="No customers found" detail="Adjust the search or wait for live orders to create customer records." /> : filteredCustomers.map((customerRow) => (
+                  <button className={`customer-list-row ${selectedCustomer?.id === customerRow.id ? "active" : ""}`} type="button" key={customerRow.id} onClick={() => setSelectedCustomerId(customerRow.id)}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-black text-ink">{customerRow.safeName || customerRow.name || "Customer"}</p>
+                        <p className="truncate text-sm font-semibold text-slate-500">{safeCustomerContact(customerRow)}</p>
+                        <p className="mt-1 text-xs font-bold uppercase tracking-wide text-slate-400">{readable(customerRow.customerType || "GUEST_CONTACTABLE")}</p>
+                      </div>
+                      <StatusPill tone={customerRow.segment === "VIP_CUSTOMER" ? "good" : customerRow.segment === "AT_RISK_CUSTOMER" || customerRow.segment === "INACTIVE_CUSTOMER" ? "warn" : "neutral"}>{readable(customerRow.segment || "NEW_CUSTOMER")}</StatusPill>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-bold text-slate-500">
+                      <span>{integer(customerRow.totalOrders || 0)} orders</span>
+                      <span>{money(customerRow.lifetimeSpendCents)}</span>
+                      <span>{integer(customerRow.loyaltyPointBalance || 0)} pts</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="customer-detail-panel">
+              {!selectedCustomer ? <EmptyState title="No customer selected" detail="Choose a customer to view profile details." /> : (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wide text-mint">Customer profile</p>
+                      <h4 className="text-2xl font-black text-ink">{selectedCustomer.safeName || selectedCustomer.name || "Customer"}</h4>
+                      <p className="text-sm font-semibold text-slate-500">{safeCustomerContact(selectedCustomer)}</p>
+                    </div>
+                    <StatusPill tone={selectedCustomer.segment === "VIP_CUSTOMER" ? "good" : selectedCustomer.segment === "AT_RISK_CUSTOMER" || selectedCustomer.segment === "INACTIVE_CUSTOMER" ? "warn" : "neutral"}>{readable(selectedCustomer.segment || "NEW_CUSTOMER")}</StatusPill>
+                  </div>
+                  <div className="customer-detail-grid">
+                    <div><span>Lifetime spend</span><strong>{money(selectedCustomer.lifetimeSpendCents)}</strong></div>
+                    <div><span>Average order</span><strong>{money(selectedCustomer.averageOrderValueCents)}</strong></div>
+                    <div><span>Total orders</span><strong>{integer(selectedCustomer.totalOrders || 0)}</strong></div>
+                    <div><span>Last order</span><strong>{dateText(selectedCustomer.lastOrderDate)}</strong></div>
+                    <div><span>Loyalty points</span><strong>{integer(selectedCustomer.loyaltyPointBalance || 0)}</strong></div>
+                    <div><span>Favorite items</span><strong>{(selectedCustomer.favoriteMenuItems || []).slice(0, 2).map((item) => item.name).join(", ") || "No favorites yet"}</strong></div>
+                  </div>
+                  <label className="block text-sm font-semibold text-slate-600">Segment
+                    <select className="select mt-1" value={selectedCustomer.segment || "NEW_CUSTOMER"} onChange={(event) => updateCustomerDraft(selectedCustomer.id, { segment: event.target.value })}>
+                      {["NEW_CUSTOMER", "ACTIVE_CUSTOMER", "VIP_CUSTOMER", "AT_RISK_CUSTOMER", "INACTIVE_CUSTOMER"].map((segment) => <option value={segment} key={segment}>{readable(segment)}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-sm font-semibold text-slate-600">Notes
+                    <textarea className="input mt-1 min-h-24" value={selectedCustomer.notes || ""} placeholder="Add private owner notes for this customer." onChange={(event) => updateCustomerDraft(selectedCustomer.id, { notes: event.target.value })} />
+                  </label>
+                  <button className="button-primary" type="button" onClick={() => saveCustomerNotes(selectedCustomer)} disabled={savingCustomerId === selectedCustomer.id}>
+                    <CheckCircle2 size={16} />{savingCustomerId === selectedCustomer.id ? "Saving..." : "Save Customer"}
+                  </button>
+                  <div>
+                    <h5 className="font-bold text-ink">Recent orders</h5>
+                    <div className="mt-2 space-y-2">
+                      {(selectedCustomer.orders || []).length === 0 ? <EmptyState title="No orders" detail="Order history appears after this customer orders." /> : selectedCustomer.orders.slice(0, 5).map((order) => (
+                        <div className="summary-line rounded-md bg-white px-3 py-2" key={order.id}>
+                          <span>#{order.orderNumber || order.id} - {readable(order.status || "PENDING")}</span>
+                          <strong>{money(order.netSalesCents || order.totalCents)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          </>
+          )}
         </div>
+        ) : null}
+        {showSettingsSection("loyalty") ? (
         <div className="panel" id="settings-loyalty">
           <h3 className="panel-title">Loyalty program</h3>
           {hasLock("LOYALTY") ? <div className="mt-4"><UpgradeRequired feature="LOYALTY" lock={lockFor("LOYALTY")} /></div> : <>
@@ -8993,8 +9434,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           </>}
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {(showSettingsSection("coupons") || isReportsPage) ? (
       <div className="grid gap-5 xl:grid-cols-3">
+        {showSettingsSection("coupons") ? (
         <div className="panel" id="settings-coupons">
           <h3 className="panel-title">Promotions</h3>
           {hasLock("COUPONS") ? <div className="mt-4"><UpgradeRequired feature="COUPONS" lock={lockFor("COUPONS")} /></div> : <div className="mt-4 space-y-2">
@@ -9003,15 +9448,19 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             ))}
           </div>}
         </div>
+        ) : null}
+        {isReportsPage ? (
         <div className="panel" id="reports-analytics-summary">
           <h3 className="panel-title">Restaurant analytics</h3>
           {hasLock("ANALYTICS") ? <div className="mt-4"><UpgradeRequired feature="ANALYTICS" lock={lockFor("ANALYTICS")} /></div> : <div className="mt-4 space-y-2 text-sm text-slate-600">
-            <div className="summary-line"><span>Total orders</span><strong>{growthAnalytics.metrics?.totalOrders || orders.length}</strong></div>
-            <div className="summary-line"><span>Delivery orders</span><strong>{growthAnalytics.metrics?.deliveryOrders || 0}</strong></div>
-            <div className="summary-line"><span>Pickup orders</span><strong>{growthAnalytics.metrics?.pickupOrders || 0}</strong></div>
-            <div className="summary-line"><span>Driver tips</span><strong>{money(growthAnalytics.metrics?.driverTipsCents)}</strong></div>
+            <div className="summary-line"><span>Total orders</span><strong>{integer(reportSales.totalOrders || 0)}</strong></div>
+            <div className="summary-line"><span>Delivery orders</span><strong>{integer(reportSales.deliveryOrders || 0)}</strong></div>
+            <div className="summary-line"><span>Pickup orders</span><strong>{integer(reportSales.pickupOrders || 0)}</strong></div>
+            <div className="summary-line"><span>Driver tips</span><strong>{money(reportSales.driverTipsCents)}</strong></div>
           </div>}
         </div>
+        ) : null}
+        {isReportsPage ? (
         <div className="panel" id="reports-menu-insights">
           <h3 className="panel-title">Menu insights</h3>
           {hasLock("MENU_INSIGHTS") ? <div className="mt-4"><UpgradeRequired feature="MENU_INSIGHTS" lock={lockFor("MENU_INSIGHTS")} /></div> : <div className="mt-4 space-y-2">
@@ -9020,8 +9469,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             ))}
           </div>}
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {(showSettingsSection("website-branding") || showSettingsSection("domains-seo") || showSettingsSection("gallery-social")) ? (
       <div className="grid gap-5 xl:grid-cols-2">
+        {showSettingsSection("website-branding") ? (
         <div className="panel" id="settings-website-branding">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
@@ -9108,9 +9561,11 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           <button className="button-primary mt-4" onClick={saveWebsiteBuilder} disabled={websiteSaveState === "saving"}><Store size={16} />{websiteButtonLabel()}</button>
         </div>
+        ) : null}
+        {(showSettingsSection("domains-seo") || showSettingsSection("gallery-social")) ? (
         <div className="panel" id="settings-domains-seo">
-          <h3 className="panel-title">Domain Management</h3>
-          {hasLock("CUSTOM_DOMAIN") ? <div className="mt-4"><UpgradeRequired feature="CUSTOM_DOMAIN" lock={lockFor("CUSTOM_DOMAIN")} /></div> : <>
+          <h3 className="panel-title">{showSettingsSection("gallery-social") ? "Gallery and social links" : "Domain Management"}</h3>
+          {showSettingsSection("domains-seo") ? (hasLock("CUSTOM_DOMAIN") ? <div className="mt-4"><UpgradeRequired feature="CUSTOM_DOMAIN" lock={lockFor("CUSTOM_DOMAIN")} /></div> : <>
           <div className="mt-4 space-y-2 text-sm text-slate-600">
             <div className="summary-line"><span>Default Loohar subdomain</span><strong>{defaultTenantUrlFor(profile, domain)}</strong></div>
             <div className="summary-line"><span>Canonical URL</span><strong>{canonicalTenantUrlFor(profile, domain)}</strong></div>
@@ -9128,7 +9583,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <button className="button-muted" type="button" onClick={verifyDomain} disabled={savingAction === "domain:verify"}>{savingAction === "domain:verify" ? "Checking..." : "Verify Domain"}</button>
             <button className="button-muted" type="button" onClick={() => saveDomain({ ...domain, customDomain: "", canonicalDomain: domain.primaryDomain || `${domain.defaultSubdomain || profile.slug}.${tenantRootDomain}`, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" })} disabled={savingAction === "domain:save"}>Remove Custom Domain</button>
           </div>
-          </>}
+          </>) : null}
+          {showSettingsSection("gallery-social") ? (
           <div className="mt-5 grid gap-4 md:grid-cols-2" id="settings-gallery-social">
             <div>
               <div className="flex items-center justify-between gap-2">
@@ -9186,26 +9642,13 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
               <div className="mt-3 space-y-2">{socialLinks.length === 0 ? <p className="text-sm text-slate-500">No social links yet.</p> : socialLinks.map((link) => <div className="summary-line gap-3" key={link.id}><span><strong>{socialPlatformLabels[link.platform] || readable(link.platform)}</strong><small className="block max-w-[220px] truncate text-slate-500">{link.enabled === false ? "Hidden" : "Visible"} - {link.url}</small></span><span className="flex flex-wrap gap-1"><button className="button-muted" type="button" onClick={() => updateSocialLink(link, { enabled: link.enabled === false }, link.enabled === false ? "Social link visible." : "Social link hidden.")} disabled={savingAction === `social:${link.id}:update`}>{link.enabled === false ? "Show" : "Hide"}</button><button className="button-muted" type="button" onClick={() => deleteSocialLink(link.id)} disabled={savingAction === `social:${link.id}:delete`}><Trash2 size={14} />Remove</button></span></div>)}</div>
             </div>
           </div>
+          ) : null}
         </div>
+        ) : null}
       </div>
-      <div className="grid gap-5 xl:grid-cols-[1fr_1fr]" id="kitchen">
-        <div className="panel" id="kitchen-summary">
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
-            <div>
-              <h3 className="panel-title">Kitchen Display System</h3>
-              <p className="mt-2 text-sm text-slate-500">Touch-friendly order queue for kitchen staff, cashiers, and managers.</p>
-            </div>
-            {kitchenDisplayLock ? null : <a className="button-primary" href={`/kitchen/${profile.slug || restaurantId}`} target="_blank" rel="noreferrer"><ReceiptText size={16} />Open KDS</a>}
-          </div>
-          {kitchenDisplayLock ? <div className="mt-4"><UpgradeRequired feature="KITCHEN_DISPLAY" lock={kitchenDisplayLock} /></div> : <div className="mt-4 grid gap-3">
-            {orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length === 0 ? <EmptyState title="No active kitchen orders" detail="New pickup and delivery orders will appear here." /> : orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).slice(0, 4).map((order) => (
-              <div className="summary-line rounded-md border border-line px-3 py-2" key={order.id}>
-                <span>#{order.orderNumber} - {order.customer?.name || "Customer"}</span>
-                <StatusPill tone={order.status === "READY" ? "warn" : "neutral"}>{kdsStatusFor(order.status)}</StatusPill>
-              </div>
-            ))}
-          </div>}
-        </div>
+      ) : null}
+      {showSettingsSection("receipts-printing") ? (
+      <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
         <div className="panel" id="settings-receipts-printing">
           <h3 className="panel-title">Receipt and ticket printing</h3>
           {hasLock("PRINTING") ? <div className="mt-4"><UpgradeRequired feature="PRINTING" lock={lockFor("PRINTING")} /></div> : <>
@@ -9227,7 +9670,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </>}
         </div>
       </div>
+      ) : null}
+      {(showSettingsSection("staff-roles") || isDriversPage) ? (
       <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+        {showSettingsSection("staff-roles") ? (
         <div className="panel" id="settings-staff-roles">
           <h3 className="panel-title">Employees</h3>
           {hasLock("EMPLOYEE_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="EMPLOYEE_MANAGEMENT" lock={lockFor("EMPLOYEE_MANAGEMENT")} /></div> : <>
@@ -9257,37 +9703,107 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           </>}
         </div>
+        ) : null}
+        {isDriversPage ? (
         <div className="panel" id="drivers">
-          <h3 className="panel-title">Driver Dispatch Center</h3>
-          {hasLock("DRIVER_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="DRIVER_MANAGEMENT" lock={lockFor("DRIVER_MANAGEMENT")} /></div> : <>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <Stat icon={Truck} label="Available" value={dispatch.availableDrivers?.length || 0} detail="Ready to assign" />
-            <Stat icon={Activity} label="Busy" value={dispatch.busyDrivers?.length || 0} detail="On delivery" />
-            <Stat icon={Clock} label="Offline" value={dispatch.offlineDrivers?.length || 0} detail="Unavailable" />
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <h3 className="panel-title">Driver Dispatch Center</h3>
+              <p className="mt-2 text-sm text-slate-500">Live driver availability, active deliveries, tips, earnings, and assignment controls for this restaurant only.</p>
+            </div>
+            <StatusPill tone={dispatchSummary.schedulingStatus === "Setup Required" ? "warn" : "good"}>{dispatchSummary.schedulingStatus || "Dispatch active"}</StatusPill>
           </div>
-          <div className="mt-4 space-y-3">
-            {(dispatch.deliveries || []).length === 0 ? <EmptyState title="No active deliveries" detail="Delivery orders waiting for assignment will appear here." /> : dispatch.deliveries.map((delivery) => (
+          {hasLock("DRIVER_MANAGEMENT") ? <div className="mt-4"><UpgradeRequired feature="DRIVER_MANAGEMENT" lock={lockFor("DRIVER_MANAGEMENT")} /></div> : <>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat icon={Truck} label="Available" value={integer(dispatchSummary.availableDrivers || dispatchWithDefaults.availableDrivers?.length || 0)} detail="Ready to assign" />
+            <Stat icon={Activity} label="Busy" value={integer(dispatchSummary.busyDrivers || dispatchWithDefaults.busyDrivers?.length || 0)} detail="On delivery" />
+            <Stat icon={Clock} label="Offline" value={integer(dispatchSummary.offlineDrivers || dispatchWithDefaults.offlineDrivers?.length || 0)} detail="Unavailable" />
+            <Stat icon={CreditCard} label="Tips" value={money(dispatchSummary.driverTipsCents)} detail={`${integer(dispatchSummary.completedDeliveries || 0)} completed`} />
+          </div>
+          <div className="driver-dispatch-grid mt-5">
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="font-bold text-ink">Driver roster</h4>
+                <span className="text-sm font-bold text-slate-500">{integer(driverRoster.length)} drivers</span>
+              </div>
+              <div className="driver-roster mt-3">
+                {driverRoster.length === 0 ? <EmptyState title="No drivers" detail="Add drivers before assigning delivery orders." /> : driverRoster.map((driver) => (
+                  <button className={`driver-roster-row ${selectedDriver?.id === driver.id ? "active" : ""}`} type="button" key={driver.id} onClick={() => setSelectedDriverId(driver.id)}>
+                    <div>
+                      <p className="font-black text-ink">{driver.name || driver.user?.name || driver.email || "Driver"}</p>
+                      <p className="text-sm font-semibold text-slate-500">{driver.phone || driver.email || "Contact not set"}</p>
+                    </div>
+                    <StatusPill tone={driver.availabilityLabel === "Available" || driver.available ? "good" : driver.activeDeliveries?.length ? "warn" : "neutral"}>{driver.availabilityLabel || (driver.available ? "Available" : "Unavailable")}</StatusPill>
+                    <div className="driver-roster-meta">
+                      <span>{integer(driver.activeDeliveries?.length || 0)} active</span>
+                      <span>{integer(driver.completedDeliveries || 0)} completed</span>
+                      <span>{money(driver.tipsCents)} tips</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="driver-detail-panel">
+              {!selectedDriver ? <EmptyState title="No driver selected" detail="Choose a driver to view dispatch performance." /> : (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wide text-mint">Driver profile</p>
+                      <h4 className="text-2xl font-black text-ink">{selectedDriver.name || selectedDriver.user?.name || "Driver"}</h4>
+                      <p className="text-sm font-semibold text-slate-500">{selectedDriver.phone || selectedDriver.email || "Contact not set"}</p>
+                    </div>
+                    <StatusPill tone={selectedDriver.availabilityLabel === "Available" || selectedDriver.available ? "good" : selectedDriver.activeDeliveries?.length ? "warn" : "neutral"}>{selectedDriver.availabilityLabel || (selectedDriver.available ? "Available" : "Unavailable")}</StatusPill>
+                  </div>
+                  <div className="customer-detail-grid">
+                    <div><span>Active deliveries</span><strong>{integer(selectedDriver.activeDeliveries?.length || 0)}</strong></div>
+                    <div><span>Completed</span><strong>{integer(selectedDriver.completedDeliveries || 0)}</strong></div>
+                    <div><span>Earnings</span><strong>{money(selectedDriver.earningsCents)}</strong></div>
+                    <div><span>Tips</span><strong>{money(selectedDriver.tipsCents)}</strong></div>
+                    <div><span>Average delivery</span><strong>{minutesText(selectedDriver.averageDeliveryMinutes)}</strong></div>
+                    <div><span>Mileage</span><strong>{selectedDriver.distanceStatus || "Not Tracked"}</strong></div>
+                  </div>
+                  <div>
+                    <h5 className="font-bold text-ink">Current active delivery</h5>
+                    <div className="mt-2 space-y-2">
+                      {(selectedDriver.activeDeliveries || []).length === 0 ? <EmptyState title="No active delivery" detail="Assigned delivery details appear here while the driver is busy." /> : selectedDriver.activeDeliveries.map((delivery) => (
+                        <div className="summary-line rounded-md bg-white px-3 py-2" key={delivery.id}>
+                          <span>#{delivery.orderNumber || delivery.orderId} - {delivery.customerName || "Customer"}</span>
+                          <strong>{readable(delivery.status || "ASSIGNED")}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="mt-5 space-y-3">
+            {(dispatchWithDefaults.deliveries || []).length === 0 ? <EmptyState title="No active deliveries" detail="Delivery orders waiting for assignment will appear here." /> : dispatchWithDefaults.deliveries.map((delivery) => (
               <div className="order-row" key={delivery.id}>
                 <div>
-                  <p className="font-bold text-ink">Delivery #{delivery.order?.orderNumber || delivery.id}</p>
-                  <p className="text-sm text-slate-500">{delivery.order?.customer?.name || "Customer"} - {delivery.status} - Tip {money(delivery.tipCents)}</p>
-                  <p className="text-xs text-slate-500">Driver: {delivery.driver?.user?.name || "Unassigned"}</p>
+                  <p className="font-bold text-ink">Delivery #{delivery.orderNumber || delivery.order?.orderNumber || delivery.id}</p>
+                  <p className="text-sm text-slate-500">{delivery.customerName || delivery.order?.customer?.safeName || delivery.order?.customer?.name || "Customer"} - {readable(delivery.status)} - Tip {money(delivery.tipCents)}</p>
+                  <p className="text-xs text-slate-500">Driver: {delivery.driverName || delivery.driver?.user?.name || "Unassigned"} · Pickup {delivery.pickupAddress || profile.address || "restaurant address"} · Dropoff {delivery.dropoffAddress || "customer address"}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <select className="select max-w-52" defaultValue={delivery.driverId || ""} onChange={(event) => assignDispatchDelivery(delivery, event.target.value)}>
                     <option value="">Assign driver</option>
-                    {(dispatch.availableDrivers || []).map((driver) => <option value={driver.id} key={driver.id}>{driver.user?.name || driver.id}</option>)}
+                    {(dispatchWithDefaults.availableDrivers || []).map((driver) => <option value={driver.id} key={driver.id}>{driver.name || driver.user?.name || driver.id}</option>)}
                   </select>
                   <button className="button-muted" onClick={() => cancelDispatchAssignment(delivery)}>Cancel Assignment</button>
                 </div>
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs font-semibold text-slate-500">Driver SMS and push notifications are routed through provider-ready notification services.</p>
+          <p className="mt-3 text-xs font-semibold text-slate-500">Driver SMS and push notifications are routed through provider-ready notification services. On-time rate and mileage remain not tracked until navigation telemetry is connected.</p>
           </>}
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {(showSettingsSection("delivery-zones") || showSettingsSection("inventory") || showSettingsSection("notifications")) ? (
       <div className="grid gap-5 xl:grid-cols-3">
+        {showSettingsSection("delivery-zones") ? (
         <div className="panel" id="settings-delivery-zones">
           <h3 className="panel-title">Delivery Zones</h3>
           {hasLock("DELIVERY_ZONES") ? <div className="mt-4"><UpgradeRequired feature="DELIVERY_ZONES" lock={lockFor("DELIVERY_ZONES")} /></div> : <>
@@ -9311,6 +9827,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           <p className="mt-3 text-xs font-semibold text-slate-500">Map drawing integration is reserved for a later provider pass.</p>
           </>}
         </div>
+        ) : null}
+        {showSettingsSection("inventory") ? (
         <div className="panel" id="settings-inventory">
           <h3 className="panel-title">Inventory Foundation</h3>
           {hasLock("INVENTORY") ? <div className="mt-4"><UpgradeRequired feature="INVENTORY" lock={lockFor("INVENTORY")} /></div> : <>
@@ -9334,6 +9852,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           <p className="mt-3 text-xs font-semibold text-slate-500">Automatic depletion from orders is a future inventory phase.</p>
           </>}
         </div>
+        ) : null}
+        {showSettingsSection("notifications") ? (
         <div className="panel" id="settings-notifications">
           <h3 className="panel-title">Notifications</h3>
           {hasLock("NOTIFICATIONS") ? <div className="mt-4"><UpgradeRequired feature="NOTIFICATIONS" lock={lockFor("NOTIFICATIONS")} /></div> : <>
@@ -9360,42 +9880,70 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           <p className="mt-3 text-xs font-semibold text-slate-500">Twilio-ready SMS and provider-based email are wired through backend abstractions.</p>
           </>}
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {isReportsPage ? (
       <div className="panel" id="reports">
         <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
           <div>
             <h3 className="panel-title">Advanced reporting</h3>
             <p className="mt-2 text-sm text-slate-500">Sales, customer, menu, and driver metrics for day-to-day restaurant operations.</p>
           </div>
-          <button className="button-muted" onClick={loadRestaurant}><RefreshCw size={16} />Refresh Reports</button>
+          <div className="flex flex-wrap gap-2">
+            <select className="select max-w-40" value={reportRange} onChange={(event) => setReportRange(event.target.value)}>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+              <option value="ytd">Year to date</option>
+              <option value="all">All time</option>
+            </select>
+            <button className="button-muted" onClick={() => loadRestaurant({ force: true })}><RefreshCw size={16} />Refresh Reports</button>
+          </div>
         </div>
         {hasLock("REPORTS") ? <div className="mt-4"><UpgradeRequired feature="REPORTS" lock={lockFor("REPORTS")} /></div> : <>
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Stat icon={CreditCard} label="Gross sales" value={money(reportSales.grossSalesCents)} detail={operationsWithDefaults.range?.label || "Selected range"} />
+          <Stat icon={ReceiptText} label="Net sales" value={money(reportSales.netSalesCents)} detail={`${integer(reportSales.paidOrders || 0)} paid orders`} />
+          <Stat icon={TicketPercent} label="Average order" value={money(reportSales.averageOrderValueCents)} detail={`${integer(reportSales.totalOrders || 0)} total orders`} />
+          <Stat icon={Truck} label="Delivery sales" value={money(reportSales.deliveryFeesCents)} detail={`${integer(reportSales.deliveryOrders || 0)} delivery orders`} />
           <Stat icon={CreditCard} label="Daily sales" value={money(operationsReport.sales?.dailySalesCents)} detail="Today" />
           <Stat icon={ReceiptText} label="Weekly sales" value={money(operationsReport.sales?.weeklySalesCents)} detail="This week" />
           <Stat icon={TicketPercent} label="Monthly sales" value={money(operationsReport.sales?.monthlySalesCents)} detail="This month" />
+          <Stat icon={Activity} label="Driver tips" value={money(reportSales.driverTipsCents)} detail={`${money(reportSales.refundsCents)} refunds`} />
         </div>
-        <div className="mt-4 grid gap-5 xl:grid-cols-3">
-          <div>
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <MetricBarList title="Sales trend" description="Net sales by day or month." rows={reportCharts.salesTrend || []} labelKey="date" valueKey="netSalesCents" valueFormatter={money} emptyTitle="No paid sales in this range" />
+          <MetricBarList title="Orders trend" description="Paid order count over time." rows={reportCharts.ordersTrend || []} labelKey="date" valueKey="orders" emptyTitle="No orders in this range" />
+          <MetricBarList title="Customer growth" description="New customers created during the selected range." rows={reportCharts.customerGrowth || []} labelKey="date" valueKey="customers" emptyTitle="No new customer records in this range" />
+          <MetricBarList title="Driver performance" description="Completed deliveries by driver." rows={reportCharts.driverPerformance || []} labelKey="name" valueKey="deliveries" emptyTitle="No completed deliveries in this range" />
+        </div>
+        <div className="mt-5 grid gap-5 xl:grid-cols-3">
+          <div className="rounded-md border border-line bg-slate-50 p-4">
             <h4 className="font-bold text-ink">Top selling items</h4>
-            <div className="mt-2 space-y-2">{(operationsReport.items?.topSellingItems || []).length === 0 ? <p className="text-sm text-slate-500">No sales yet.</p> : operationsReport.items.topSellingItems.slice(0, 5).map((item) => <div className="summary-line rounded-md bg-slate-50 px-3" key={item.id || item.name}><span>{item.name}</span><strong>{item.quantity} sold</strong></div>)}</div>
+            <div className="mt-2 space-y-2">{(operationsWithDefaults.items?.topSellingItems || []).length === 0 ? <p className="text-sm text-slate-500">No sales yet.</p> : operationsWithDefaults.items.topSellingItems.slice(0, 5).map((item) => <div className="summary-line rounded-md bg-white px-3" key={item.id || item.name}><span>{item.name}</span><strong>{integer(item.quantity)} sold · {money(item.revenueCents)}</strong></div>)}</div>
           </div>
-          <div>
+          <div className="rounded-md border border-line bg-slate-50 p-4">
             <h4 className="font-bold text-ink">Customer metrics</h4>
             <div className="mt-2 space-y-2">
-              <div className="summary-line rounded-md bg-slate-50 px-3"><span>New customers</span><strong>{operationsReport.customers?.newCustomers || 0}</strong></div>
-              <div className="summary-line rounded-md bg-slate-50 px-3"><span>Returning customers</span><strong>{operationsReport.customers?.returningCustomers || 0}</strong></div>
-              <div className="summary-line rounded-md bg-slate-50 px-3"><span>VIP customers</span><strong>{operationsReport.customers?.vipCustomers || 0}</strong></div>
+              <div className="summary-line rounded-md bg-white px-3"><span>Total customers</span><strong>{integer(operationsWithDefaults.customers?.totalCustomers || 0)}</strong></div>
+              <div className="summary-line rounded-md bg-white px-3"><span>New in range</span><strong>{integer(operationsWithDefaults.customers?.newCustomersInRange || 0)}</strong></div>
+              <div className="summary-line rounded-md bg-white px-3"><span>Returning customers</span><strong>{integer(operationsWithDefaults.customers?.returningCustomers || 0)}</strong></div>
+              <div className="summary-line rounded-md bg-white px-3"><span>VIP customers</span><strong>{integer(operationsWithDefaults.customers?.vipCustomerCount || 0)}</strong></div>
             </div>
           </div>
-          <div>
+          <div className="rounded-md border border-line bg-slate-50 p-4">
             <h4 className="font-bold text-ink">Driver metrics</h4>
-            <div className="mt-2 space-y-2">{(operationsReport.drivers || []).length === 0 ? <p className="text-sm text-slate-500">No driver history yet.</p> : operationsReport.drivers.slice(0, 5).map((driver) => <div className="summary-line rounded-md bg-slate-50 px-3" key={driver.driverId || driver.name}><span>{driver.name}</span><strong>{driver.deliveries} - {money(driver.tipsCents)} tips</strong></div>)}</div>
+            <div className="mt-2 space-y-2">{(operationsWithDefaults.drivers || []).length === 0 ? <p className="text-sm text-slate-500">No driver history yet.</p> : operationsWithDefaults.drivers.slice(0, 5).map((driver) => <div className="summary-line rounded-md bg-white px-3" key={driver.id || driver.driverId || driver.name}><span>{driver.name}</span><strong>{integer(driver.completedDeliveries || driver.deliveries || 0)} · {money(driver.tipsCents)} tips</strong></div>)}</div>
+            <p className="mt-3 text-xs font-semibold text-slate-500">Mileage and on-time rate show as not tracked until the mobile navigation telemetry phase is connected.</p>
           </div>
         </div>
         </>}
       </div>
+      ) : null}
+      {isSettingsPage ? (
         <div className="grid gap-5 xl:grid-cols-2" id="settings">
+        {isSettingsCenterPage ? (
         <div className="panel xl:col-span-2">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
@@ -9404,16 +9952,28 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             </div>
             <a className="button-muted" href={publicPreviewPath} target="_blank" rel="noreferrer"><Store size={16} />Preview website</a>
           </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {settingsCenterLinks.map((item) => (
-              <a className={`rounded-md border p-4 transition hover:border-mint hover:shadow-soft ${item.selected ? "border-mint bg-mint/5 shadow-soft" : "border-line bg-white"}`} href={item.href} key={item.id}>
-                <StatusPill tone={settingsStatusTone(item.status)}>{settingsStatusLabel(item.status)}</StatusPill>
-                <strong className="mt-2 block text-lg text-ink">{item.label}</strong>
-                <span className="mt-1 block text-sm text-slate-500">{item.detail}</span>
-              </a>
+          <div className="mt-5 grid gap-4">
+            {settingsCenterGroups.map((group) => (
+              <section className="settings-group" key={group.id}>
+                <div className="settings-group-title">
+                  <span>{group.label}</span>
+                  <small>{integer(group.items.length)} sections</small>
+                </div>
+                <div className="settings-group-grid">
+                  {group.items.map((item) => (
+                    <a className={`rounded-md border p-4 transition hover:border-mint hover:shadow-soft ${item.selected ? "border-mint bg-mint/5 shadow-soft" : "border-line bg-white"}`} href={item.href} key={item.id}>
+                      <StatusPill tone={settingsStatusTone(item.status)}>{settingsStatusLabel(item.status)}</StatusPill>
+                      <strong className="mt-2 block text-lg text-ink">{item.label}</strong>
+                      <span className="mt-1 block text-sm text-slate-500">{item.detail}</span>
+                    </a>
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("account") ? (
         <div className="panel" id="settings-account">
           <h3 className="panel-title">Account</h3>
           <p className="mt-2 text-sm text-slate-500">Owner login, profile, password recovery, and session access stay separate from the platform owner console.</p>
@@ -9422,6 +9982,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Role</span><strong>{readable(user?.role || "TENANT_OWNER")}</strong></div>
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("restaurant-profile") ? (
         <div className="panel" id="settings-restaurant-profile">
           <h3 className="panel-title">Restaurant profile</h3>
           <p className="mt-2 text-sm text-slate-500">Business name, public contact details, address, and restaurant identity are edited in Website & Branding and saved to the live restaurant profile.</p>
@@ -9430,8 +9992,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Phone</span><strong>{profile.phone || "Not set"}</strong></div>
             <div className="summary-line"><span>Location</span><strong>{[profile.city, profile.state].filter(Boolean).join(", ") || "Not set"}</strong></div>
           </div>
-          <a className="button-primary mt-4" href="#settings-website-branding"><Store size={16} />Edit profile</a>
+          <a className="button-primary mt-4" href={restaurantSettingPath(restaurantBasePath, "website-branding")}><Store size={16} />Edit profile</a>
         </div>
+        ) : null}
+        {showSettingsSection("business-hours") ? (
         <div className="panel" id="settings-business-hours">
           <h3 className="panel-title">Business Hours</h3>
           <p className="mt-2 text-sm text-slate-500">Public website hours are stored on the tenant website settings record and shown across ordering surfaces.</p>
@@ -9443,8 +10007,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
               </div>
             ))}
           </div>
-          <a className="button-muted mt-4" href="#settings-website-branding"><Clock size={16} />Edit website hours</a>
+          <a className="button-muted mt-4" href={restaurantSettingPath(restaurantBasePath, "website-branding")}><Clock size={16} />Edit website hours</a>
         </div>
+        ) : null}
+        {showSettingsSection("ordering") ? (
         <div className="panel" id="settings-ordering">
           <h3 className="panel-title">Ordering</h3>
           <p className="mt-2 text-sm text-slate-500">Pickup, delivery, order readiness, and kitchen workflow state are read from the live restaurant tenant.</p>
@@ -9459,6 +10025,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <a className="button-muted" href={`${restaurantBasePath}/orders`}><ReceiptText size={16} />Open orders</a>
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("restaurant-profile") ? (
         <div className="panel" id="settings-restaurants-ownership">
           <h3 className="panel-title">Restaurants & Ownership</h3>
           <p className="mt-2 text-sm text-slate-500">This account opens only the assigned restaurant tenant. Platform-owner controls remain in the Master Admin portal.</p>
@@ -9467,23 +10035,80 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Slug</span><strong>{profile.slug || user?.restaurantSlug || "Not set"}</strong></div>
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("locations") ? (
         <div className="panel" id="settings-locations">
-          <h3 className="panel-title">Locations</h3>
-          <p className="mt-2 text-sm text-slate-500">Location records are ready for future chain workflows without changing the restaurant owner navigation.</p>
-          <div className="mt-4 space-y-2 text-sm text-slate-600">
-            {locations.length === 0 ? <EmptyState title="No location records" detail="Primary restaurant location is active; additional location controls are a future phase." /> : locations.map((location) => (
-              <div className="summary-line rounded-md bg-slate-50 px-3" key={location.id || location.name}>
-                <span>{location.name || profile.businessName || profile.name}</span>
-                <strong>{location.status || "ACTIVE"}</strong>
-              </div>
-            ))}
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <h3 className="panel-title">Locations</h3>
+              <p className="mt-2 text-sm text-slate-500">Edit the live restaurant location record. Saving the primary location also updates the restaurant profile used by public pages and operations screens.</p>
+            </div>
+            <StatusPill tone={locations.length ? "good" : "warn"}>{locations.length ? `${integer(locations.length)} location${locations.length === 1 ? "" : "s"}` : "Setup required"}</StatusPill>
+          </div>
+          <div className="mt-4 grid gap-4">
+            {locations.length === 0 ? <EmptyState title="No location records" detail="Refresh while the API is online to create the primary restaurant location from the tenant profile." /> : locations.map((location) => {
+              const draft = locationDrafts[location.id] || locationDraftFrom(location, profile);
+              return (
+                <div className="location-editor" key={location.id || location.name}>
+                  <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                    <div>
+                      <h4 className="font-black text-ink">{draft.name || location.name || profile.businessName || profile.name || "Restaurant location"}</h4>
+                      <p className="text-sm font-semibold text-slate-500">{[draft.address, draft.city, draft.state, draft.zip].filter(Boolean).join(", ") || "Address not set"}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusPill tone={draft.active ? "good" : "neutral"}>{draft.active ? "Active" : "Inactive"}</StatusPill>
+                      {draft.primary ? <StatusPill tone="good">Primary</StatusPill> : null}
+                    </div>
+                  </div>
+                  <div className="location-editor-grid mt-4">
+                    <label className="text-sm font-semibold text-slate-600">Location name
+                      <input className="input mt-1" value={draft.name || ""} onChange={(event) => updateLocationDraft(location, { name: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600">Phone
+                      <input className="input mt-1" value={draft.phone || ""} onChange={(event) => updateLocationDraft(location, { phone: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600 md:col-span-2">Address
+                      <input className="input mt-1" value={draft.address || ""} onChange={(event) => updateLocationDraft(location, { address: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600 md:col-span-2">Address 2
+                      <input className="input mt-1" value={draft.address2 || ""} onChange={(event) => updateLocationDraft(location, { address2: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600">City
+                      <input className="input mt-1" value={draft.city || ""} onChange={(event) => updateLocationDraft(location, { city: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600">State
+                      <input className="input mt-1" value={draft.state || ""} onChange={(event) => updateLocationDraft(location, { state: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600">ZIP
+                      <input className="input mt-1" value={draft.zip || ""} onChange={(event) => updateLocationDraft(location, { zip: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600">Country
+                      <input className="input mt-1" value={draft.country || "US"} onChange={(event) => updateLocationDraft(location, { country: event.target.value })} />
+                    </label>
+                    <label className="text-sm font-semibold text-slate-600 md:col-span-2">Timezone
+                      <input className="input mt-1" value={draft.timezone || "America/Denver"} onChange={(event) => updateLocationDraft(location, { timezone: event.target.value })} />
+                    </label>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <label className={`seg ${draft.active ? "active" : ""}`}><input type="checkbox" checked={!!draft.active} onChange={(event) => updateLocationDraft(location, { active: event.target.checked })} />Active location</label>
+                    <label className={`seg ${draft.primary ? "active" : ""}`}><input type="checkbox" checked={!!draft.primary} onChange={(event) => updateLocationDraft(location, { primary: event.target.checked })} />Primary location</label>
+                    <button className="button-primary" type="button" onClick={() => saveLocation(location)} disabled={savingLocationId === location.id}><CheckCircle2 size={16} />{savingLocationId === location.id ? "Saving..." : "Save Location"}</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("payments") ? (
         <div className="panel" id="settings-payments">
           <h3 className="panel-title">Payments</h3>
           <p className="mt-2 text-sm text-slate-500">Restaurant payment provider onboarding and payout readiness are managed through the secure onboarding flow.</p>
           <a className="button-primary mt-4" href={`${restaurantBasePath}/onboarding#payments`}><CreditCard size={16} />Open payment setup</a>
         </div>
+        ) : null}
+        {showSettingsSection("billing-subscription") ? (
+        <>
         <div className="panel" id="settings-billing-subscription">
           <h3 className="panel-title">Billing & Subscription</h3>
           <p className="mt-2 text-sm text-slate-500">Subscription plan and account billing state are enforced server-side by Loohar entitlements.</p>
@@ -9492,6 +10117,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <div className="summary-line"><span>Status</span><strong>{readable(entitlementSummary.subscriptionStatus || "ACTIVE")}</strong></div>
           </div>
         </div>
+        <DevelopmentEntitlementSimulator apiOnline={apiOnline} token={token} restaurantKey={profile.slug || restaurantId} />
+        </>
+        ) : null}
+        {showSettingsSection("pos-kiosk") ? (
         <div className="panel" id="settings-pos-kiosk">
           <h3 className="panel-title">POS & Kiosk</h3>
           <p className="mt-2 text-sm text-slate-500">Register devices, shifts, cash controls, card payment flow, and kiosk mode are managed in the POS workspace.</p>
@@ -9502,6 +10131,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           </div>
           <a className="button-primary mt-4" href={`${restaurantBasePath}/pos`}><CreditCard size={16} />Open POS</a>
         </div>
+        ) : null}
+        {showSettingsSection("integrations") ? (
         <div className="panel" id="settings-integrations">
           <h3 className="panel-title">Integrations</h3>
           <p className="mt-2 text-sm text-slate-500">Delivery, accounting, marketing, and external POS integrations are intentionally not editable until provider-specific connections are implemented.</p>
@@ -9510,7 +10141,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <StatusPill tone="neutral">No external providers connected</StatusPill>
           </div>
         </div>
-        <DevelopmentEntitlementSimulator apiOnline={apiOnline} token={token} restaurantKey={profile.slug || restaurantId} />
+        ) : null}
+        {showSettingsSection("security-audit") ? (
         <div className="panel" id="settings-security-audit">
           <h3 className="panel-title">Security & Audit Logs</h3>
           <p className="mt-2 text-sm text-slate-500">Password policy, role-based access, session checks, and audit logging protect tenant operations.</p>
@@ -9520,6 +10152,8 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <StatusPill tone="neutral">Audit logs retained</StatusPill>
           </div>
         </div>
+        ) : null}
+        {showSettingsSection("developer-api") ? (
         <div className="panel" id="settings-developer-api">
           <h3 className="panel-title">Developer/API</h3>
           <p className="mt-2 text-sm text-slate-500">API keys, webhook delivery logs, and developer docs are planned for a future release. Nothing is exposed until the backend key management flow is implemented.</p>
@@ -9528,7 +10162,9 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             <StatusPill tone="neutral">No API keys issued</StatusPill>
           </div>
         </div>
+        ) : null}
         </div>
+      ) : null}
       </div>
     </RestaurantPageComponent>
   );
@@ -9704,10 +10340,10 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
   }
 
   return (
-    <div className="kds-shell">
+    <div className="kds-shell" id="kitchen">
       <SectionHeader eyebrow="Kitchen Display System" title={restaurant.businessName || restaurant.name || "Kitchen"} icon={ReceiptText} action={<button className="button-muted" onClick={loadKitchen}><RefreshCw size={18} />{loading ? "Loading" : "Refresh"}</button>} />
       <InlineError message={error} />
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-4" id="kitchen-summary">
         <Stat icon={ReceiptText} label="Incoming" value={orders.filter((order) => (order.kdsStatus || kdsStatusFor(order.status)) === "NEW").length} detail="New orders" />
         <Stat icon={Activity} label="Preparing" value={orders.filter((order) => (order.kdsStatus || kdsStatusFor(order.status)) === "PREPARING").length} detail="Kitchen queue" />
         <Stat icon={PackageCheck} label="Ready" value={orders.filter((order) => (order.kdsStatus || kdsStatusFor(order.status)) === "READY").length} detail="Pickup or delivery" />

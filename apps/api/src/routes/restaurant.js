@@ -14,6 +14,16 @@ import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } fro
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
+import {
+  buildCustomerDetail,
+  buildCustomerInsights,
+  buildCustomerSummary,
+  buildDriverInsights,
+  buildOperationsReport,
+  enrichCustomer,
+  ensureRestaurantLocations,
+  updateRestaurantLocation
+} from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
 
 const router = Router();
@@ -110,7 +120,7 @@ router.use("/:restaurantId/delivery-zones", featureGuard(FEATURE.DELIVERY_ZONES)
 router.use("/:restaurantId/inventory", featureGuard(FEATURE.INVENTORY));
 router.use("/:restaurantId/reports", featureGuard(FEATURE.REPORTS));
 router.use("/:restaurantId/analytics", featureGuard(FEATURE.ANALYTICS));
-router.use("/:restaurantId/locations", featureGuard(FEATURE.MULTI_LOCATION));
+router.use("/:restaurantId/locations", featureGuard(FEATURE.BASIC_SETTINGS));
 
 function centsTotal(orders = []) {
   return orders.reduce((sum, order) => sum + (order.totalCents || 0), 0);
@@ -600,7 +610,7 @@ const SETTINGS_SECTION_STATUS = {
 const restaurantSettingsRegistry = [
   { id: "account", label: "Account", category: "Account", detail: "Owner identity, session, password recovery, and account access.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.BASIC_SETTINGS },
   { id: "restaurant-profile", label: "Restaurant Profile", category: "Restaurant", detail: "Business name, public name, contact information, address, timezone, and public identity.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_SETTINGS, endpoint: "PATCH /api/restaurants/:restaurantId/profile" },
-  { id: "locations", label: "Locations", category: "Restaurant", detail: "Primary location today and multi-location foundation for Enterprise tenants.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.MULTI_LOCATION },
+  { id: "locations", label: "Locations", category: "Restaurant", detail: "Primary location details, address, contact information, timezone, and multi-location foundation.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_SETTINGS, endpoint: "PATCH /api/restaurants/:restaurantId/locations/:locationId" },
   { id: "business-hours", label: "Business Hours", category: "Restaurant", detail: "Store hours used by the public website and ordering surfaces.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.BASIC_WEBSITE, endpoint: "PATCH /api/restaurants/:restaurantId/website" },
   { id: "ordering", label: "Ordering", category: "Operations", detail: "Pickup, delivery, order readiness, and kitchen workflow configuration.", status: SETTINGS_SECTION_STATUS.READ_ONLY, feature: FEATURE.RESTAURANT_ORDERING },
   { id: "menu-catalog", label: "Menu/Catalog", category: "Operations", detail: "Menu categories, food items, photos, modifiers, availability, and food catalog controls.", status: SETTINGS_SECTION_STATUS.IMPLEMENTED, feature: FEATURE.MENU_MANAGEMENT, endpoint: "POST/PATCH /api/restaurants/:restaurantId/menu" },
@@ -1483,15 +1493,7 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
 
 router.get("/:restaurantId/dispatch", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const [drivers, deliveries] = await Promise.all([
-      prisma.driver.findMany({ where: { restaurantId }, include: { user: true, deliveries: { where: { status: { not: "DELIVERED" } }, include: { order: { include: { customer: true } } } } }, orderBy: { updatedAt: "desc" } }),
-      prisma.delivery.findMany({ where: { restaurantId, status: { not: "DELIVERED" } }, include: { driver: { include: { user: true } }, order: { include: { customer: true, items: true } } }, orderBy: { createdAt: "desc" } })
-    ]);
-    const availableDrivers = drivers.filter((driver) => driver.user.status === "ACTIVE" && driver.available && driver.deliveries.length === 0);
-    const busyDrivers = drivers.filter((driver) => driver.user.status === "ACTIVE" && driver.deliveries.length > 0);
-    const offlineDrivers = drivers.filter((driver) => driver.user.status !== "ACTIVE" || (!driver.available && driver.deliveries.length === 0));
-    res.json({ availableDrivers, busyDrivers, offlineDrivers, deliveries });
+    res.json(await buildDriverInsights(restaurantIdFor(req), req.query));
   } catch (error) {
     next(error);
   }
@@ -1538,8 +1540,8 @@ router.patch("/:restaurantId/deliveries/:deliveryId/cancel-assignment", async (r
 
 router.get("/:restaurantId/drivers", async (req, res, next) => {
   try {
-    const drivers = await prisma.driver.findMany({ where: { restaurantId: restaurantIdFor(req) }, include: { user: true, deliveries: true } });
-    res.json({ drivers });
+    const insights = await buildDriverInsights(restaurantIdFor(req), req.query);
+    res.json({ drivers: insights.drivers, summary: insights.summary, range: insights.range });
   } catch (error) {
     next(error);
   }
@@ -1703,34 +1705,7 @@ router.patch("/:restaurantId/employees/:employeeId/disable", async (req, res, ne
 
 router.get("/:restaurantId/customers", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const search = req.query.search?.toString();
-    const customers = await prisma.customer.findMany({
-      where: {
-        restaurantId,
-        ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { email: { contains: search, mode: "insensitive" } }, { phone: { contains: search, mode: "insensitive" } }] } : {})
-      },
-      include: { orders: { include: { items: true }, orderBy: { createdAt: "desc" } }, loyaltyPoints: true },
-      orderBy: { updatedAt: "desc" }
-    });
-    const enriched = customers.map((customer) => {
-      const totalOrders = customer.orders.length;
-      const lifetimeSpendCents = centsTotal(customer.orders);
-      const itemCounts = new Map();
-      customer.orders.forEach((order) => order.items.forEach((item) => itemCounts.set(item.name, (itemCounts.get(item.name) || 0) + item.quantity)));
-      const favoriteMenuItems = [...itemCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, quantity]) => ({ name, quantity }));
-      return {
-        ...customer,
-        segment: customer.segment || segmentForCustomer(customer),
-        totalOrders,
-        lifetimeSpendCents,
-        averageOrderValueCents: totalOrders ? Math.round(lifetimeSpendCents / totalOrders) : 0,
-        lastOrderDate: customer.orders[0]?.createdAt || null,
-        favoriteMenuItems,
-        loyaltyPointBalance: customer.loyaltyPoints.reduce((sum, point) => sum + point.points, 0)
-      };
-    });
-    res.json({ customers: enriched });
+    res.json(await buildCustomerInsights(restaurantIdFor(req), req.query));
   } catch (error) {
     next(error);
   }
@@ -1738,17 +1713,7 @@ router.get("/:restaurantId/customers", async (req, res, next) => {
 
 router.get("/:restaurantId/customers/summary", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const [customers, repeatCustomers, vipCustomers] = await Promise.all([
-      prisma.customer.count({ where: { restaurantId } }),
-      prisma.customer.count({ where: { restaurantId, orders: { some: {} } } }),
-      prisma.customer.count({ where: { restaurantId, segment: "VIP_CUSTOMER" } })
-    ]);
-    const newCustomersThisMonth = await prisma.customer.count({ where: { restaurantId, createdAt: { gte: monthStart } } });
-    res.json({ totalCustomers: customers, newCustomersThisMonth, repeatCustomerPercentage: customers ? Math.round((repeatCustomers / customers) * 100) : 0, vipCustomerCount: vipCustomers });
+    res.json(await buildCustomerSummary(restaurantIdFor(req), req.query));
   } catch (error) {
     next(error);
   }
@@ -1756,10 +1721,7 @@ router.get("/:restaurantId/customers/summary", async (req, res, next) => {
 
 router.get("/:restaurantId/customers/:customerId", async (req, res, next) => {
   try {
-    const customer = await prisma.customer.findFirst({
-      where: { id: req.params.customerId, restaurantId: restaurantIdFor(req) },
-      include: { orders: { include: { items: true }, orderBy: { createdAt: "desc" } }, loyaltyPoints: true }
-    });
+    const customer = await buildCustomerDetail(restaurantIdFor(req), req.params.customerId, req.query);
     if (!customer) return res.status(404).json({ error: "Customer not found" });
     res.json({ customer });
   } catch (error) {
@@ -1769,10 +1731,22 @@ router.get("/:restaurantId/customers/:customerId", async (req, res, next) => {
 
 router.patch("/:restaurantId/customers/:customerId/notes", async (req, res, next) => {
   try {
-    const existing = await prisma.customer.findFirst({ where: { id: req.params.customerId, restaurantId: restaurantIdFor(req) } });
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.customer.findFirst({ where: { id: req.params.customerId, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Customer not found" });
-    const customer = await prisma.customer.update({ where: { id: req.params.customerId }, data: { notes: req.body.notes, segment: req.body.segment } });
-    res.json({ customer });
+    const updateData = {};
+    if (req.body.notes !== undefined) updateData.notes = req.body.notes || "";
+    if (req.body.segment) updateData.segment = req.body.segment;
+    const customer = await prisma.customer.update({ where: { id: existing.id }, data: updateData, include: { orders: true, loyaltyPoints: true } });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId,
+      action: "customer.updated",
+      entityType: "Customer",
+      entityId: customer.id,
+      metadata: { fields: Object.keys(updateData) }
+    });
+    res.json({ customer: enrichCustomer(customer) });
   } catch (error) {
     next(error);
   }
@@ -2092,12 +2066,8 @@ router.delete("/:restaurantId/inventory/:itemId", async (req, res, next) => {
 
 router.get("/:restaurantId/reports/sales", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const [orders, payments] = await Promise.all([
-      prisma.order.groupBy({ by: ["status"], where: { restaurantId }, _count: true, _sum: { totalCents: true, tipCents: true, restaurantTipCents: true, driverTipCents: true } }),
-      prisma.payment.aggregate({ where: { order: { restaurantId } }, _sum: { amountCents: true, restaurantNetCents: true, driverTipCents: true, technologyFeeCents: true } })
-    ]);
-    res.json({ orders, payments: payments._sum });
+    const report = await buildOperationsReport(restaurantIdFor(req), req.query);
+    res.json({ sales: report.sales, charts: report.charts, drilldowns: report.drilldowns, range: report.range });
   } catch (error) {
     next(error);
   }
@@ -2105,57 +2075,7 @@ router.get("/:restaurantId/reports/sales", async (req, res, next) => {
 
 router.get("/:restaurantId/reports/operations", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-    const startOfWeek = new Date(startOfDay);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const [orders, customers, deliveries] = await Promise.all([
-      prisma.order.findMany({ where: { restaurantId }, include: { items: true }, orderBy: { createdAt: "desc" } }),
-      prisma.customer.findMany({ where: { restaurantId }, include: { orders: true } }),
-      prisma.delivery.findMany({ where: { restaurantId }, include: { driver: { include: { user: true } } } })
-    ]);
-    const nonCancelled = orders.filter((order) => order.status !== "CANCELLED");
-    const salesSince = (date) => nonCancelled.filter((order) => order.createdAt >= date).reduce((sum, order) => sum + order.totalCents, 0);
-    const itemStats = new Map();
-    nonCancelled.forEach((order) => order.items.forEach((item) => {
-      const current = itemStats.get(item.menuItemId) || { id: item.menuItemId, name: item.name, quantity: 0, revenueCents: 0 };
-      current.quantity += item.quantity;
-      current.revenueCents += item.quantity * item.unitPriceCents;
-      itemStats.set(item.menuItemId, current);
-    }));
-    const itemRows = [...itemStats.values()];
-    const driverRows = deliveries.reduce((rows, delivery) => {
-      const key = delivery.driverId || "unassigned";
-      const current = rows.get(key) || { driverId: delivery.driverId, name: delivery.driver?.user?.name || "Unassigned", deliveries: 0, tipsCents: 0, earningsCents: 0 };
-      if (delivery.status === "DELIVERED") current.deliveries += 1;
-      current.tipsCents += delivery.tipCents || 0;
-      current.earningsCents += (delivery.baseEarningsCents || 0) + (delivery.tipCents || 0);
-      rows.set(key, current);
-      return rows;
-    }, new Map());
-    res.json({
-      sales: {
-        dailySalesCents: salesSince(startOfDay),
-        weeklySalesCents: salesSince(startOfWeek),
-        monthlySalesCents: salesSince(startOfMonth),
-        totalTipsCents: nonCancelled.reduce((sum, order) => sum + (order.tipCents || 0), 0),
-        restaurantTipsCents: nonCancelled.reduce((sum, order) => sum + (order.restaurantTipCents || 0), 0),
-        driverTipsCents: nonCancelled.reduce((sum, order) => sum + (order.driverTipCents ?? order.tipCents ?? 0), 0)
-      },
-      items: {
-        topSellingItems: [...itemRows].sort((a, b) => b.quantity - a.quantity).slice(0, 10),
-        leastSellingItems: [...itemRows].sort((a, b) => a.quantity - b.quantity).slice(0, 10)
-      },
-      customers: {
-        newCustomers: customers.filter((customer) => customer.orders.length === 0).length,
-        returningCustomers: customers.filter((customer) => customer.orders.length > 1).length,
-        vipCustomers: customers.filter((customer) => customer.segment === "VIP_CUSTOMER").length
-      },
-      drivers: [...driverRows.values()]
-    });
+    res.json(await buildOperationsReport(restaurantIdFor(req), req.query));
   } catch (error) {
     next(error);
   }
@@ -2163,35 +2083,15 @@ router.get("/:restaurantId/reports/operations", async (req, res, next) => {
 
 router.get("/:restaurantId/analytics", async (req, res, next) => {
   try {
-    const restaurantId = restaurantIdFor(req);
-    const orders = await prisma.order.findMany({ where: { restaurantId }, include: { items: true }, orderBy: { createdAt: "asc" } });
-    const delivered = orders.filter((order) => order.status !== "CANCELLED");
-    const totalRevenueCents = centsTotal(delivered);
-    const byDay = new Map();
-    const itemStats = new Map();
-    delivered.forEach((order) => {
-      const day = order.createdAt.toISOString().slice(0, 10);
-      byDay.set(day, { date: day, salesCents: (byDay.get(day)?.salesCents || 0) + order.totalCents, orders: (byDay.get(day)?.orders || 0) + 1 });
-      order.items.forEach((item) => {
-        const current = itemStats.get(item.menuItemId) || { name: item.name, quantity: 0, revenueCents: 0 };
-        current.quantity += item.quantity;
-        current.revenueCents += item.quantity * item.unitPriceCents;
-        itemStats.set(item.menuItemId, current);
-      });
-    });
+    const report = await buildOperationsReport(restaurantIdFor(req), req.query);
     res.json({
-      metrics: {
-        totalOrders: delivered.length,
-        totalRevenueCents,
-        averageOrderValueCents: delivered.length ? Math.round(totalRevenueCents / delivered.length) : 0,
-        deliveryOrders: delivered.filter((order) => order.type === "DELIVERY").length,
-        pickupOrders: delivered.filter((order) => order.type === "PICKUP").length,
-        totalTipsCents: delivered.reduce((sum, order) => sum + (order.tipCents || 0), 0),
-        restaurantTipsCents: delivered.reduce((sum, order) => sum + (order.restaurantTipCents || 0), 0),
-        driverTipsCents: delivered.reduce((sum, order) => sum + (order.driverTipCents ?? order.tipCents ?? 0), 0)
-      },
-      charts: { salesTrend: [...byDay.values()], ordersTrend: [...byDay.values()], customerGrowth: [], loyaltyGrowth: [] },
-      popularItems: [...itemStats.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 10)
+      metrics: report.sales,
+      charts: report.charts,
+      popularItems: report.items.topSellingItems,
+      salesTrend: report.charts.salesTrend,
+      ordersTrend: report.charts.ordersTrend,
+      customerGrowth: report.charts.customerGrowth,
+      loyaltyGrowth: report.charts.loyaltyGrowth
     });
   } catch (error) {
     next(error);
@@ -2221,8 +2121,20 @@ router.get("/:restaurantId/menu/insights", async (req, res, next) => {
 
 router.get("/:restaurantId/locations", async (req, res, next) => {
   try {
-    const locations = await prisma.restaurantLocation.findMany({ where: { restaurantId: restaurantIdFor(req) } });
-    res.json({ locations });
+    res.json({ locations: await ensureRestaurantLocations(restaurantIdFor(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/locations/:locationId", async (req, res, next) => {
+  try {
+    res.json(await updateRestaurantLocation({
+      restaurantId: restaurantIdFor(req),
+      locationId: req.params.locationId,
+      data: req.body,
+      actorUserId: req.user.id
+    }));
   } catch (error) {
     next(error);
   }

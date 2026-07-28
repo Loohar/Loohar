@@ -213,12 +213,40 @@ textarea {
     @apply grid content-start gap-1 p-3;
   }
 
+  .restaurant-shell-nav-block {
+    @apply grid gap-1;
+  }
+
   .restaurant-shell-nav-item {
     @apply flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-bold text-slate-600 transition hover:bg-slate-100 hover:text-ink;
   }
 
   .restaurant-shell-nav-item.active {
     @apply bg-ink text-white shadow-soft hover:bg-ink hover:text-white;
+  }
+
+  .restaurant-settings-subnav {
+    @apply ml-3 mt-1 grid gap-3 border-l border-line pl-3;
+  }
+
+  .restaurant-settings-subnav-group {
+    @apply grid gap-1;
+  }
+
+  .restaurant-settings-subnav-group > span {
+    @apply px-2 text-[0.65rem] font-black uppercase tracking-wide text-slate-400;
+  }
+
+  .restaurant-settings-subnav-link {
+    @apply flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-xs font-bold text-slate-500 transition hover:bg-slate-100 hover:text-ink;
+  }
+
+  .restaurant-settings-subnav-link.active {
+    @apply bg-mint/10 text-mint;
+  }
+
+  .restaurant-settings-subnav-link b {
+    @apply text-[0.62rem] font-black uppercase tracking-wide text-slate-400;
   }
 
   .restaurant-shell-sidebar-footer {
@@ -367,6 +395,138 @@ textarea {
 
   .restaurant-dashboard-shortcut b {
     @apply text-lg text-ink;
+  }
+
+  .crm-toolbar {
+    @apply flex flex-col gap-3 lg:flex-row lg:items-center;
+  }
+
+  .crm-toolbar .select {
+    @apply lg:max-w-56;
+  }
+
+  .crm-layout {
+    @apply grid gap-5 xl:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.15fr)];
+  }
+
+  .customer-list {
+    @apply grid max-h-[720px] gap-3 overflow-y-auto pr-1;
+  }
+
+  .customer-list-row {
+    @apply w-full rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:border-mint;
+  }
+
+  .customer-list-row.active {
+    @apply border-mint bg-mint/5;
+  }
+
+  .customer-detail-panel {
+    @apply min-h-[420px] rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .customer-detail-grid {
+    @apply grid gap-3 sm:grid-cols-2;
+  }
+
+  .customer-detail-grid > div {
+    @apply rounded-md border border-line bg-white p-3;
+  }
+
+  .customer-detail-grid span {
+    @apply block text-xs font-black uppercase tracking-wide text-slate-400;
+  }
+
+  .customer-detail-grid strong {
+    @apply mt-1 block text-sm font-black text-ink;
+  }
+
+  .metric-bar-card {
+    @apply rounded-md border border-line bg-white p-4 shadow-soft;
+  }
+
+  .metric-bar-card-head {
+    @apply mb-4 flex flex-col gap-1;
+  }
+
+  .metric-bar-card-head h4 {
+    @apply text-base font-black text-ink;
+  }
+
+  .metric-bar-card-head p {
+    @apply text-sm font-semibold text-slate-500;
+  }
+
+  .metric-bar-list {
+    @apply grid gap-3;
+  }
+
+  .metric-bar-row {
+    @apply grid gap-2;
+  }
+
+  .metric-bar-row-head {
+    @apply flex items-center justify-between gap-3 text-sm font-bold text-slate-600;
+  }
+
+  .metric-bar-track {
+    @apply h-2 overflow-hidden rounded-full bg-slate-100;
+  }
+
+  .metric-bar-track span {
+    @apply block h-full rounded-full bg-mint;
+  }
+
+  .driver-dispatch-grid {
+    @apply grid gap-5 xl:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)];
+  }
+
+  .driver-roster {
+    @apply grid max-h-[640px] gap-3 overflow-y-auto pr-1;
+  }
+
+  .driver-roster-row {
+    @apply grid w-full gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:border-mint;
+  }
+
+  .driver-roster-row.active {
+    @apply border-mint bg-mint/5;
+  }
+
+  .driver-roster-meta {
+    @apply grid grid-cols-3 gap-2 text-xs font-bold text-slate-500;
+  }
+
+  .driver-detail-panel {
+    @apply min-h-[360px] rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .settings-group {
+    @apply rounded-md border border-line bg-slate-50 p-3;
+  }
+
+  .settings-group-title {
+    @apply mb-3 flex items-center justify-between gap-3 px-1;
+  }
+
+  .settings-group-title span {
+    @apply text-xs font-black uppercase tracking-wide text-slate-500;
+  }
+
+  .settings-group-title small {
+    @apply text-xs font-bold text-slate-400;
+  }
+
+  .settings-group-grid {
+    @apply grid gap-3 md:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .location-editor {
+    @apply rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .location-editor-grid {
+    @apply grid gap-3 md:grid-cols-2;
   }
 
   .pos-register {
@@ -930,16 +1090,6 @@ textarea {
     .pos-cart.open {
       transform: translateY(0);
     }
-  }
-
-  .restaurant-dashboard-dashboard :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
-  .restaurant-dashboard-orders :is(#settings-menu-catalog, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
-  .restaurant-dashboard-pos :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
-  .restaurant-dashboard-customers :is(#settings-menu-catalog, #orders, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #reports, #settings),
-  .restaurant-dashboard-drivers :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #reports-analytics-summary, #reports-menu-insights, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-inventory, #settings-notifications, #reports, #settings),
-  .restaurant-dashboard-reports :is(#settings-menu-catalog, #orders, #customers-summary, #customers, #settings-loyalty, #settings-coupons, #settings-website-branding, #settings-domains-seo, #settings-gallery-social, #kitchen, #settings-ordering, #settings-staff-access, #drivers, #settings-delivery, #settings-inventory, #settings-notifications, #settings),
-  .restaurant-dashboard-settings :is(#orders, #customers-summary, #customers, #reports-analytics-summary, #reports-menu-insights, #kitchen-summary, #drivers, #reports) {
-    display: none;
   }
 
   @media (min-width: 1024px) {
@@ -2908,8 +3058,11 @@ textarea {
     }
 
     .public-nav-center,
-    .public-nav-center-spacer,
     .public-nav-actions {
+      display: none;
+    }
+
+    .public-nav-center-spacer {
       display: none;
     }
 
