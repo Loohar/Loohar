@@ -32,7 +32,7 @@ import { io } from "socket.io-client";
 import QRCode from "qrcode";
 import DriverPwaApp from "./apps/driver/DriverApp.jsx";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
-import { clearSession, getStoredSession, storeSession } from "./shared/auth.js";
+import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
 
@@ -5576,7 +5576,12 @@ function AdminCreateBusinessPage({ apiOnline, token }) {
     setError("");
     setCreatingTenant(true);
     try {
-      await api("/api/admin/tenants", { method: "POST", token, body: tenantCreatePayload(nextForm) });
+      const idempotencyKey = window.crypto?.randomUUID?.() || `tenant-${nextForm.slug}-${Date.now()}`;
+      await api("/api/admin/tenants", {
+        method: "POST",
+        body: tenantCreatePayload(nextForm),
+        headers: { "Idempotency-Key": idempotencyKey }
+      });
       window.sessionStorage.setItem("looharTenantCreated", nextForm.slug);
       navigateInApp("/admin", { replace: true });
     } catch (createError) {
@@ -11426,15 +11431,38 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    function handleAuthExpired() {
-      clearSession();
+    function syncStoredSession(session = getStoredSession()) {
+      setToken(session.token || "");
+      setRefreshToken(session.refreshToken || "");
+      setUser(session.user || null);
+    }
+
+    function handleAuthUpdated(event) {
+      syncStoredSession(event.detail?.session || getStoredSession());
+    }
+
+    function handleAuthExpired(event) {
+      clearSession(event.detail?.reason || "session_expired", { emit: false });
       setToken("");
       setRefreshToken("");
       setUser(null);
       setAuthChecking(false);
+      const path = window.location.pathname;
+      if (isAuthPagePath(path)) return;
+      if (path.startsWith("/admin")) {
+        navigateInApp(loginHrefWithReturnTo("/admin/login", path), { replace: true });
+      } else if (path.startsWith("/restaurant") || path.startsWith("/kitchen")) {
+        navigateInApp(loginHrefWithReturnTo("/restaurant/login", path), { replace: true });
+      } else if (path.startsWith("/customer") || path.startsWith("/driver")) {
+        navigateInApp(loginHrefWithReturnTo("/login", path), { replace: true });
+      }
     }
-    window.addEventListener("loohar:auth-expired", handleAuthExpired);
-    return () => window.removeEventListener("loohar:auth-expired", handleAuthExpired);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    window.addEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthUpdated);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthUpdated);
+    };
   }, []);
 
   useEffect(() => {

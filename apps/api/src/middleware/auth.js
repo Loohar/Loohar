@@ -1,11 +1,15 @@
 import { prisma } from "../config/prisma.js";
 import { verifyAccessToken } from "../utils/tokens.js";
 
+export function authError(res, status, code, error) {
+  return res.status(status).json({ error, code });
+}
+
 export async function requireAuth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: "Missing bearer token" });
+    if (!token) return authError(res, 401, "AUTH_ACCESS_TOKEN_MISSING", "Missing bearer token");
 
     const payload = verifyAccessToken(token);
     const user = await prisma.user.findUnique({
@@ -29,9 +33,9 @@ export async function requireAuth(req, res, next) {
       }
     });
 
-    if (!user) return res.status(401).json({ error: "Invalid token user" });
-    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) return res.status(401).json({ error: "Invalid or expired bearer token" });
-    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return res.status(403).json({ error: "Account is not active" });
+    if (!user) return authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
+    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) return authError(res, 401, "AUTH_SESSION_REVOKED", "Session is no longer valid");
+    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
     req.user = {
       id: user.id,
       email: user.email,
@@ -53,8 +57,11 @@ export async function requireAuth(req, res, next) {
     req.tenantId = user.restaurantId;
     next();
   } catch (error) {
-    if (["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(error.name)) {
-      return res.status(401).json({ error: "Invalid or expired bearer token" });
+    if (error.name === "TokenExpiredError") {
+      return authError(res, 401, "AUTH_ACCESS_TOKEN_EXPIRED", "Access token has expired");
+    }
+    if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) {
+      return authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
     }
     next(error);
   }
@@ -63,7 +70,7 @@ export async function requireAuth(req, res, next) {
 export function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Insufficient permissions" });
+      return authError(res, 403, "AUTH_ROLE_FORBIDDEN", "Insufficient permissions");
     }
     next();
   };
@@ -72,14 +79,14 @@ export function requireRole(...roles) {
 export function requireTenantAccess(req, res, next) {
   if (req.user?.role === "SUPER_ADMIN") return next();
   if (!req.tenantId) {
-    return res.status(403).json({ error: "Tenant access denied" });
+    return authError(res, 403, "AUTH_TENANT_FORBIDDEN", "Tenant access denied");
   }
   const requestedTenant = req.body.restaurantId || req.query.restaurantId;
   if (requestedTenant && requestedTenant !== req.tenantId) {
-    return res.status(403).json({ error: "Tenant access denied" });
+    return authError(res, 403, "AUTH_TENANT_FORBIDDEN", "Tenant access denied");
   }
   if (req.resolvedRestaurantId && req.resolvedRestaurantId !== req.tenantId) {
-    return res.status(403).json({ error: "Tenant access denied" });
+    return authError(res, 403, "AUTH_TENANT_FORBIDDEN", "Tenant access denied");
   }
   next();
 }

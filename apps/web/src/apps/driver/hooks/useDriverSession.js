@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clearSession, getStoredSession, isDriver, storeSession } from "../../../shared/auth.js";
+import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, isDriver, storeSession } from "../../../shared/auth.js";
 import { demoLoginDriver, loginDriver } from "../services/driverApi.js";
 
 export function useDriverSession() {
@@ -13,19 +13,36 @@ export function useDriverSession() {
     }
   }, [session.user]);
 
+  useEffect(() => {
+    function handleSessionUpdated(event) {
+      setSession(event.detail?.session || getStoredSession());
+    }
+
+    function handleSessionExpired() {
+      setSession({ token: "", refreshToken: "", user: null });
+      setAuthError("");
+    }
+
+    window.addEventListener(AUTH_SESSION_UPDATED_EVENT, handleSessionUpdated);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleSessionUpdated);
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleSessionExpired);
+    };
+  }, []);
+
   async function login(credentials) {
     setAuthLoading(true);
     setAuthError("");
     try {
       const payload = await loginDriver(credentials);
       if (!isDriver(payload.user)) {
-        clearSession();
+        clearSession("driver_role_forbidden");
         setSession({ token: "", user: null });
         setAuthError("Use a driver account to open the delivery app.");
         return;
       }
-      storeSession(payload);
-      setSession({ token: payload.accessToken, refreshToken: payload.refreshToken, user: payload.user });
+      setSession(storeSession(payload));
     } catch (error) {
       setAuthError(error.message);
     } finally {
@@ -39,13 +56,12 @@ export function useDriverSession() {
     try {
       const payload = await demoLoginDriver();
       if (!isDriver(payload.user)) {
-        clearSession();
+        clearSession("driver_demo_unavailable");
         setSession({ token: "", user: null });
         setAuthError("Seeded development driver account is unavailable.");
         return;
       }
-      storeSession(payload);
-      setSession({ token: payload.accessToken, refreshToken: payload.refreshToken, user: payload.user });
+      setSession(storeSession(payload));
     } catch (error) {
       setAuthError(error.message);
     } finally {
@@ -54,7 +70,7 @@ export function useDriverSession() {
   }
 
   function logout() {
-    clearSession();
+    clearSession("driver_logout");
     setSession({ token: "", user: null });
     setAuthError("");
   }

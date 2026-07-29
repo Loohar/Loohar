@@ -1,10 +1,11 @@
-import { authStorage } from "../shared/browserStorage.js";
+import { clearSession, getAccessToken, getRefreshToken, getSessionRevision, storeSession } from "../shared/auth.js";
 
 const isDev = import.meta.env.DEV;
 const localDevApiOrigin = [("http" + ":"), "", ("local" + "host")].join("/") + ":5001";
 const localApiUrl = `${localDevApiOrigin}/api`;
-const defaultApiUrl = isDev ? localApiUrl : "/api";
-const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || defaultApiUrl;
+const defaultApiUrl = "/api";
+const runtimeDefaultApiUrl = isDev ? localApiUrl : defaultApiUrl;
+const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || runtimeDefaultApiUrl;
 const legacyRenderHost = ["loohar-api", "onrender", "com"].join(".");
 const apiCustomDomain = ["api", "loohar", "com"].join(".");
 const configuredApiUrl =
@@ -20,6 +21,7 @@ const configuredApiHealthUrl =
     : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
 const inflightRequests = new Map();
+let refreshPromise = null;
 const healthState = {
   payload: null,
   okUntil: 0,
@@ -41,41 +43,60 @@ function isAuthPath(path) {
   return path.startsWith("/api/auth/") || path === "/api/auth";
 }
 
-function clearStoredSession() {
-  authStorage.removeItem("accessToken");
-  authStorage.removeItem("refreshToken");
-  authStorage.removeItem("user");
-  if (globalThis.window?.dispatchEvent && typeof globalThis.window.CustomEvent === "function") {
-    globalThis.window.dispatchEvent(new globalThis.window.CustomEvent("loohar:auth-expired"));
-  }
+function isRefreshRequest(path) {
+  return path === "/api/auth/refresh" || path === "/api/auth/refresh-token";
 }
 
-function clearStoredSessionForToken(requestToken) {
-  const currentToken = authStorage.getItem("accessToken");
+function resolveRequestToken(options = {}) {
+  if (options.skipAuth) return "";
+  return options.token || getAccessToken() || "";
+}
+
+function clearStoredSessionForToken(requestToken, reason = "unauthorized") {
+  const currentToken = getAccessToken();
   if (!requestToken || requestToken !== currentToken) return;
-  clearStoredSession();
+  clearSession(reason);
 }
 
 async function parseApiError(response) {
   return response.json().catch(() => ({}));
 }
 
+function createApiError(response, payload = {}) {
+  const error = new Error(payload.error || `Request failed with ${response.status}`);
+  error.status = response.status;
+  error.payload = payload;
+  error.code = payload.code || null;
+  return error;
+}
+
 async function refreshStoredSession() {
-  const refreshToken = authStorage.getItem("refreshToken");
+  if (refreshPromise) return refreshPromise;
+  const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
-  const response = await fetch(`${API_URL}${apiPath("/api/auth/refresh")}`, {
+  refreshPromise = fetch(`${API_URL}${apiPath("/api/auth/refresh")}`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",
     body: JSON.stringify({ refreshToken }),
     headers: { "Content-Type": "application/json" }
-  });
-  if (!response.ok) return null;
-  const payload = await response.json();
-  if (payload.accessToken) authStorage.setItem("accessToken", payload.accessToken);
-  if (payload.refreshToken) authStorage.setItem("refreshToken", payload.refreshToken);
-  if (payload.user) authStorage.setItem("user", JSON.stringify(payload.user));
-  return payload;
+  })
+    .then(async (response) => {
+      const payload = await parseApiError(response);
+      if (!response.ok) throw createApiError(response, payload);
+      if (!payload.accessToken) {
+        const error = new Error("Refresh did not return a usable session.");
+        error.status = 401;
+        error.code = "AUTH_REFRESH_TOKEN_INVALID";
+        throw error;
+      }
+      storeSession(payload);
+      return payload;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
 }
 
 function requestMethod(options = {}) {
@@ -88,13 +109,13 @@ function shouldDedupeRequest(path, options = {}) {
 
 function requestDedupeKey(path, options = {}, token = "") {
   const headers = options.headers || {};
-  const authKey = options.skipAuth ? "public" : token ? "token" : "anon";
+  const authKey = options.skipAuth ? "public" : token ? `session:${getSessionRevision()}` : "anon";
   return [requestMethod(options), `${API_URL}${apiPath(path)}`, authKey, headers.Accept || headers.accept || ""].join(" ");
 }
 
 async function performApiRequest(path, options = {}) {
   const body = options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body;
-  const token = options.skipAuth ? "" : options.token || authStorage.getItem("accessToken");
+  const token = resolveRequestToken(options);
   const url = `${API_URL}${apiPath(path)}`;
   const requestOptions = {
     ...options,
@@ -111,10 +132,11 @@ async function performApiRequest(path, options = {}) {
   delete requestOptions.authRetry;
   delete requestOptions.skipAuth;
   delete requestOptions.skipDedupe;
+  delete requestOptions.token;
   const response = await fetch(url, requestOptions);
 
   if (!response.ok) {
-    if (response.status === 401 && options.authRetry !== false && !path.includes("/auth/refresh")) {
+    if (response.status === 401 && options.authRetry !== false && !options.skipAuth && !isRefreshRequest(path)) {
       const refreshed = await refreshStoredSession().catch(() => null);
       if (refreshed?.accessToken) {
         const retryResponse = await fetch(url, {
@@ -128,14 +150,16 @@ async function performApiRequest(path, options = {}) {
           if (retryResponse.status === 204) return null;
           return retryResponse.json();
         }
+        const retryPayload = await parseApiError(retryResponse);
+        if (retryResponse.status === 401 && options.clearOnUnauthorized !== false) {
+          clearStoredSessionForToken(refreshed.accessToken, retryPayload.code || "retry_unauthorized");
+        }
+        throw createApiError(retryResponse, retryPayload);
       }
     }
     const payload = await parseApiError(response);
-    if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSessionForToken(token);
-    const error = new Error(payload.error || `Request failed with ${response.status}`);
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
+    if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSessionForToken(token, payload.code || "unauthorized");
+    throw createApiError(response, payload);
   }
 
   if (response.status === 204) return null;
@@ -144,7 +168,7 @@ async function performApiRequest(path, options = {}) {
 
 export async function api(path, options = {}) {
   if (!shouldDedupeRequest(path, options)) return performApiRequest(path, options);
-  const token = options.skipAuth ? "" : options.token || authStorage.getItem("accessToken");
+  const token = resolveRequestToken(options);
   const key = requestDedupeKey(path, options, token);
   if (inflightRequests.has(key)) return inflightRequests.get(key);
   const request = performApiRequest(path, options).finally(() => {

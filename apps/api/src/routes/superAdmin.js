@@ -189,6 +189,7 @@ router.get("/dashboard-summary", async (req, res, next) => {
 
 async function createBusiness(req, res, next) {
   try {
+    const idempotencyKey = (req.get("Idempotency-Key") || "").trim();
     const { ownerEmail, ownerPassword: _ownerPassword, ownerTemporaryPassword: _providedOwnerTemporaryPassword, restaurantAdminEmail: requestedRestaurantAdminEmail, planCode, websiteEnabled, cuisineType, ...restaurantData } = req.body;
     const slugValidation = validatePublicSlug(restaurantData.slug);
     if (!slugValidation.ok) return res.status(400).json({ error: slugValidation.error });
@@ -274,7 +275,14 @@ async function createBusiness(req, res, next) {
       owner ? sendAccountSetupEmail({ user: owner }) : null,
       restaurantAdmin ? sendAccountSetupEmail({ user: restaurantAdmin }) : null
     ]);
-    await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "business.created", entityType: "Business", entityId: restaurant.id });
+    await recordAudit({
+      actorUserId: req.user.id,
+      restaurantId: restaurant.id,
+      action: "business.created",
+      entityType: "Business",
+      entityId: restaurant.id,
+      metadata: idempotencyKey ? { idempotencyKey } : undefined
+    });
     res.status(201).json({ restaurant, business: restaurant, generatedAccounts: { ownerEmail: normalizedOwnerEmail, restaurantAdminEmail, delivery: "set_password_email" } });
   } catch (error) {
     next(error);

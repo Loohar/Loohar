@@ -3,7 +3,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
-import { requireAuth } from "../middleware/auth.js";
+import { authError, requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
 import { notifyPasswordReset } from "../services/notificationService.js";
@@ -254,17 +254,17 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
     if (!user) {
       authDiagnostic("auth.login.user_not_found", { email });
       await recordAudit({ action: "login.failed", entityType: "User", entityId: null, actorUserId: null, restaurantId: null, metadata: { email: maskEmail(email), reason: "user_not_found" } }).catch(() => {});
-      return res.status(401).json({ error: "Invalid email or password" });
+      return authError(res, 401, "AUTH_INVALID_CREDENTIALS", "Invalid email or password");
     }
     if (!user.passwordHash || !(await bcrypt.compare(req.body.password, user.passwordHash))) {
       authDiagnostic(user.passwordHash ? "auth.login.password_mismatch" : "auth.login.missing_password_hash", { email: user.email, userId: user.id });
       await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { email: maskEmail(user.email), reason: user.passwordHash ? "password_mismatch" : "missing_password_hash" } }).catch(() => {});
-      return res.status(401).json({ error: "Invalid email or password" });
+      return authError(res, 401, "AUTH_INVALID_CREDENTIALS", "Invalid email or password");
     }
     if (isProductionDefaultAdmin(user.email) || !canLoginWithStatus(user.status)) {
       authDiagnostic("auth.login.account_inactive", { email: user.email, userId: user.id, status: user.status });
       await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId, metadata: { email: maskEmail(user.email), reason: "inactive_status", status: user.status } }).catch(() => {});
-      return res.status(403).json({ error: "Account is not active" });
+      return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
     }
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
@@ -325,17 +325,28 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
 
 async function refreshToken(req, res, next) {
   try {
+    if (!req.body?.refreshToken) return authError(res, 401, "AUTH_REFRESH_TOKEN_MISSING", "Refresh token is required");
     const payload = verifyRefreshToken(req.body.refreshToken);
     const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: authUserSelect() });
     const tokenSessionVersion = payload.sessionVersion ?? 0;
-    if (!user || tokenSessionVersion !== (user.sessionVersion || 0) || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email)) {
-      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user_or_status" } }).catch(() => {});
-      return res.status(401).json({ error: "Invalid refresh token" });
+    if (!user || isProductionDefaultAdmin(user.email)) {
+      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user" } }).catch(() => {});
+      return authError(res, 401, "AUTH_REFRESH_TOKEN_INVALID", "Invalid refresh token");
+    }
+    if (tokenSessionVersion !== (user.sessionVersion || 0)) {
+      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: "session_revoked" } }).catch(() => {});
+      return authError(res, 401, "AUTH_SESSION_REVOKED", "Session is no longer valid");
+    }
+    if (!canLoginWithStatus(user.status)) {
+      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: "inactive_status", status: user.status } }).catch(() => {});
+      return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
     }
     res.json(await authResponse(user));
   } catch (error) {
     await recordAudit({ action: "token.refresh.failed", entityType: "RefreshToken", metadata: { reason: error.name || "invalid_token" } }).catch(() => {});
-    res.status(401).json({ error: "Invalid refresh token" });
+    if (error.name === "TokenExpiredError") return authError(res, 401, "AUTH_REFRESH_TOKEN_EXPIRED", "Refresh token has expired");
+    if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) return authError(res, 401, "AUTH_REFRESH_TOKEN_INVALID", "Invalid refresh token");
+    next(error);
   }
 }
 
@@ -365,7 +376,7 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
     const tokenHash = hashPasswordResetToken(req.body.token);
     const resetToken = await prisma.passwordResetToken.findUnique({ where: { tokenHash }, include: { user: { include: { restaurant: { select: { id: true, name: true, businessName: true, slug: true } } } } } });
     if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) return res.status(400).json({ error: "Reset link is invalid or expired." });
-    if (!canLoginWithStatus(resetToken.user.status) || isProductionDefaultAdmin(resetToken.user.email)) return res.status(403).json({ error: "Account is not active" });
+    if (!canLoginWithStatus(resetToken.user.status) || isProductionDefaultAdmin(resetToken.user.email)) return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
     const passwordHash = await bcrypt.hash(req.body.newPassword, 12);
     const passwordSync = await updateSupabaseAuthPassword({ email: resetToken.user.email, password: req.body.newPassword });
     const user = await prisma.$transaction(async (tx) => {
@@ -402,7 +413,7 @@ router.post("/logout", requireAuth, async (req, res, next) => {
 router.get("/me", requireAuth, async (req, res, next) => {
   try {
     authDiagnostic("auth.me.success", { userId: req.user.id, role: req.user.role });
-    res.json({ user: req.user, memberships: await membershipsForUser(req.user) });
+    res.json({ user: publicUser(req.user), memberships: await membershipsForUser(req.user) });
   } catch (error) {
     authDiagnostic("auth.me.failed", { userId: req.user?.id, reason: error.name || "unknown" });
     next(error);
