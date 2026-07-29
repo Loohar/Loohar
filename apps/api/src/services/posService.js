@@ -374,6 +374,49 @@ export async function posMenu(restaurantId) {
   });
 }
 
+export async function posMenuAvailabilityDiagnostics(restaurantId, categories = []) {
+  const visibleItems = categories.reduce((total, category) => total + (category.items || []).length, 0);
+  const [
+    totalCategories,
+    activeCategories,
+    inactiveCategories,
+    totalItems,
+    availableItemsTotal,
+    unavailableItemsTotal,
+    activeCategoryAvailableItems
+  ] = await prisma.$transaction([
+    prisma.menuCategory.count({ where: { restaurantId } }),
+    prisma.menuCategory.count({ where: { restaurantId, active: true } }),
+    prisma.menuCategory.count({ where: { restaurantId, active: false } }),
+    prisma.menuItem.count({ where: { restaurantId } }),
+    prisma.menuItem.count({ where: { restaurantId, available: true } }),
+    prisma.menuItem.count({ where: { restaurantId, available: false } }),
+    prisma.menuItem.count({ where: { restaurantId, available: true, category: { active: true } } })
+  ]);
+
+  let reason = "READY";
+  if (visibleItems <= 0) {
+    if (totalItems <= 0) reason = "NO_MENU_ITEMS";
+    else if (activeCategories <= 0) reason = "NO_ACTIVE_CATEGORIES";
+    else if (availableItemsTotal <= 0) reason = "NO_AVAILABLE_ITEMS";
+    else reason = "MENU_ITEMS_NOT_PUBLISHED_TO_POS";
+  }
+
+  return {
+    totalCategories,
+    activeCategories,
+    inactiveCategories,
+    totalItems,
+    availableItemsTotal,
+    unavailableItemsTotal,
+    activeCategoryAvailableItems,
+    visibleItems,
+    hiddenAvailableItems: Math.max(0, availableItemsTotal - visibleItems),
+    hasUnpublishedPosItems: totalItems > 0 && visibleItems <= 0,
+    reason
+  };
+}
+
 async function taxRateBps(restaurantId) {
   const config = await prisma.taxConfiguration.findFirst({
     where: { restaurantId, enabled: true },

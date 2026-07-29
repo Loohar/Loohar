@@ -4,7 +4,7 @@ import { recordAudit } from "../../services/auditService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
 import { maskEmail, normalizeEmail } from "../../utils/authSecurity.js";
 import { validatePublicSlug } from "../../../../shared/reservedSlugs.js";
-import { createPlatformCheckout, getPlatformPlans } from "../platformBilling/platformBillingService.js";
+import { createPlatformCheckout, getPlatformPlans, provisionRestaurantTenant } from "../platformBilling/platformBillingService.js";
 
 const REGISTRATION_TTL_MS = 60 * 60 * 1000;
 const terminalStatuses = new Set(["TENANT_CREATED", "COMPLETED", "FAILED", "EXPIRED", "CANCELED", "CANCELLED"]);
@@ -57,6 +57,8 @@ function registrationSummary(registration) {
   if (!registration) return null;
   const status = registration.status;
   const complete = ["TENANT_CREATED", "COMPLETED"].includes(status);
+  const registrationJson = registration.registrationJson && typeof registration.registrationJson === "object" ? registration.registrationJson : {};
+  const introTrialStarted = complete && registrationJson.billingMode === "INTRO_TRIAL";
   const publicUrl = complete ? `https://${defaultTenantHost(registration.slug)}` : `https://loohar.com/${registration.slug}`;
   return {
     id: registration.id,
@@ -68,13 +70,16 @@ function registrationSummary(registration) {
     planCode: registration.planCode,
     billingInterval: registration.billingInterval || "MONTHLY",
     status,
-    subscriptionStatus: complete ? "ACTIVE" : ["CHECKOUT_CREATED", "PAYMENT_PENDING", "PAYMENT_PROCESSING", "PAYMENT_VERIFIED"].includes(status) ? "PENDING" : "NONE",
+    subscriptionStatus: introTrialStarted ? "INTRO_TRIAL" : complete ? "ACTIVE" : ["CHECKOUT_CREATED", "PAYMENT_PENDING", "PAYMENT_PROCESSING", "PAYMENT_VERIFIED"].includes(status) ? "PENDING" : "NONE",
+    introductoryProgramStarted: introTrialStarted,
+    paymentNotRequired: introTrialStarted,
     checkoutSessionCreated: Boolean(registration.stripeCheckoutSessionId),
     createdAt: registration.createdAt,
     expiresAt: registration.expiresAt,
     completedAt: registration.completedAt,
     steps: {
       paymentConfirmed: ["PAYMENT_VERIFIED", "TENANT_CREATED", "COMPLETED"].includes(status),
+      paymentNotRequired: introTrialStarted,
       creatingAccount: ["PAYMENT_VERIFIED", "PAYMENT_PROCESSING"].includes(status),
       creatingRestaurant: ["PAYMENT_VERIFIED", "PAYMENT_PROCESSING"].includes(status),
       assigningOwner: ["PAYMENT_VERIFIED", "PAYMENT_PROCESSING"].includes(status),
@@ -240,6 +245,41 @@ export async function createRegistrationCheckout({ registrationId, planCode, bil
     registration: registrationSummary(result.pendingRegistration),
     checkoutUrl: result.checkoutUrl,
     sessionId: result.sessionId
+  };
+}
+
+export async function createRegistrationIntroTrial({ registrationId, planCode, billingInterval }) {
+  const pending = await prisma.pendingRegistration.findUnique({ where: { id: registrationId } });
+  if (!pending) {
+    const error = new Error("Registration not found.");
+    error.status = 404;
+    throw error;
+  }
+  if (pending.restaurantId || ["TENANT_CREATED", "COMPLETED"].includes(pending.status)) {
+    return { registration: registrationSummary(pending) };
+  }
+  const result = await provisionRestaurantTenant({
+    pendingId: registrationId,
+    planCode,
+    billingInterval,
+    source: "PUBLIC_REGISTRATION"
+  });
+  const registration = await prisma.pendingRegistration.findUnique({ where: { id: registrationId } });
+  await recordAudit({
+    restaurantId: result.restaurant?.id,
+    action: "registration.intro_trial.started",
+    entityType: "PendingRegistration",
+    entityId: registrationId,
+    metadata: { planCode: normalizePlanCode(planCode), billingInterval: normalizeBillingInterval(billingInterval), noAutomaticCharge: true }
+  }).catch(() => {});
+  return {
+    registration: registrationSummary(registration),
+    restaurant: {
+      id: result.restaurant?.id,
+      slug: result.restaurant?.slug,
+      name: result.restaurant?.name,
+      trialEndsAt: result.restaurant?.trialEndsAt
+    }
   };
 }
 

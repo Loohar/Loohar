@@ -77,6 +77,26 @@ for (const feature of [
   assert.equal(decision.code, "FEATURE_NOT_INCLUDED");
 }
 
+const corePosFeatures = [
+  FEATURE.POS_REGISTER,
+  FEATURE.POS_KIOSK_MODE,
+  FEATURE.POS_DEVICE_MANAGEMENT,
+  FEATURE.POS_CASH_PAYMENTS,
+  FEATURE.POS_CARD_PAYMENTS,
+  FEATURE.POS_SHIFTS,
+  FEATURE.POS_RECEIPTS
+];
+
+for (const feature of corePosFeatures) {
+  assert.equal(FEATURE_REQUIRED_PLAN[feature], "STARTER", `${feature} should be core for every plan`);
+  for (const plan of ["STARTER", "PROFESSIONAL", "ENTERPRISE"]) {
+    assert.equal(entitlementDecision(entitlement(plan), feature, "GET").allowed, true, `${plan} should read ${feature}`);
+    assert.equal(entitlementDecision(entitlement(plan), feature, "POST").allowed, true, `${plan} should mutate ${feature}`);
+  }
+}
+
+assert.equal(FEATURE_REQUIRED_PLAN[FEATURE.POS], "ENTERPRISE", "Advanced POS integrations remain Enterprise");
+
 const readOnlyRead = entitlementDecision(entitlement("PROFESSIONAL", "UNPAID"), FEATURE.LOYALTY, "GET");
 assert.equal(readOnlyRead.allowed, true, "UNPAID subscriptions may read allowed features");
 assert.ok(readOnlyRead.warning, "UNPAID reads should carry warning context");

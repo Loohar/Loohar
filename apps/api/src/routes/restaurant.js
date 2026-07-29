@@ -35,6 +35,50 @@ function restaurantIdFor(req) {
   return req.user.role === "SUPER_ADMIN" ? req.params.restaurantId || req.body.restaurantId : req.tenantId;
 }
 
+function ceilDaysUntil(date) {
+  if (!date) return null;
+  const ms = new Date(date).getTime() - Date.now();
+  return Math.max(0, Math.ceil(ms / 86400000));
+}
+
+function buildIntroductoryProgramSummary(restaurant, entitlements) {
+  const trial = restaurant.trialEnrollments?.[0] || null;
+  const startedAt = restaurant.trialStartedAt || trial?.startedAt || null;
+  const endsAt = restaurant.trialEndsAt || trial?.endsAt || null;
+  const graceEndsAt = restaurant.trialGraceEndsAt || trial?.graceEndsAt || null;
+  const enabled = restaurant.billingMode === "INTRO_TRIAL" || Boolean(trial);
+  if (!enabled) {
+    return {
+      enabled: false,
+      tenantLifecycleStatus: restaurant.tenantLifecycleStatus,
+      paymentLifecycleStatus: restaurant.paymentLifecycleStatus,
+      billingMode: restaurant.billingMode
+    };
+  }
+  const totalDays = startedAt && endsAt ? Math.max(1, Math.ceil((new Date(endsAt).getTime() - new Date(startedAt).getTime()) / 86400000)) : null;
+  const elapsedDays = startedAt ? Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 86400000)) : 0;
+  return {
+    enabled: true,
+    name: restaurant.introductoryProgramName || trial?.programName || "Introductory Program",
+    planCode: trial?.planCode || restaurant.platformSubscriptions?.[0]?.plan?.code || restaurant.subscriptions?.[0]?.plan?.code || null,
+    tenantLifecycleStatus: restaurant.tenantLifecycleStatus,
+    paymentLifecycleStatus: restaurant.paymentLifecycleStatus,
+    billingMode: restaurant.billingMode,
+    startedAt,
+    endsAt,
+    graceEndsAt,
+    totalDays,
+    daysRemaining: ceilDaysUntil(endsAt),
+    dayNumber: totalDays ? Math.min(totalDays, elapsedDays + 1) : null,
+    percentElapsed: totalDays ? Math.min(100, Math.max(0, Math.round((elapsedDays / totalDays) * 100))) : 0,
+    entitlements: entitlements?.features || entitlements?.enabledFeatures || [],
+    paymentMethodRequired: restaurant.paymentLifecycleStatus === "PAYMENT_METHOD_REQUIRED",
+    noAutomaticCharge: true,
+    upcomingReminders: restaurant.notificationSchedules || [],
+    savingsBaseline: restaurant.savingsBaseline || null
+  };
+}
+
 async function assertMenuItemLimit(restaurantId) {
   const used = await prisma.menuItem.count({ where: { restaurantId } });
   return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.MENU_ITEMS, used, requestedIncrement: 1 });
@@ -1051,12 +1095,17 @@ router.get("/me", async (req, res, next) => {
         websiteSettings: true,
         domains: true,
         subscriptions: { include: { plan: true } },
-        platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 }
+        platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 },
+        locations: true,
+        trialEnrollments: { orderBy: { createdAt: "desc" }, take: 1 },
+        notificationSchedules: { where: { status: "SCHEDULED" }, orderBy: { scheduledFor: "asc" }, take: 6 },
+        savingsBaseline: true
       }
     });
     if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
     const entitlements = await loadRestaurantEntitlements(req.tenantId, req);
-    res.json({ restaurant: { ...restaurant, entitlements }, entitlements });
+    const introductoryProgram = buildIntroductoryProgramSummary(restaurant, entitlements);
+    res.json({ restaurant: { ...restaurant, entitlements, introductoryProgram }, entitlements, introductoryProgram });
   } catch (error) {
     next(error);
   }

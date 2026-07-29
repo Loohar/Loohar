@@ -5,10 +5,11 @@ import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
+import { provisionRestaurantTenant } from "../modules/platformBilling/platformBillingService.js";
 import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
-import { defaultTenantHost, domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
+import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
 import { maskEmail, normalizeEmail } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
 import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
@@ -23,25 +24,13 @@ const tenantInclude = {
   domains: true,
   deliveryZones: true,
   subscriptions: { include: { plan: true } },
+  locations: true,
+  platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 },
+  trialEnrollments: { orderBy: { createdAt: "desc" }, take: 1 },
+  notificationSchedules: { orderBy: { scheduledFor: "asc" }, take: 6 },
+  savingsBaseline: true,
   _count: { select: { orders: true, menuItems: true, drivers: true, customers: true } }
 };
-
-const defaultCategoriesByBusinessType = {
-  RESTAURANT: ["Appetizers", "Soups", "Salads", "Lunch", "Dinner", "Desserts", "Drinks"],
-  BAKERY: ["Cakes", "Pastries", "Bread", "Coffee", "Tea", "Desserts"],
-  LIQUOR_STORE: ["Beer", "Wine", "Whiskey", "Vodka", "Rum", "Tequila", "Mixers"],
-  COFFEE_SHOP: ["Espresso", "Coffee", "Tea", "Breakfast", "Bakery", "Sandwiches"]
-};
-
-function defaultCategoriesFor(businessType) {
-  return defaultCategoriesByBusinessType[businessType] || defaultCategoriesByBusinessType.RESTAURANT;
-}
-
-function generatedAdminEmail(ownerEmail, slug) {
-  const [local, domain] = normalizeEmail(ownerEmail).split("@");
-  if (!domain) return `admin+${slug}@loohar.local`;
-  return `${local}+admin@${domain}`;
-}
 
 function adminOnboardingSummary(restaurant) {
   const website = restaurant.websiteSettings || {};
@@ -83,10 +72,11 @@ function generateTemporaryPassword() {
 
 const restaurantSchema = z.object({
   body: z.object({
-    name: z.string().min(2),
+    name: z.string().min(2).optional(),
     businessName: z.string().min(2),
+    publicBusinessName: z.string().min(2).optional(),
     businessType: z.enum(["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK", "CONVENIENCE_STORE", "GAS_STATION_FOOD_SHOP", "LIQUOR_STORE", "OTHER_FOOD_RETAIL"]).default("RESTAURANT"),
-    enabledModules: z.array(z.enum(["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"])).default(["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"]),
+    enabledModules: z.array(z.enum(["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG", "POS_REGISTER", "POS_KIOSK_MODE"])).default(["RESTAURANT_ORDERING", "PICKUP", "DELIVERY", "DRIVER_MANAGEMENT", "LOYALTY", "COUPONS", "DELIVERY_ZONES", "FOOD_CATALOG"]),
     slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
     email: z.string().email().optional(),
     phone: z.string().optional(),
@@ -104,24 +94,28 @@ const restaurantSchema = z.object({
     ownerEmail: z.string().email(),
     ownerPassword: z.string().min(8).optional(),
     ownerTemporaryPassword: z.string().min(8).optional(),
-    planCode: z.enum(["STARTER", "PROFESSIONAL", "ENTERPRISE"]).default("STARTER")
+    planCode: z.enum(["STARTER", "PROFESSIONAL", "ENTERPRISE"]).default("STARTER"),
+    billingMode: z.enum(["INTRO_TRIAL", "PAYMENT_LINK", "STRIPE_CHECKOUT", "COMPLIMENTARY", "MANUAL_INVOICE", "DRAFT"]).default("INTRO_TRIAL")
   })
 });
 
 function normalizeTenantPayload(req, res, next) {
   const body = { ...req.body };
   const businessName = body.businessName || body.name;
+  const publicBusinessName = body.publicBusinessName || body.name || businessName;
   const slug = (body.slug || businessName?.toLowerCase()?.trim()?.replace(/[^a-z0-9]+/g, "-")?.replace(/^-+|-+$/g, "") || "").toLowerCase();
   req.body = {
     ...body,
-    name: body.name || businessName,
-    businessName: body.publicBusinessName || businessName,
+    name: body.name || publicBusinessName || businessName,
+    businessName,
+    publicBusinessName,
     slug,
     email: body.businessEmail ? normalizeEmail(body.businessEmail) : body.email ? normalizeEmail(body.email) : body.email,
     ownerEmail: body.ownerEmail ? normalizeEmail(body.ownerEmail) : body.ownerEmail,
     restaurantAdminEmail: body.restaurantAdminEmail ? normalizeEmail(body.restaurantAdminEmail) : body.restaurantAdminEmail,
     cuisineType: body.categoryLabel || body.cuisineType,
-    planCode: (body.planCode || body.plan || "STARTER").toString().toUpperCase()
+    planCode: (body.planCode || body.plan || "STARTER").toString().toUpperCase(),
+    billingMode: (body.billingMode || "INTRO_TRIAL").toString().toUpperCase()
   };
   next();
 }
@@ -190,100 +184,18 @@ router.get("/dashboard-summary", async (req, res, next) => {
 async function createBusiness(req, res, next) {
   try {
     const idempotencyKey = (req.get("Idempotency-Key") || "").trim();
-    const { ownerEmail, ownerPassword: _ownerPassword, ownerTemporaryPassword: _providedOwnerTemporaryPassword, restaurantAdminEmail: requestedRestaurantAdminEmail, planCode, websiteEnabled, cuisineType, ...restaurantData } = req.body;
-    const slugValidation = validatePublicSlug(restaurantData.slug);
+    const slugValidation = validatePublicSlug(req.body.slug);
     if (!slugValidation.ok) return res.status(400).json({ error: slugValidation.error });
-    restaurantData.slug = slugValidation.slug;
-    const normalizedOwnerEmail = normalizeEmail(ownerEmail);
-    const restaurantAdminEmail = normalizeEmail(requestedRestaurantAdminEmail || generatedAdminEmail(normalizedOwnerEmail, restaurantData.slug));
-    const [existingSlug, existingOwner, existingAdmin] = await Promise.all([
-      prisma.restaurant.findUnique({ where: { slug: restaurantData.slug }, select: { id: true } }),
-      prisma.user.findFirst({ where: { email: { equals: normalizedOwnerEmail, mode: "insensitive" } }, select: { id: true } }),
-      prisma.user.findFirst({ where: { email: { equals: restaurantAdminEmail, mode: "insensitive" } }, select: { id: true } })
-    ]);
-    if (existingSlug) return res.status(409).json({ error: `Slug "${restaurantData.slug}" is already used by another tenant.` });
-    if (existingOwner) return res.status(409).json({ error: `Owner email "${normalizedOwnerEmail}" is already used by another account.` });
-    if (existingAdmin) return res.status(409).json({ error: `Restaurant admin email "${restaurantAdminEmail}" is already used by another account.` });
-    const plan = await prisma.subscriptionPlan.findUnique({ where: { code: planCode } });
-    if (!plan) return res.status(404).json({ error: `Plan "${planCode}" not found.` });
-    const ownerTemporaryPassword = generateTemporaryPassword();
-    const adminTemporaryPassword = generateTemporaryPassword();
-    const [ownerPasswordHash, adminPasswordHash] = await Promise.all([
-      bcrypt.hash(ownerTemporaryPassword, 12),
-      bcrypt.hash(adminTemporaryPassword, 12)
-    ]);
-    const categories = defaultCategoriesFor(restaurantData.businessType);
-    const restaurant = await prisma.$transaction(async (tx) => {
-      const createdRestaurant = await tx.restaurant.create({
-        data: {
-          ...restaurantData,
-          businessName: restaurantData.businessName || restaurantData.name,
-          status: "ACTIVE",
-          settingsJson: {
-            ...(restaurantData.settingsJson || {}),
-            enabledModules: restaurantData.enabledModules,
-            createdBy: "MASTER_ADMIN"
-          },
-          websiteSettings: { create: { websiteEnabled: websiteEnabled ?? true, cuisineType, tagline: cuisineType, heroTitle: restaurantData.name, heroSubtitle: restaurantData.description || `Order directly from ${restaurantData.name}.`, brandColor: "#1f9d80", accentColor: "#f4b740" } },
-          domains: { create: { defaultSubdomain: restaurantData.slug, primaryDomain: defaultTenantHost(restaurantData.slug), canonicalDomain: defaultTenantHost(restaurantData.slug), customDomain: null, dnsTarget: DNS_TARGET, domainStatus: "NOT_CONFIGURED", sslStatus: "NOT_CONFIGURED" } },
-          categories: {
-            create: categories.map((name, index) => ({ name, sortOrder: index + 1 }))
-          },
-          subscriptions: plan ? { create: { planId: plan.id } } : undefined
-        }
-      });
-      const owner = await tx.user.create({
-        data: {
-          email: normalizedOwnerEmail,
-          name: `${restaurantData.name} Owner`,
-          passwordHash: ownerPasswordHash,
-          role: "TENANT_OWNER",
-          status: "ACTIVE",
-          forcePasswordChange: true,
-          temporaryPassword: true,
-          passwordChangedAt: null,
-          restaurantId: createdRestaurant.id
-        }
-      });
-      const restaurantAdmin = await tx.user.create({
-        data: {
-          email: restaurantAdminEmail,
-          name: `${restaurantData.name} Admin`,
-          passwordHash: adminPasswordHash,
-          role: "RESTAURANT_ADMIN",
-          status: "ACTIVE",
-          forcePasswordChange: true,
-          temporaryPassword: true,
-          passwordChangedAt: null,
-          restaurantId: createdRestaurant.id
-        }
-      });
-      await tx.restaurantStaff.create({
-        data: { restaurantId: createdRestaurant.id, userId: owner.id, role: "TENANT_OWNER" }
-      });
-      await tx.restaurantStaff.create({
-        data: { restaurantId: createdRestaurant.id, userId: restaurantAdmin.id, role: "RESTAURANT_ADMIN" }
-      });
-      return tx.restaurant.findUnique({
-        where: { id: createdRestaurant.id },
-        include: tenantInclude
-      });
-    }, { timeout: 20_000 });
-    const owner = restaurant.users?.find((user) => user.role === "TENANT_OWNER");
-    const restaurantAdmin = restaurant.users?.find((user) => user.role === "RESTAURANT_ADMIN");
-    await Promise.allSettled([
-      owner ? sendAccountSetupEmail({ user: owner }) : null,
-      restaurantAdmin ? sendAccountSetupEmail({ user: restaurantAdmin }) : null
-    ]);
-    await recordAudit({
+    const auditMetadata = idempotencyKey ? { idempotencyKey } : undefined;
+    const result = await provisionRestaurantTenant({
+      body: { ...req.body, slug: slugValidation.slug },
       actorUserId: req.user.id,
-      restaurantId: restaurant.id,
-      action: "business.created",
-      entityType: "Business",
-      entityId: restaurant.id,
-      metadata: idempotencyKey ? { idempotencyKey } : undefined
+      source: "SUPER_ADMIN",
+      idempotencyKey,
+      auditMetadata
     });
-    res.status(201).json({ restaurant, business: restaurant, generatedAccounts: { ownerEmail: normalizedOwnerEmail, restaurantAdminEmail, delivery: "set_password_email" } });
+    const restaurant = attachAdminOnboardingSummary(result.restaurant);
+    res.status(201).json({ restaurant, business: restaurant, generatedAccounts: result.generatedAccounts });
   } catch (error) {
     next(error);
   }

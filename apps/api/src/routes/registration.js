@@ -3,7 +3,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { validate } from "../middleware/validate.js";
 import { strongPasswordSchema } from "../utils/authSecurity.js";
-import { cancelRegistration, checkRegistrationSlug, createRegistrationCheckout, getRegistrationStatus, listRegistrationPlans, startRegistration } from "../modules/registration/registrationService.js";
+import { cancelRegistration, checkRegistrationSlug, createRegistrationCheckout, createRegistrationIntroTrial, getRegistrationStatus, listRegistrationPlans, startRegistration } from "../modules/registration/registrationService.js";
 
 const router = Router();
 
@@ -83,6 +83,14 @@ router.post("/start", registrationLimiter, validate(registrationSchema), async (
 router.post("/checkout", checkoutLimiter, validate(checkoutSchema), async (req, res, next) => {
   try {
     res.status(201).json(await createRegistrationCheckout(req.body));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/intro-trial", checkoutLimiter, validate(checkoutSchema), async (req, res, next) => {
+  try {
+    res.status(201).json(await createRegistrationIntroTrial(req.body));
   } catch (error) {
     next(error);
   }

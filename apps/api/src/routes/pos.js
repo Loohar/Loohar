@@ -16,6 +16,7 @@ import {
   openShift,
   posConfig,
   posMenu,
+  posMenuAvailabilityDiagnostics,
   registerPosDevice,
   resolveRestaurantForPos,
   setKioskMode,
@@ -81,8 +82,9 @@ function posEntitlementPayload(req) {
   };
 }
 
-function buildPosMenuPayload(req, categories, requestId = req.get("x-loohar-pos-request-id") || null) {
+async function buildPosMenuPayload(req, categories, requestId = req.get("x-loohar-pos-request-id") || null) {
   const summary = summarizePosMenu(categories);
+  const menuDiagnostics = await posMenuAvailabilityDiagnostics(req.resolvedRestaurantId, categories);
   return {
     requestId,
     generatedAt: new Date().toISOString(),
@@ -95,8 +97,12 @@ function buildPosMenuPayload(req, categories, requestId = req.get("x-loohar-pos-
     availabilitySummary: {
       categories: summary.categoryCount,
       items: summary.itemCount,
-      availableItems: summary.availableItems
+      availableItems: summary.availableItems,
+      visibleItems: menuDiagnostics.visibleItems,
+      totalItems: menuDiagnostics.totalItems,
+      availableItemsTotal: menuDiagnostics.availableItemsTotal
     },
+    menuDiagnostics,
     entitlement: posEntitlementPayload(req),
     categories
   };
@@ -140,7 +146,7 @@ router.get("/:restaurantId/pos/bootstrap", posReadLimiter, async (req, res, next
       generatedAt: new Date().toISOString(),
       performance: { serverDurationMs: Date.now() - startedAt },
       config,
-      menu: buildPosMenuPayload(req, categories, requestId),
+      menu: await buildPosMenuPayload(req, categories, requestId),
       heldOrders
     });
   } catch (error) {
@@ -160,7 +166,7 @@ router.get("/:restaurantId/pos/config", posReadLimiter, async (req, res, next) =
 router.get("/:restaurantId/pos/menu", posReadLimiter, async (req, res, next) => {
   try {
     const categories = await posMenu(req.resolvedRestaurantId);
-    res.json(buildPosMenuPayload(req, categories));
+    res.json(await buildPosMenuPayload(req, categories));
   } catch (error) {
     next(error);
   }

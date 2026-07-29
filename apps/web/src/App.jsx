@@ -100,13 +100,13 @@ const featureRequiredPlans = {
   DELIVERY_ZONES: "PROFESSIONAL",
   INVENTORY: "PROFESSIONAL",
   PRINTING: "PROFESSIONAL",
-  POS_REGISTER: "PROFESSIONAL",
-  POS_KIOSK_MODE: "PROFESSIONAL",
-  POS_DEVICE_MANAGEMENT: "PROFESSIONAL",
-  POS_CASH_PAYMENTS: "PROFESSIONAL",
-  POS_CARD_PAYMENTS: "PROFESSIONAL",
-  POS_SHIFTS: "PROFESSIONAL",
-  POS_RECEIPTS: "PROFESSIONAL",
+  POS_REGISTER: "STARTER",
+  POS_KIOSK_MODE: "STARTER",
+  POS_DEVICE_MANAGEMENT: "STARTER",
+  POS_CASH_PAYMENTS: "STARTER",
+  POS_CARD_PAYMENTS: "STARTER",
+  POS_SHIFTS: "STARTER",
+  POS_RECEIPTS: "STARTER",
   NOTIFICATIONS: "PROFESSIONAL",
   ANALYTICS: "ENTERPRISE",
   MENU_INSIGHTS: "ENTERPRISE",
@@ -114,6 +114,17 @@ const featureRequiredPlans = {
   REPORTS: "ENTERPRISE",
   MULTI_LOCATION: "ENTERPRISE"
 };
+const introProgramActiveMessage = "Your Loohar introductory program is active. No subscription payment is required today.";
+const platformBillingConfigPatterns = [
+  /Loohar subscription billing is not configured/i,
+  new RegExp(["STRIPE", "PLATFORM", "SECRET", "KEY"].join("_"), "i"),
+  /Stripe platform price IDs/i
+];
+
+function isPlatformBillingConfigurationMessage(message) {
+  const text = String(message || "");
+  return platformBillingConfigPatterns.some((pattern) => pattern.test(text));
+}
 const photoImageAccept = "image/png,image/jpeg,image/jpg,image/webp";
 const logoImageAccept = `${photoImageAccept},image/svg+xml`;
 const imageAccept = logoImageAccept;
@@ -390,6 +401,7 @@ function createAdminForm() {
     enabledModules: moduleDefaultsFor("RESTAURANT"),
     ownerEmail: "",
     plan: "STARTER",
+    billingMode: "INTRO_TRIAL",
     businessEmail: "",
     phone: "",
     address: "",
@@ -516,6 +528,7 @@ const tenantRequiredFields = [
   ["businessType", "Business Type"],
   ["categoryLabel", "Category Label"],
   ["plan", "Plan"],
+  ["billingMode", "Billing Mode"],
   ["ownerEmail", "Owner Email"],
   ["businessEmail", "Business Email"],
   ["phone", "Phone"],
@@ -555,6 +568,7 @@ function tenantCreatePayload(form) {
     businessType: form.businessType,
     categoryLabel: form.categoryLabel,
     plan: form.plan,
+    billingMode: form.billingMode,
     ownerEmail: form.ownerEmail,
     businessEmail: form.businessEmail,
     phone: form.phone,
@@ -2770,6 +2784,8 @@ function Redirecting({ to }) {
   );
 }
 
+const fallbackIntroTrialDays = 90;
+
 const fallbackRegistrationPlans = [
   {
     code: "STARTER",
@@ -2778,7 +2794,11 @@ const fallbackRegistrationPlans = [
     monthlyPriceCents: 9900,
     annualPriceCents: 99000,
     features: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding"],
-    trialDays: 0,
+    trialDays: fallbackIntroTrialDays,
+    introductoryProgramAvailable: true,
+    introductoryProgramName: "90-Day Introductory Program",
+    paymentMethodRequiredAtSignup: false,
+    autoChargeWithoutExplicitAuthorization: false,
     locationLimit: 1,
     staffLimit: 5,
     active: true,
@@ -2791,7 +2811,11 @@ const fallbackRegistrationPlans = [
     monthlyPriceCents: 19900,
     annualPriceCents: 199000,
     features: ["Everything in Starter", "Delivery workflows", "Driver management", "Loyalty", "Coupons", "Delivery zones"],
-    trialDays: 0,
+    trialDays: fallbackIntroTrialDays,
+    introductoryProgramAvailable: true,
+    introductoryProgramName: "90-Day Introductory Program",
+    paymentMethodRequiredAtSignup: false,
+    autoChargeWithoutExplicitAuthorization: false,
     locationLimit: 1,
     staffLimit: 25,
     active: true,
@@ -2804,7 +2828,11 @@ const fallbackRegistrationPlans = [
     monthlyPriceCents: 39900,
     annualPriceCents: 399000,
     features: ["Everything in Professional", "Advanced analytics", "Multi-location foundation", "Priority support"],
-    trialDays: 0,
+    trialDays: fallbackIntroTrialDays,
+    introductoryProgramAvailable: true,
+    introductoryProgramName: "90-Day Introductory Program",
+    paymentMethodRequiredAtSignup: false,
+    autoChargeWithoutExplicitAuthorization: false,
     locationLimit: null,
     staffLimit: null,
     active: true,
@@ -2895,6 +2923,20 @@ function planCheckoutAvailable(plan, interval = "MONTHLY") {
   return Boolean(plan.monthlyCheckoutAvailable ?? plan.checkoutAvailable);
 }
 
+function planIntroAvailable(plan) {
+  return Boolean(plan?.introductoryProgramAvailable) && plan?.paymentMethodRequiredAtSignup !== true;
+}
+
+function planStartAvailable(plan, interval = "MONTHLY") {
+  return planIntroAvailable(plan) || planCheckoutAvailable(plan, interval);
+}
+
+function planStartMode(plan, interval = "MONTHLY") {
+  if (planIntroAvailable(plan)) return "INTRO_TRIAL";
+  if (planCheckoutAvailable(plan, interval)) return "STRIPE_CHECKOUT";
+  return "UNAVAILABLE";
+}
+
 const PLAN_CONFIG_STATUS = {
   IDLE: "IDLE",
   LOADING: "LOADING",
@@ -2907,11 +2949,12 @@ function planConfigPending(status) {
 }
 
 function checkoutStatusForPlan(plan, interval, planConfigStatus) {
-  if (planConfigPending(planConfigStatus)) return { tone: "neutral", label: "Checking checkout" };
-  if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) return { tone: "warn", label: "Checkout not confirmed" };
+  if (planConfigPending(planConfigStatus)) return { tone: "neutral", label: "Checking setup" };
+  if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) return { tone: "warn", label: "Setup not confirmed" };
+  if (planIntroAvailable(plan)) return { tone: "good", label: `${plan.trialDays || fallbackIntroTrialDays}-day intro` };
   return planCheckoutAvailable(plan, interval)
     ? { tone: "good", label: "Checkout ready" }
-    : { tone: "warn", label: "Checkout temporarily unavailable" };
+    : { tone: "warn", label: "Setup temporarily unavailable" };
 }
 
 function PlanCardSkeletons({ count = 3 }) {
@@ -3836,7 +3879,7 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
     if (!apiOnline) {
       setPlans(fallbackRegistrationPlans);
       setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
-      setError("Checkout availability could not be confirmed because the live API is offline.");
+      setError("Setup availability could not be confirmed because the live API is offline.");
       return;
     }
     setPlanConfigStatus(PLAN_CONFIG_STATUS.LOADING);
@@ -3848,7 +3891,7 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
       })
       .catch((planError) => {
         setPlans(fallbackRegistrationPlans);
-        setError(planError.message || "Checkout availability could not be confirmed. Please try again.");
+        setError(planError.message || "Setup availability could not be confirmed. Please try again.");
         setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
       });
   }, [apiMode, apiOnline, planRequestKey]);
@@ -3868,12 +3911,12 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
         </div>
         {planConfigIsPending ? (
           <div className="mt-4 min-h-14 rounded-md border border-line bg-slate-50 p-3 text-sm font-semibold text-slate-600" aria-live="polite">
-            Checking secure checkout availability...
+            Checking setup availability...
           </div>
         ) : null}
         {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
           <div className="mt-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between" role="status">
-            <span className="font-semibold">{error || "Checkout availability could not be confirmed. Please try again."}</span>
+            <span className="font-semibold">{error || "Setup availability could not be confirmed. Please try again."}</span>
             <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
           </div>
         ) : null}
@@ -3881,19 +3924,20 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
       <section className="mt-5 grid gap-4 md:grid-cols-3">
         {planConfigIsPending ? <PlanCardSkeletons count={3} /> : plans.map((plan) => {
           const checkoutStatus = checkoutStatusForPlan(plan, billingInterval, planConfigStatus);
-          const available = planConfigStatus === PLAN_CONFIG_STATUS.READY && planCheckoutAvailable(plan, billingInterval);
+          const startMode = planStartMode(plan, billingInterval);
+          const available = planConfigStatus === PLAN_CONFIG_STATUS.READY && planStartAvailable(plan, billingInterval);
           return (
             <div className="panel flex flex-col" key={plan.code}>
               <StatusPill tone={checkoutStatus.tone}>{checkoutStatus.label}</StatusPill>
               <h2 className="public-plan-title">{plan.displayName || normalizePlanLabel(plan.code)}</h2>
               <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{plan.description}</p>
               <p className="public-plan-price">{money(planPrice(plan, billingInterval))}<span>/{billingInterval === "ANNUAL" ? "year" : "month"}</span></p>
-              {plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
+              {planIntroAvailable(plan) ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays || fallbackIntroTrialDays}-day introductory program</p> : plan.trialDays ? <p className="mt-2 text-sm font-bold text-mint">{plan.trialDays}-day trial configured</p> : null}
               <div className="mt-5 space-y-3">
                 {(plan.features || []).map((feature) => <p className="flex items-start gap-2 text-sm text-slate-600" key={feature}><CheckCircle2 className="mt-0.5 text-mint" size={16} />{feature}</p>)}
               </div>
               <a className={`mt-6 justify-center ${available ? "button-primary" : "button-muted"}`} href={`/register?plan=${encodeURIComponent(plan.code)}&billingInterval=${billingInterval}`}>
-                {available ? "Select plan" : "Start setup"}
+                {available && startMode === "INTRO_TRIAL" ? "Start intro program" : available ? "Select plan" : "Start setup"}
               </a>
             </div>
           );
@@ -3925,9 +3969,10 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
   const submittingRef = useRef(false);
   const currentStep = registrationSteps[stepIndex]?.id || "account";
   const selectedPlan = plans.find((plan) => plan.code === form.planCode) || plans[0] || fallbackRegistrationPlans[0];
+  const selectedStartMode = planStartMode(selectedPlan, form.billingInterval);
   const visibleErrors = registrationVisibleErrors(errors, currentStep);
   const planConfigIsPending = planConfigPending(planConfigStatus);
-  const checkoutReady = apiOnline && planConfigStatus === PLAN_CONFIG_STATUS.READY && planCheckoutAvailable(selectedPlan, form.billingInterval);
+  const checkoutReady = apiOnline && planConfigStatus === PLAN_CONFIG_STATUS.READY && planStartAvailable(selectedPlan, form.billingInterval);
 
   useEffect(() => {
     if (apiMode === "CHECKING") {
@@ -3938,7 +3983,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
     if (!apiOnline) {
       setPlans(fallbackRegistrationPlans);
       setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
-      setPlanError("Checkout availability could not be confirmed because the live API is offline.");
+      setPlanError("Setup availability could not be confirmed because the live API is offline.");
       return;
     }
     setPlanConfigStatus(PLAN_CONFIG_STATUS.LOADING);
@@ -3950,7 +3995,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
       })
       .catch((planLoadError) => {
         setPlans(fallbackRegistrationPlans);
-        setPlanError(planLoadError.message || "Checkout availability could not be confirmed. Please try again.");
+        setPlanError(planLoadError.message || "Setup availability could not be confirmed. Please try again.");
         setPlanConfigStatus(PLAN_CONFIG_STATUS.ERROR);
       });
   }, [apiMode, apiOnline, planRequestKey]);
@@ -4036,9 +4081,9 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
       return;
     }
     if (!checkoutReady) {
-      if (planConfigIsPending) setError("Plan details are still loading. Please wait a moment.");
-      else if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) setError(planError || "Checkout availability could not be confirmed. Please retry plan details.");
-      else setError(apiOnline ? "Online subscription checkout is temporarily unavailable. Please contact Loohar support to finish setup." : "Live API is required to start checkout.");
+      if (planConfigIsPending) setError("Plan setup details are still loading. Please wait a moment.");
+      else if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) setError(planError || "Plan setup could not be confirmed. Please retry plan details.");
+      else setError(apiOnline ? "Plan setup is temporarily unavailable. Please contact Loohar support to finish setup." : "Live API is required to start setup.");
       return;
     }
     submittingRef.current = true;
@@ -4047,6 +4092,16 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
       const started = registration?.id ? { registration } : await api("/api/registration/start", { method: "POST", skipAuth: true, body: form });
       const activeRegistration = started.registration;
       setRegistration(activeRegistration);
+      if (selectedStartMode === "INTRO_TRIAL") {
+        const intro = await api("/api/registration/intro-trial", {
+          method: "POST",
+          skipAuth: true,
+          body: { registrationId: activeRegistration.id, planCode: form.planCode, billingInterval: form.billingInterval }
+        });
+        const registrationIdForStatus = intro.registration?.id || activeRegistration.id;
+        navigateInApp(`/register/status?registrationId=${encodeURIComponent(registrationIdForStatus)}`, { replace: true });
+        return;
+      }
       const checkout = await api("/api/registration/checkout", {
         method: "POST",
         skipAuth: true,
@@ -4068,7 +4123,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
       <section className="panel">
         <p className="text-xs font-bold uppercase tracking-wide text-mint">Self-service setup</p>
         <h1 className="public-page-title">Register your restaurant on Loohar.</h1>
-        <p className="mt-3 max-w-3xl text-slate-500">Create the owner account, reserve your restaurant URL, choose a SaaS plan, and continue through secure Stripe-hosted checkout. Your tenant is created only after Loohar receives a verified Stripe webhook.</p>
+        <p className="mt-3 max-w-3xl text-slate-500">Create the owner account, reserve your restaurant URL, choose a SaaS plan, and start the Loohar introductory program. Paid checkout remains available when Loohar enables payment collection.</p>
         <div className="mt-5 grid gap-2 md:grid-cols-4">
           {registrationSteps.map((step, index) => (
             <button
@@ -4164,12 +4219,12 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
             </div>
             {planConfigIsPending ? (
               <div className="mb-4 min-h-14 rounded-md border border-line bg-slate-50 p-3 text-sm font-semibold text-slate-600" aria-live="polite">
-                Checking secure checkout availability...
+                Checking setup availability...
               </div>
             ) : null}
             {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
               <div className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 md:flex-row md:items-center md:justify-between" role="status">
-                <span className="font-semibold">{planError || "Checkout availability could not be confirmed. Please try again."}</span>
+                <span className="font-semibold">{planError || "Setup availability could not be confirmed. Please try again."}</span>
                 <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
               </div>
             ) : null}
@@ -4192,10 +4247,14 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
 
         {currentStep === "checkout" ? (
           <div>
-            <SectionHeader eyebrow="Step 4" title="Secure checkout" icon={Shield} />
+            <SectionHeader eyebrow="Step 4" title={selectedStartMode === "INTRO_TRIAL" ? "Introductory program" : "Secure checkout"} icon={Shield} />
             <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
               <div>
-                <p className="text-sm leading-6 text-slate-500">Review your registration and continue to Stripe-hosted subscription checkout. Loohar provisions your restaurant tenant only after the payment webhook is verified by the API.</p>
+                <p className="text-sm leading-6 text-slate-500">
+                  {selectedStartMode === "INTRO_TRIAL"
+                    ? "Review your registration and start the Loohar introductory program. No payment method is required today, and Loohar will not charge automatically without explicit authorization."
+                    : "Review your registration and continue to Stripe-hosted subscription checkout. Loohar provisions your restaurant tenant only after the payment webhook is verified by the API."}
+                </p>
                 <div className="mt-4 grid gap-2 text-sm">
                   <div className="summary-line"><span>Restaurant</span><strong>{form.publicBusinessName || form.businessName || "Restaurant"}</strong></div>
                   <div className="summary-line"><span>Owner</span><strong>{form.firstName} {form.lastName}</strong></div>
@@ -4205,16 +4264,16 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
               </div>
               <div className="rounded-md border border-line bg-slate-50 p-4">
                 <p className="text-sm font-bold uppercase text-slate-500">Due now</p>
-                <p className="public-plan-price compact">{money(planPrice(selectedPlan, form.billingInterval))}</p>
-                <p className="mt-2 text-sm text-slate-500">Plan price is resolved by the backend. The browser never submits an amount or Stripe Price ID.</p>
-                {planConfigIsPending ? <p className="mt-3 text-sm font-semibold text-slate-600" aria-live="polite">Checking secure checkout availability...</p> : null}
+                <p className="public-plan-price compact">{money(selectedStartMode === "INTRO_TRIAL" ? 0 : planPrice(selectedPlan, form.billingInterval))}</p>
+                <p className="mt-2 text-sm text-slate-500">{selectedStartMode === "INTRO_TRIAL" ? "No automatic charge. Loohar will request explicit authorization before any paid subscription starts." : "Plan price is resolved by the backend. The browser never submits an amount or Stripe Price ID."}</p>
+                {planConfigIsPending ? <p className="mt-3 text-sm font-semibold text-slate-600" aria-live="polite">Checking setup availability...</p> : null}
                 {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
                   <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    <p className="font-semibold">{planError || "Checkout availability could not be confirmed."}</p>
+                    <p className="font-semibold">{planError || "Setup availability could not be confirmed."}</p>
                     <button className="button-muted justify-center" type="button" onClick={() => setPlanRequestKey((key) => key + 1)}>Retry</button>
                   </div>
                 ) : null}
-                {planConfigStatus === PLAN_CONFIG_STATUS.READY && !checkoutReady ? <p className="mt-3 text-sm font-semibold text-amber-800">Online subscription checkout is temporarily unavailable. Please contact Loohar support to finish setup.</p> : null}
+                {planConfigStatus === PLAN_CONFIG_STATUS.READY && !checkoutReady ? <p className="mt-3 text-sm font-semibold text-amber-800">Plan setup is temporarily unavailable. Please contact Loohar support to finish setup.</p> : null}
               </div>
             </div>
           </div>
@@ -4223,7 +4282,7 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
         <div className="mt-6 flex flex-wrap justify-between gap-2 border-t border-line pt-4">
           <button className="button-muted" type="button" disabled={stepIndex === 0} onClick={() => setStepIndex((index) => Math.max(index - 1, 0))}>Back</button>
           {currentStep === "checkout"
-            ? <button className="button-primary" type="submit" disabled={submitting || !checkoutReady}>{submitting ? "Opening checkout..." : "Start secure checkout"}</button>
+            ? <button className="button-primary" type="submit" disabled={submitting || !checkoutReady}>{selectedStartMode === "INTRO_TRIAL" ? submitting ? "Starting program..." : "Start introductory program" : submitting ? "Opening checkout..." : "Start secure checkout"}</button>
             : <button className="button-primary" type="submit">Continue</button>}
         </div>
         {visibleErrors.length ? (
@@ -4291,7 +4350,7 @@ function RegistrationStatusPage({ apiOnline }) {
   }, [apiOnline, registrationId, sessionId]);
 
   const steps = [
-    ["paymentConfirmed", "Payment confirmed"],
+    registration?.paymentNotRequired ? ["paymentNotRequired", "No payment required today"] : ["paymentConfirmed", "Payment confirmed"],
     ["creatingAccount", "Creating account"],
     ["creatingRestaurant", "Creating restaurant"],
     ["assigningOwner", "Assigning owner"],
@@ -4303,9 +4362,13 @@ function RegistrationStatusPage({ apiOnline }) {
       <section className="panel mx-auto max-w-3xl">
         <p className="text-xs font-bold uppercase tracking-wide text-mint">Registration status</p>
         <h1 className="public-page-title compact">{complete ? "Your restaurant workspace is ready." : failed ? "Registration needs attention." : "We are preparing your Loohar workspace."}</h1>
-        <p className="mt-3 text-slate-500">This page checks backend provisioning. Access is created only after the verified Stripe webhook completes tenant setup.</p>
+        <p className="mt-3 text-slate-500">
+          {registration?.paymentNotRequired
+            ? "Your introductory program is provisioning without payment collection. Loohar will not charge automatically without explicit authorization."
+            : "This page checks backend provisioning. Access is created only after the verified Stripe webhook completes tenant setup."}
+        </p>
         <InlineError message={error} />
-        {!registration && !error ? <AppLoadingState title="Checking registration" detail="Waiting for payment and provisioning status." /> : null}
+        {!registration && !error ? <AppLoadingState title="Checking registration" detail="Waiting for provisioning status." /> : null}
         {registration ? (
           <div className="mt-5 space-y-3">
             <div className="summary-line"><span>Restaurant</span><strong>{registration.restaurantName}</strong></div>
@@ -4365,6 +4428,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const [merchantAccount, setMerchantAccount] = useState(null);
   const [platformSubscription, setPlatformSubscription] = useState(null);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState("");
 
   const restaurant = payload?.restaurant || {};
   const website = payload?.website || {};
@@ -4379,6 +4443,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const publicHref = restaurantSlug ? `https://${restaurantSlug}.${tenantRootDomain}` : "/";
   const currentStepIndex = Math.max(0, onboardingSteps.findIndex((step) => step.id === activeStep));
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
+  const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
 
   function stepEndpoint(step = activeStep) {
     return `${apiBase}/onboarding/${step}`;
@@ -4484,15 +4549,27 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     if (!apiOnline || !token || activeStep !== "payments") return;
     setPaymentsLoading(true);
     setError("");
+    setPaymentNotice("");
     try {
       const [subscriptionPayload, merchantPayload] = await Promise.all([
         api("/api/platform-billing/subscription", { token }).catch((subscriptionError) => ({ error: subscriptionError.message })),
         api("/api/order-payments/merchant-account", { token }).catch((merchantError) => ({ error: merchantError.message }))
       ]);
-      if (!subscriptionPayload.error) setPlatformSubscription(subscriptionPayload.subscription || null);
-      if (!merchantPayload.error) setMerchantAccount(merchantPayload.merchantAccount || null);
-      if (subscriptionPayload.error || merchantPayload.error) {
-        setError([subscriptionPayload.error, merchantPayload.error].filter(Boolean).join(" "));
+      const visibleErrors = [];
+      if (!subscriptionPayload.error) {
+        setPlatformSubscription(subscriptionPayload.subscription || null);
+      } else if (isPlatformBillingConfigurationMessage(subscriptionPayload.error)) {
+        setPaymentNotice(introProgramActiveMessage);
+      } else {
+        visibleErrors.push(subscriptionPayload.error);
+      }
+      if (!merchantPayload.error) {
+        setMerchantAccount(merchantPayload.merchantAccount || null);
+      } else {
+        visibleErrors.push(merchantPayload.error);
+      }
+      if (visibleErrors.length) {
+        setError(visibleErrors.join(" "));
       }
     } finally {
       setPaymentsLoading(false);
@@ -4506,7 +4583,11 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       const payload = await api("/api/platform-billing/portal", { method: "POST", token });
       if (payload.portalUrl) window.location.href = payload.portalUrl;
     } catch (portalError) {
-      setError(portalError.message);
+      if (isPlatformBillingConfigurationMessage(portalError.message)) {
+        setPaymentNotice(introProgramActiveMessage);
+      } else {
+        setError(portalError.message);
+      }
     } finally {
       setSaving("");
     }
@@ -4914,6 +4995,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       </div>
 
       <InlineError message={error} />
+      {paymentNotice ? <div className="success-box">{paymentNotice}</div> : null}
       {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{message}</div> : null}
 
       <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
@@ -5095,12 +5177,17 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                     <h3 className="mt-1 text-xl font-black text-ink">SaaS billing</h3>
                     <p className="mt-2 text-sm text-slate-500">This is what the restaurant pays Loohar for software access. It is separate from customer order money.</p>
                   </div>
-                  <StatusPill tone={platformSubscription?.status === "ACTIVE" ? "good" : platformSubscription ? "warn" : "neutral"}>{platformSubscription?.status || "Not found"}</StatusPill>
+                  <StatusPill tone={["ACTIVE", "TRIALING"].includes(platformSubscriptionStatus) ? "good" : platformSubscription ? "warn" : "neutral"}>{platformSubscription?.status || "Not found"}</StatusPill>
                 </div>
                 <div className="mt-4 grid gap-2 text-sm text-slate-600">
                   <div className="summary-line"><span>Plan</span><strong>{readable(platformSubscription?.plan?.code || restaurant.plan || "Starter")}</strong></div>
                   <div className="summary-line"><span>Current period</span><strong>{platformSubscription?.currentPeriodEnd ? new Date(platformSubscription.currentPeriodEnd).toLocaleDateString() : "Provider managed"}</strong></div>
                 </div>
+                {platformSubscriptionStatus === "TRIALING" ? (
+                  <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">
+                    {introProgramActiveMessage}
+                  </div>
+                ) : null}
                 <button className="button-muted mt-4 w-full justify-center" type="button" onClick={openPlatformBillingPortal} disabled={paymentsLoading || saving === "billing-portal"}>{saving === "billing-portal" ? "Opening..." : "Manage Loohar billing"}</button>
               </div>
               <div className="rounded-md border border-line bg-white p-5">
@@ -5108,7 +5195,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                   <div>
                     <p className="text-xs font-black uppercase text-slate-500">Customer order payments</p>
                     <h3 className="mt-1 text-xl font-black text-ink">Restaurant merchant account</h3>
-                    <p className="mt-2 text-sm text-slate-500">Customers pay the restaurant through Stripe Connect. Loohar does not collect bank details, SSN, or card data.</p>
+                    <p className="mt-2 text-sm text-slate-500">Connect your restaurant merchant account to accept online card payments and receive payouts.</p>
                   </div>
                   <StatusPill tone={merchantAccount?.status === "ENABLED" ? "good" : merchantAccount?.status === "RESTRICTED" || merchantAccount?.status === "DISABLED" ? "bad" : "warn"}>{readable(merchantAccount?.status || "NOT_STARTED")}</StatusPill>
                 </div>
@@ -5658,10 +5745,24 @@ function AdminCreateBusinessPage({ apiOnline, token }) {
 
         <section className="panel">
           <h3 className="panel-title">Plan</h3>
-          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-            <select className="select" value={form.plan} onChange={(event) => setForm({ ...form, plan: event.target.value })}>
-              {planCodes.map((plan) => <option value={plan} key={plan}>{readable(plan)}</option>)}
-            </select>
+          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]">
+            <div>
+              <select className="select" value={form.billingMode} onChange={(event) => setForm({ ...form, billingMode: event.target.value })}>
+                <option value="INTRO_TRIAL">Start introductory program</option>
+                <option value="PAYMENT_LINK">Send payment link</option>
+                <option value="STRIPE_CHECKOUT">Collect payment now</option>
+                <option value="COMPLIMENTARY">Complimentary</option>
+                <option value="MANUAL_INVOICE">Manual invoice</option>
+                <option value="DRAFT">Save as draft</option>
+              </select>
+              <FieldError message={formErrors.billingMode} />
+            </div>
+            <div>
+              <select className="select" value={form.plan} onChange={(event) => setForm({ ...form, plan: event.target.value })}>
+                {planCodes.map((plan) => <option value={plan} key={plan}>{readable(plan)}</option>)}
+              </select>
+              <FieldError message={formErrors.plan} />
+            </div>
             <button className="button-primary justify-center" type="submit" disabled={!canCreateTenant}><Plus size={18} />{creatingTenant ? "Creating Business" : "Create Business"}</button>
             <a className="button-muted justify-center" href="/admin">Back to Dashboard</a>
           </div>
@@ -6203,6 +6304,44 @@ function AdminApp({ apiOnline, token, onImpersonate }) {
   );
 }
 
+function TrialCountdownPanel({ program }) {
+  if (!program?.enabled) return null;
+  const percentElapsed = Math.max(0, Math.min(100, Number(program.percentElapsed || 0)));
+  const daysRemaining = Number.isFinite(Number(program.daysRemaining)) ? Number(program.daysRemaining) : null;
+  const totalDays = Number.isFinite(Number(program.totalDays)) ? Number(program.totalDays) : null;
+  const dayNumber = Number.isFinite(Number(program.dayNumber)) ? Number(program.dayNumber) : null;
+  const endDateLabel = program.endsAt ? new Date(program.endsAt).toLocaleDateString() : "";
+  const reminderCount = Array.isArray(program.upcomingReminders) ? program.upcomingReminders.length : 0;
+
+  return (
+    <div className="panel border-mint/30 bg-emerald-50/50">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-mint">{program.name || "Introductory Program"}</p>
+          <h3 className="panel-title">Trial countdown</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {daysRemaining === null ? "Introductory access is active." : `${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining`}
+            {endDateLabel ? ` until ${endDateLabel}.` : "."}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusPill tone="good">{program.planCode ? readable(program.planCode) : "Intro trial"}</StatusPill>
+          <StatusPill>{readable(program.paymentLifecycleStatus || "PAYMENT_METHOD_REQUIRED")}</StatusPill>
+          {program.noAutomaticCharge ? <StatusPill tone="good">No automatic charge</StatusPill> : null}
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-white">
+        <div className="h-full rounded-full bg-mint" style={{ width: `${percentElapsed}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-slate-500">
+        <span>{dayNumber && totalDays ? `Day ${dayNumber} of ${totalDays}` : "Program timing is managed by Loohar."}</span>
+        {reminderCount ? <span>{reminderCount} scheduled reminder{reminderCount === 1 ? "" : "s"}</span> : null}
+        {program.savingsBaseline?.status ? <span>Savings baseline: {readable(program.savingsBaseline.status)}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function RestaurantDashboardPage({ children }) {
   return <div className="restaurant-owner-page restaurant-owner-page-dashboard">{children}</div>;
 }
@@ -6338,6 +6477,8 @@ function emptyPosMenuState() {
     acceptedSequence: 0,
     tenantId: "",
     locationId: "",
+    availabilitySummary: null,
+    menuDiagnostics: null,
     loadedAt: null,
     error: null,
     refreshError: null
@@ -6360,10 +6501,19 @@ function isPosEntitlementDenied(error) {
 
 function normalizePosMenuPayload(payload = {}) {
   const categories = Array.isArray(payload.categories) ? payload.categories : [];
-  const itemCount = Number(payload.availabilitySummary?.items ?? countPosMenuItems(categories));
+  const availabilitySummary = payload.availabilitySummary || null;
+  const menuDiagnostics = payload.menuDiagnostics || null;
+  const itemCount = Number(
+    availabilitySummary?.visibleItems ??
+    availabilitySummary?.items ??
+    menuDiagnostics?.visibleItems ??
+    countPosMenuItems(categories)
+  );
   return {
     categories,
     itemCount,
+    availabilitySummary,
+    menuDiagnostics,
     menuVersion: String(payload.menuVersion || `${categories.length}:${itemCount}`),
     tenantId: payload.tenantId || payload.restaurantId || "",
     locationId: payload.locationId || "",
@@ -6625,6 +6775,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             menuVersion: normalizedMenu.menuVersion,
             tenantId: normalizedMenu.tenantId,
             locationId: normalizedMenu.locationId,
+            availabilitySummary: normalizedMenu.availabilitySummary,
+            menuDiagnostics: normalizedMenu.menuDiagnostics,
             acceptedSequence: requestSequence,
             requestId,
             loadedAt: normalizedMenu.generatedAt,
@@ -6733,6 +6885,20 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   ];
   const kioskLocked = Boolean(activeDevice?.kioskModeEnabled || kioskOnly);
   const canOpenKiosk = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.kioskModeEnabled);
+  const hiddenPosMenuItems = Number(posMenuState.menuDiagnostics?.totalItems || 0);
+  const hasHiddenPosMenuItems = !normalizedSearch && posMenuState.status !== POS_MENU_STATUS.ERROR && hiddenPosMenuItems > 0 && posMenuItemCount === 0;
+  const posEmptyTitle = normalizedSearch
+    ? "No matching POS items"
+    : posMenuState.status === POS_MENU_STATUS.ERROR
+      ? "POS menu unavailable"
+      : hasHiddenPosMenuItems
+        ? hiddenPosMenuItems === 1 ? "Menu item exists but is not published to POS." : "Menu items exist but are not published to POS."
+        : "No POS menu items";
+  const posEmptyDetail = posMenuState.status === POS_MENU_STATUS.ERROR
+    ? "The register could not load a live menu. Retry the POS refresh before taking orders."
+    : hasHiddenPosMenuItems
+      ? "Make the item available and keep its category active, then refresh the register."
+      : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager.";
 
   function addToCart(item) {
     if (normalizePosModifierGroups(item).length) {
@@ -7181,10 +7347,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           </div>
           {visibleItems.length === 0 ? (
             <EmptyState
-              title={searchQuery ? "No matching POS items" : posMenuState.status === POS_MENU_STATUS.ERROR ? "POS menu unavailable" : "No POS menu items"}
-              detail={posMenuState.status === POS_MENU_STATUS.ERROR
-                ? "The register could not load a live menu. Retry the POS refresh before taking orders."
-                : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager."}
+              title={posEmptyTitle}
+              detail={posEmptyDetail}
             />
           ) : (
             <div className="pos-item-grid">
@@ -8054,9 +8218,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       const customerParams = new window.URLSearchParams(reportParams);
       customerParams.set("pageSize", "100");
       const customerQuery = `?${customerParams.toString()}`;
-      const [dashboardPayload, profilePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload] = await Promise.all([
+      const [dashboardPayload, profilePayload, mePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload] = await Promise.all([
         api(`/api/restaurants/${restaurantId}/dashboard`, { token }),
         api(`/api/restaurants/${restaurantId}/profile`, { token }),
+        api("/api/restaurants/me", { token }),
         api(`/api/restaurants/${restaurantId}/menu/categories`, { token }),
         api(`/api/restaurants/${restaurantId}/menu/items`, { token }),
         api(`/api/restaurants/${restaurantId}/orders`, { token }),
@@ -8081,11 +8246,16 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
         optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations${reportQuery}`, emptyOperationsReport())
       ]);
       if (requestId !== loadRestaurantRequestIdRef.current) return null;
-      const nextProfile = profilePayload.restaurant || initialProfile;
+      const profileBase = profilePayload.restaurant || initialProfile;
+      setProfile(profilePayload.restaurant || initialProfile);
+      const nextProfile = {
+        ...profileBase,
+        introductoryProgram: mePayload.introductoryProgram || mePayload.restaurant?.introductoryProgram || profilePayload.restaurant?.introductoryProgram
+      };
       const nextLocations = locationsPayload.locations || [];
       setFeatureLocks(lockedFeatures);
       setStats(dashboardPayload);
-      setProfile(profilePayload.restaurant || initialProfile);
+      setProfile(nextProfile);
       setCategories(categoriesPayload.categories || []);
       setItems(itemsPayload.items || []);
       setOrders(ordersPayload.orders || []);
@@ -9095,6 +9265,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             {entitlementSummary.subscriptionStatus ? <> - Status: <strong className="text-ink">{readable(entitlementSummary.subscriptionStatus)}</strong></> : null}
           </div>
         ) : null}
+        {isDashboardPage ? <TrialCountdownPanel program={profile.introductoryProgram} /> : null}
         {isDashboardPage ? (
           <div className="grid gap-4 md:grid-cols-4">
             <Stat icon={Clock} label="Pending orders" value={stats.pendingOrders ?? orders.filter((order) => !["DELIVERED", "CANCELLED"].includes(order.status)).length} detail="Live kitchen queue" />
@@ -10131,7 +10302,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           <p className="mt-2 text-sm text-slate-500">Register devices, shifts, cash controls, card payment flow, and kiosk mode are managed in the POS workspace.</p>
           <div className="mt-4 grid gap-2 text-sm text-slate-600">
             <div className="summary-line"><span>POS register</span><strong>{hasLock("POS_REGISTER") ? "Upgrade required" : "Available"}</strong></div>
-            <div className="summary-line"><span>Kiosk mode</span><strong>{hasLock("POS_REGISTER") ? "Plan restricted" : "Available"}</strong></div>
+            <div className="summary-line"><span>Kiosk mode</span><strong>{hasLock("POS_KIOSK_MODE") ? "Plan restricted" : "Available"}</strong></div>
             <div className="summary-line"><span>Payments</span><strong>{hasLock("ORDER_PAYMENTS") ? "Setup required" : "Ready to configure"}</strong></div>
           </div>
           <a className="button-primary mt-4" href={`${restaurantBasePath}/pos`}><CreditCard size={16} />Open POS</a>

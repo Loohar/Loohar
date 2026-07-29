@@ -242,6 +242,63 @@ enum SubscriptionPlanCode {
   ENTERPRISE
 }
 
+enum TenantLifecycleStatus {
+  DRAFT
+  PENDING_OWNER_VERIFICATION
+  PENDING_SETUP
+  INTRO_TRIAL
+  TRIAL_EXPIRING
+  TRIAL_EXPIRED
+  PAYMENT_METHOD_REQUIRED
+  PENDING_PAYMENT
+  ACTIVE_PAID
+  PAST_DUE
+  PAYMENT_FAILED
+  GRACE_PERIOD
+  SUSPENDED
+  CANCELED
+  ARCHIVED
+  COMPLIMENTARY
+  MANUAL_INVOICE
+}
+
+enum PaymentLifecycleStatus {
+  NOT_REQUIRED
+  PAYMENT_METHOD_REQUIRED
+  PENDING_PAYMENT
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  PAYMENT_FAILED
+  CANCELED
+  MANUAL_INVOICE
+  COMPLIMENTARY
+}
+
+enum PlatformBillingMode {
+  INTRO_TRIAL
+  PAYMENT_LINK
+  STRIPE_CHECKOUT
+  COMPLIMENTARY
+  MANUAL_INVOICE
+  DRAFT
+}
+
+enum TrialReminderStatus {
+  SCHEDULED
+  SENT
+  SKIPPED
+  CANCELED
+  FAILED
+}
+
+enum SavingsBaselineStatus {
+  NOT_STARTED
+  ACTIVE
+  PAUSED
+  FINALIZED
+}
+
 enum TenantClassification {
   STANDARD
   INTERNAL_DEVELOPMENT
@@ -385,6 +442,15 @@ model Restaurant {
   onboardingSkippedSteps Json?
   websitePublishedAt DateTime?
   onboardingVersion   Int                        @default(1)
+  tenantLifecycleStatus TenantLifecycleStatus     @default(PENDING_SETUP)
+  paymentLifecycleStatus PaymentLifecycleStatus   @default(PAYMENT_METHOD_REQUIRED)
+  billingMode          PlatformBillingMode        @default(INTRO_TRIAL)
+  introductoryProgramName String?
+  introductoryProgramVersion Int                  @default(1)
+  trialStartedAt       DateTime?
+  trialEndsAt          DateTime?
+  trialGraceEndsAt     DateTime?
+  trialConfigJson      Json?
   users               User[]
   staff               RestaurantStaff[]
   customers           Customer[]
@@ -402,6 +468,9 @@ model Restaurant {
   socialLinks         RestaurantSocialLink[]
   subscriptions       TenantSubscription[]
   platformSubscriptions PlatformSubscription[]
+  trialEnrollments    TrialEnrollment[]
+  notificationSchedules NotificationSchedule[]
+  savingsBaseline     SavingsBaseline?
   entitlementSimulation TenantEntitlementSimulation?
   merchantAccounts    RestaurantMerchantAccount[]
   orderPayments       RestaurantOrderPayment[]
@@ -933,6 +1002,35 @@ model SubscriptionPlan {
   subscriptions     TenantSubscription[]
 }
 
+model PlatformProgramConfig {
+  id                                      String                 @id @default(cuid())
+  key                                     String                 @unique
+  introductoryProgramEnabled             Boolean                @default(true)
+  programName                             String                 @default("90-Day Introductory Program")
+  defaultTrialDays                        Int                    @default(90)
+  requirePaymentMethodAtSignup           Boolean                @default(false)
+  requirePaymentMethodBeforeExpirationDay Int                   @default(15)
+  autoChargeWithoutExplicitAuthorization Boolean                @default(false)
+  allowSuperAdminComplimentaryAccounts   Boolean                @default(true)
+  allowManualInvoice                     Boolean                @default(true)
+  defaultTrialPlan                       SubscriptionPlanCode   @default(PROFESSIONAL)
+  defaultTrialModules                    BusinessModule[]       @default([RESTAURANT_ORDERING, PICKUP, DELIVERY, DRIVER_MANAGEMENT, LOYALTY, COUPONS, DELIVERY_ZONES, FOOD_CATALOG])
+  trialReminderSchedule                  Json?
+  trialGracePeriodDays                   Int                    @default(7)
+  autoSuspendAfterGracePeriod            Boolean                @default(false)
+  allowTrialExtension                    Boolean                @default(true)
+  maximumTrialExtensionDays              Int                    @default(30)
+  savingsReportEnabled                   Boolean                @default(true)
+  aiInsightsEnabled                      Boolean                @default(true)
+  marketingAutomationEnabled             Boolean                @default(false)
+  smsEnabled                             Boolean                @default(false)
+  emailEnabled                           Boolean                @default(true)
+  pushEnabled                            Boolean                @default(false)
+  active                                 Boolean                @default(true)
+  createdAt                              DateTime               @default(now())
+  updatedAt                              DateTime               @updatedAt
+}
+
 model PlatformPlan {
   id                   String                 @id @default(cuid())
   code                 SubscriptionPlanCode   @unique
@@ -948,6 +1046,62 @@ model PlatformPlan {
   subscriptions        PlatformSubscription[]
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
+}
+
+model TrialEnrollment {
+  id                       String                @id @default(cuid())
+  restaurantId             String
+  platformSubscriptionId   String?
+  programKey               String
+  programName              String
+  programVersion           Int                   @default(1)
+  planCode                 SubscriptionPlanCode
+  billingMode              PlatformBillingMode
+  status                   TenantLifecycleStatus @default(INTRO_TRIAL)
+  startedAt                DateTime
+  endsAt                   DateTime
+  graceEndsAt              DateTime?
+  extendedUntil            DateTime?
+  extensionCount           Int                   @default(0)
+  configSnapshotJson       Json?
+  createdByUserId          String?
+  restaurant               Restaurant            @relation(fields: [restaurantId], references: [id])
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+
+  @@index([restaurantId])
+  @@index([status])
+  @@index([endsAt])
+}
+
+model NotificationSchedule {
+  id             String              @id @default(cuid())
+  restaurantId   String
+  type           String
+  channel        String
+  scheduledFor   DateTime
+  status         TrialReminderStatus @default(SCHEDULED)
+  dedupeKey      String              @unique
+  metadataJson   Json?
+  restaurant     Restaurant          @relation(fields: [restaurantId], references: [id])
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([restaurantId])
+  @@index([scheduledFor])
+  @@index([status])
+}
+
+model SavingsBaseline {
+  id              String                @id @default(cuid())
+  restaurantId    String                @unique
+  status          SavingsBaselineStatus @default(ACTIVE)
+  currency        String                @default("usd")
+  baselineJson    Json?
+  assumptionsJson Json?
+  restaurant      Restaurant            @relation(fields: [restaurantId], references: [id])
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
 }
 
 model PlatformSubscription {

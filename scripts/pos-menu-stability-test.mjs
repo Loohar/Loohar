@@ -5,6 +5,7 @@ const root = process.cwd();
 const mode = process.argv[2] || "all";
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
 const posRoutes = readFileSync(join(root, "apps/api/src/routes/pos.js"), "utf8");
+const posService = readFileSync(join(root, "apps/api/src/services/posService.js"), "utf8");
 const failures = [];
 
 function pass(message) {
@@ -70,19 +71,28 @@ if (mode === "all" || mode === "availability") {
     "summarizePosMenu",
     "menuVersion",
     "availabilitySummary",
+    "menuDiagnostics",
     "tenantId",
     "restaurantSlug",
     "locationId",
     "entitlement",
-    "categories"
+    "categories",
+    "visibleItems"
   ]), "POS menu endpoint returns tenant, version, availability, entitlement, and category payload metadata");
   assertCheck(includesAll(app, [
     "normalizePosMenuPayload",
-    "availabilitySummary?.items",
+    "availabilitySummary?.visibleItems",
+    "menuDiagnostics",
     "menuVersion",
     "tenantId",
     "locationId"
   ]), "Frontend normalizes live menu metadata before accepting a POS response");
+  assertCheck(includesAll(posService, [
+    "posMenuAvailabilityDiagnostics",
+    "totalItems",
+    "availableItemsTotal",
+    "MENU_ITEMS_NOT_PUBLISHED_TO_POS"
+  ]), "POS menu service returns diagnostics for hidden/unavailable menu items");
 }
 
 if (failures.length) {
