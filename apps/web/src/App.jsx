@@ -146,6 +146,74 @@ const businessHourDays = [
   "friday",
   "saturday"
 ];
+const businessHourNoteMaxLength = 500;
+const galleryTitleMaxLength = 120;
+const galleryCategoryMaxLength = 60;
+const galleryAltTextMaxLength = 200;
+const galleryCaptionMaxLength = 500;
+const brandColorModes = [
+  { id: "SOLID", label: "Solid" },
+  { id: "LINEAR_GRADIENT", label: "Linear gradient" },
+  { id: "RADIAL_GRADIENT", label: "Radial gradient" },
+  { id: "IMAGE_OVERLAY", label: "Image overlay" },
+  { id: "TRANSPARENT", label: "Transparent" }
+];
+const brandPreviewModes = [
+  { id: "desktop-public-site", label: "Desktop public site" },
+  { id: "mobile-ordering", label: "Mobile ordering" },
+  { id: "email-receipt", label: "Email and receipt" },
+  { id: "kiosk-screen", label: "Kiosk screen" }
+];
+const heroMediaModes = [
+  { id: "IMAGE", label: "Single image" },
+  { id: "CAROUSEL", label: "Carousel" },
+  { id: "SLIDESHOW", label: "Slideshow" },
+  { id: "VIDEO", label: "Video hero" }
+];
+const approvedBrandFonts = [
+  { id: "inter", label: "Inter", stack: "Inter, ui-sans-serif, system-ui, sans-serif" },
+  { id: "dm-sans", label: "DM Sans", stack: "\"DM Sans\", Inter, ui-sans-serif, system-ui, sans-serif" },
+  { id: "poppins", label: "Poppins", stack: "Poppins, Inter, ui-sans-serif, system-ui, sans-serif" },
+  { id: "montserrat", label: "Montserrat", stack: "Montserrat, Inter, ui-sans-serif, system-ui, sans-serif" },
+  { id: "playfair", label: "Playfair Display", stack: "\"Playfair Display\", Georgia, serif" },
+  { id: "libre", label: "Libre Baskerville", stack: "\"Libre Baskerville\", Georgia, serif" },
+  { id: "merriweather", label: "Merriweather", stack: "Merriweather, Georgia, serif" },
+  { id: "lora", label: "Lora", stack: "Lora, Georgia, serif" },
+  { id: "nunito", label: "Nunito Sans", stack: "\"Nunito Sans\", Inter, ui-sans-serif, system-ui, sans-serif" }
+];
+const brandPresets = [
+  { id: "modern-bistro", label: "Modern bistro", brandColor: "#0f766e", accentColor: "#f59e0b", buttonColor: "#2563eb", headingFont: approvedBrandFonts[0].stack, bodyFont: approvedBrandFonts[0].stack, mode: "LINEAR_GRADIENT" },
+  { id: "fine-dining", label: "Fine dining", brandColor: "#111827", accentColor: "#d4af37", buttonColor: "#0f766e", headingFont: approvedBrandFonts[4].stack, bodyFont: approvedBrandFonts[1].stack, mode: "SOLID" },
+  { id: "fast-casual", label: "Fast casual", brandColor: "#dc2626", accentColor: "#f59e0b", buttonColor: "#16a34a", headingFont: approvedBrandFonts[2].stack, bodyFont: approvedBrandFonts[0].stack, mode: "LINEAR_GRADIENT" },
+  { id: "cafe", label: "Cafe", brandColor: "#365314", accentColor: "#a16207", buttonColor: "#0d9488", headingFont: approvedBrandFonts[7].stack, bodyFont: approvedBrandFonts[8].stack, mode: "RADIAL_GRADIENT" },
+  { id: "bakery", label: "Bakery", brandColor: "#9f1239", accentColor: "#f97316", buttonColor: "#be123c", headingFont: approvedBrandFonts[5].stack, bodyFont: approvedBrandFonts[8].stack, mode: "SOLID" },
+  { id: "minimal", label: "Minimal", brandColor: "#111827", accentColor: "#64748b", buttonColor: "#111827", headingFont: approvedBrandFonts[0].stack, bodyFont: approvedBrandFonts[0].stack, mode: "TRANSPARENT" }
+];
+const brandPaletteColors = Array.from(new Set(brandPresets.flatMap((preset) => [preset.brandColor, preset.accentColor, preset.buttonColor])));
+const defaultBrandTheme = {
+  mode: "SOLID",
+  brandColor: "#1f9d80",
+  accentColor: "#f4b740",
+  buttonColor: "#1f9d80",
+  headingFont: approvedBrandFonts[0].stack,
+  bodyFont: approvedBrandFonts[0].stack,
+  opacity: 1,
+  overlayOpacity: 0.52,
+  gradientAngle: 135,
+  gradientStops: [
+    { color: "#1f9d80", position: 0, opacity: 1 },
+    { color: "#2563eb", position: 100, opacity: 1 }
+  ]
+};
+const defaultHeroMedia = {
+  mode: "IMAGE",
+  imageBehavior: "cover",
+  transition: "fade",
+  intervalSeconds: 6,
+  reducedMotionFallback: true,
+  slides: [],
+  video: { url: "", posterUrl: "", captionsUrl: "", muted: true, loop: true, controls: false }
+};
 const defaultBusinessHours = {
   sunday: { closed: true, windows: [], note: "" },
   monday: { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: "" },
@@ -646,6 +714,186 @@ function readable(value = "") {
   return value.toLowerCase().replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeHexColor(value, fallback) {
+  const raw = String(value || "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    return `#${raw.slice(1).split("").map((part) => part + part).join("")}`.toLowerCase();
+  }
+  return fallback;
+}
+
+function normalizeFontStack(value, fallback = approvedBrandFonts[0].stack) {
+  const raw = String(value || "").trim();
+  const match = approvedBrandFonts.find((font) => font.id === raw || font.label === raw || font.stack === raw);
+  return match?.stack || raw || fallback;
+}
+
+function hexToRgb(value) {
+  const hex = normalizeHexColor(value, "#000000").slice(1);
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16)
+  };
+}
+
+function rgbColorString(value) {
+  const { r, g, b } = hexToRgb(value);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function hslColorString(value) {
+  const { r, g, b } = hexToRgb(value);
+  const red = r / 255;
+  const green = g / 255;
+  const blue = b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+  let hue = 0;
+  let saturation = 0;
+  if (delta) {
+    saturation = delta / (1 - Math.abs(2 * lightness - 1));
+    if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+    if (max === green) hue = 60 * ((blue - red) / delta + 2);
+    if (max === blue) hue = 60 * ((red - green) / delta + 4);
+  }
+  return `hsl(${Math.round((hue + 360) % 360)}, ${Math.round(saturation * 100)}%, ${Math.round(lightness * 100)}%)`;
+}
+
+function relativeLuminance(hexColor) {
+  const { r, g, b } = hexToRgb(hexColor);
+  const channels = [r, g, b].map((channel) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrastRatioForColors(foreground, background) {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const light = Math.max(foregroundLuminance, backgroundLuminance);
+  const dark = Math.min(foregroundLuminance, backgroundLuminance);
+  return Number(((light + 0.05) / (dark + 0.05)).toFixed(2));
+}
+
+function alphaColor(hexColor, opacity = 1) {
+  const { r, g, b } = hexToRgb(hexColor);
+  return `rgba(${r}, ${g}, ${b}, ${clampNumber(opacity, 0, 1, 1)})`;
+}
+
+function normalizeGradientStops(stops, fallbackTheme = defaultBrandTheme) {
+  const source = Array.isArray(stops) && stops.length ? stops : defaultBrandTheme.gradientStops;
+  return source
+    .slice(0, 5)
+    .map((stop, index) => ({
+      color: normalizeHexColor(stop?.color, index === 0 ? fallbackTheme.brandColor : fallbackTheme.buttonColor),
+      position: clampNumber(stop?.position, 0, 100, index === 0 ? 0 : 100),
+      opacity: clampNumber(stop?.opacity, 0, 1, 1)
+    }))
+    .sort((first, second) => first.position - second.position);
+}
+
+function normalizeBrandTheme(rawTheme = {}, website = {}) {
+  const fallbackTheme = {
+    ...defaultBrandTheme,
+    brandColor: normalizeHexColor(website.brandColor, defaultBrandTheme.brandColor),
+    accentColor: normalizeHexColor(website.accentColor, defaultBrandTheme.accentColor),
+    buttonColor: normalizeHexColor(website.buttonColor || website.brandColor, defaultBrandTheme.buttonColor),
+    headingFont: normalizeFontStack(website.headingFont, defaultBrandTheme.headingFont),
+    bodyFont: normalizeFontStack(website.bodyFont, defaultBrandTheme.bodyFont)
+  };
+  const mode = brandColorModes.some((item) => item.id === rawTheme.mode) ? rawTheme.mode : fallbackTheme.mode;
+  const theme = {
+    mode,
+    brandColor: normalizeHexColor(rawTheme.brandColor, fallbackTheme.brandColor),
+    accentColor: normalizeHexColor(rawTheme.accentColor, fallbackTheme.accentColor),
+    buttonColor: normalizeHexColor(rawTheme.buttonColor, fallbackTheme.buttonColor),
+    headingFont: normalizeFontStack(rawTheme.headingFont, fallbackTheme.headingFont),
+    bodyFont: normalizeFontStack(rawTheme.bodyFont, fallbackTheme.bodyFont),
+    opacity: clampNumber(rawTheme.opacity, 0, 1, fallbackTheme.opacity),
+    overlayOpacity: clampNumber(rawTheme.overlayOpacity, 0, 0.9, fallbackTheme.overlayOpacity),
+    gradientAngle: clampNumber(rawTheme.gradientAngle, 0, 360, fallbackTheme.gradientAngle)
+  };
+  return { ...theme, gradientStops: normalizeGradientStops(rawTheme.gradientStops, theme) };
+}
+
+function gradientStopCss(stop) {
+  return `${alphaColor(stop.color, stop.opacity)} ${stop.position}%`;
+}
+
+function brandThemeBackground(theme) {
+  const normalized = normalizeBrandTheme(theme);
+  if (normalized.mode === "TRANSPARENT") return "transparent";
+  if (normalized.mode === "RADIAL_GRADIENT") return `radial-gradient(circle at top left, ${normalized.gradientStops.map(gradientStopCss).join(", ")})`;
+  if (normalized.mode === "LINEAR_GRADIENT" || normalized.mode === "IMAGE_OVERLAY") return `linear-gradient(${normalized.gradientAngle}deg, ${normalized.gradientStops.map(gradientStopCss).join(", ")})`;
+  return alphaColor(normalized.brandColor, normalized.opacity);
+}
+
+function normalizeHeroSlide(rawSlide = {}, fallback = {}) {
+  return {
+    id: String(rawSlide.id || fallback.id || `slide-${fallback.index || 0}`),
+    imageUrl: String(rawSlide.imageUrl || fallback.imageUrl || "").trim(),
+    mobileImageUrl: String(rawSlide.mobileImageUrl || fallback.mobileImageUrl || "").trim(),
+    title: String(rawSlide.title || fallback.title || "").trim(),
+    subtitle: String(rawSlide.subtitle || fallback.subtitle || "").trim(),
+    altText: String(rawSlide.altText || fallback.altText || "").trim(),
+    focalPoint: String(rawSlide.focalPoint || fallback.focalPoint || "center").trim(),
+    published: rawSlide.published !== false
+  };
+}
+
+function normalizeHeroMedia(rawMedia = {}, website = {}, gallery = []) {
+  const mode = heroMediaModes.some((item) => item.id === rawMedia.mode) ? rawMedia.mode : defaultHeroMedia.mode;
+  const primarySlide = normalizeHeroSlide(rawMedia.slides?.[0], {
+    id: "primary-hero",
+    imageUrl: website.heroImageUrl || "",
+    mobileImageUrl: website.mobileHeroImageUrl || "",
+    title: website.heroTitle || "",
+    subtitle: website.heroSubtitle || "",
+    altText: `${website.heroTitle || "Restaurant"} hero image`,
+    index: 0
+  });
+  const gallerySlides = gallery
+    .filter((image) => isValidImageUrl(image.imageUrl))
+    .slice(0, 6)
+    .map((image, index) => normalizeHeroSlide(image, {
+      id: `gallery-${image.id || index}`,
+      imageUrl: image.imageUrl,
+      title: image.title,
+      subtitle: image.caption,
+      altText: image.altText || image.title || "Restaurant gallery image",
+      index: index + 1
+    }));
+  const rawSlides = Array.isArray(rawMedia.slides) && rawMedia.slides.length ? rawMedia.slides : [primarySlide, ...gallerySlides];
+  const slides = rawSlides.slice(0, 8).map((slide, index) => normalizeHeroSlide(slide, { ...primarySlide, index }));
+  return {
+    mode,
+    imageBehavior: ["cover", "contain", "center"].includes(rawMedia.imageBehavior) ? rawMedia.imageBehavior : defaultHeroMedia.imageBehavior,
+    transition: ["fade", "slide", "none"].includes(rawMedia.transition) ? rawMedia.transition : defaultHeroMedia.transition,
+    intervalSeconds: clampNumber(rawMedia.intervalSeconds, 3, 15, defaultHeroMedia.intervalSeconds),
+    reducedMotionFallback: rawMedia.reducedMotionFallback !== false,
+    slides,
+    video: {
+      url: String(rawMedia.video?.url || "").trim(),
+      posterUrl: String(rawMedia.video?.posterUrl || website.heroImageUrl || "").trim(),
+      captionsUrl: String(rawMedia.video?.captionsUrl || "").trim(),
+      muted: rawMedia.video?.muted !== false,
+      loop: rawMedia.video?.loop !== false,
+      controls: rawMedia.video?.controls === true
+    }
+  };
+}
+
 function cloneBusinessHours(hours = defaultBusinessHours) {
   return Object.fromEntries(businessHourDays.map((day) => {
     const value = hours[day] || defaultBusinessHours[day];
@@ -723,6 +971,9 @@ function validateBusinessHours(hours = {}, timezone = "") {
   }
   businessHourDays.forEach((day) => {
     const config = normalized[day];
+    if (String(config.note || "").length > businessHourNoteMaxLength) {
+      errors.push(`${readable(day)} note must be ${businessHourNoteMaxLength} characters or less.`);
+    }
     if (config.closed) return;
     const ranges = [];
     config.windows.forEach((window, index) => {
@@ -4542,6 +4793,17 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const [menuDraft, setMenuDraft] = useState({ categoryName: "", itemName: "", itemDescription: "", itemPriceCents: 1295 });
   const [socialDraft, setSocialDraft] = useState({ platform: "instagram", url: "" });
   const [galleryDrafts, setGalleryDrafts] = useState({});
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [menuDraftDirty, setMenuDraftDirty] = useState(false);
+  const [socialDraftDirty, setSocialDraftDirty] = useState(false);
+  const [galleryDirtyMap, setGalleryDirtyMap] = useState({});
+  const [gallerySaveState, setGallerySaveState] = useState({});
+  const [stepSaveState, setStepSaveState] = useState({});
+  const [menuReviewState, setMenuReviewState] = useState("IDLE");
+  const [menuReviewMessage, setMenuReviewMessage] = useState("");
+  const [serverRefreshPending, setServerRefreshPending] = useState(false);
+  const draftDirtyRef = useRef(false);
+  const galleryDirtyRef = useRef({});
   const [saving, setSaving] = useState("");
   const [uploading, setUploading] = useState("");
   const [error, setError] = useState("");
@@ -4566,20 +4828,26 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
   const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
   const businessHourErrors = activeStep === "hours" ? validateBusinessHours(draft.storeHoursJson, draft.timezone) : [];
+  const liveAnnouncement = [message, error, menuReviewMessage, serverRefreshPending ? "Fresh server data is available after you save your current edits." : ""].filter(Boolean).join(" ");
+  draftDirtyRef.current = draftDirty;
+  galleryDirtyRef.current = galleryDirtyMap;
 
   function stepEndpoint(step = activeStep) {
     return `${apiBase}/onboarding/${step}`;
   }
 
-  function normalizePayload(nextPayload, { preserveStep = false, stepOverride = "" } = {}) {
-    setPayload(nextPayload);
+  function draftFromPayload(nextPayload) {
     const nextRestaurant = nextPayload.restaurant || {};
     const nextWebsite = nextPayload.website || {};
     const nextDomain = nextPayload.domain || {};
     const nextOwner = nextPayload.owner || {};
     const nextDeliveryZones = nextPayload.deliveryZones || [];
+    const nextGallery = nextPayload.gallery || [];
     const nextHours = normalizeBusinessHoursForDraft(nextWebsite.storeHoursJson || nextRestaurant.storeHoursJson);
-    setDraft({
+    const nextSections = { ...websiteSectionDefaults, ...(nextWebsite.sectionSettingsJson || {}) };
+    const nextBrandTheme = normalizeBrandTheme(nextSections.brandTheme, nextWebsite);
+    const nextHeroMedia = normalizeHeroMedia(nextSections.heroMedia, nextWebsite, nextGallery);
+    return {
       businessName: nextRestaurant.businessName || nextRestaurant.name || "",
       publicBusinessName: nextRestaurant.name || nextRestaurant.businessName || "",
       businessType: nextRestaurant.businessType || "RESTAURANT",
@@ -4599,11 +4867,11 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       heroImageUrl: nextWebsite.heroImageUrl || "",
       mobileHeroImageUrl: nextWebsite.mobileHeroImageUrl || "",
       faviconUrl: nextWebsite.faviconUrl || "",
-      brandColor: nextWebsite.brandColor || "#1f9d80",
-      accentColor: nextWebsite.accentColor || "#f4b740",
-      buttonColor: nextWebsite.buttonColor || nextWebsite.brandColor || "#1f9d80",
-      headingFont: nextWebsite.headingFont || "",
-      bodyFont: nextWebsite.bodyFont || "",
+      brandColor: nextBrandTheme.brandColor,
+      accentColor: nextBrandTheme.accentColor,
+      buttonColor: nextBrandTheme.buttonColor,
+      headingFont: nextBrandTheme.headingFont,
+      bodyFont: nextBrandTheme.bodyFont,
       heroTitle: nextWebsite.heroTitle || nextRestaurant.name || "",
       heroSubtitle: nextWebsite.heroSubtitle || nextRestaurant.description || "",
       tagline: nextWebsite.tagline || "",
@@ -4623,7 +4891,11 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       canonicalUrl: nextWebsite.canonicalUrl || nextDomain.canonicalUrl || "",
       ogImageUrl: nextWebsite.ogImageUrl || nextWebsite.heroImageUrl || "",
       indexingEnabled: nextWebsite.indexingEnabled !== false,
-      sectionSettingsJson: { ...websiteSectionDefaults, ...(nextWebsite.sectionSettingsJson || {}) },
+      sectionSettingsJson: nextSections,
+      brandTheme: nextBrandTheme,
+      heroMedia: nextHeroMedia,
+      brandPreviewMode: nextSections.brandPreviewMode || "desktop-public-site",
+      brandPublishState: nextSections.brandPublishState || "draft",
       storeHoursJson: nextHours,
       pickupEnabled: nextRestaurant.pickupEnabled !== false,
       deliveryEnabled: nextRestaurant.deliveryEnabled !== false,
@@ -4637,15 +4909,51 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       defaultSubdomain: nextDomain.defaultSubdomain || nextRestaurant.slug || "",
       paymentStatus: nextPayload.readiness?.paymentStatus || "NOT_CONNECTED",
       paymentProvider: nextRestaurant.settingsJson?.paymentSetup?.provider || "stripe_connect"
-    });
-    setGalleryDrafts(Object.fromEntries((nextPayload.gallery || []).map((image) => [image.id, {
+    };
+  }
+
+  function galleryDraftsFromPayload(nextGallery = []) {
+    return Object.fromEntries(nextGallery.map((image) => [image.id, {
       title: image.title || "",
       altText: image.altText || "",
       caption: image.caption || "",
       category: image.category || "food",
       sortOrder: image.sortOrder ?? 0,
       published: image.published !== false
-    }])));
+    }]));
+  }
+
+  function hasDirtyGalleryDrafts(dirtyMap = galleryDirtyRef.current) {
+    return Object.values(dirtyMap || {}).some(Boolean);
+  }
+
+  function normalizePayload(nextPayload, { preserveStep = false, stepOverride = "", forceDraft = false, forceGallery = false } = {}) {
+    setPayload(nextPayload);
+    const nextDraft = draftFromPayload(nextPayload);
+    if (forceDraft || !draftDirtyRef.current) {
+      setDraft(nextDraft);
+      draftDirtyRef.current = false;
+      setDraftDirty(false);
+      setServerRefreshPending(false);
+    } else {
+      setServerRefreshPending(true);
+    }
+
+    const nextGalleryDrafts = galleryDraftsFromPayload(nextPayload.gallery || []);
+    if (forceGallery || !hasDirtyGalleryDrafts()) {
+      setGalleryDrafts(nextGalleryDrafts);
+      galleryDirtyRef.current = {};
+      setGalleryDirtyMap({});
+    } else {
+      setGalleryDrafts((current) => {
+        const merged = { ...nextGalleryDrafts };
+        Object.entries(current).forEach(([imageId, imageDraft]) => {
+          if (galleryDirtyRef.current?.[imageId]) merged[imageId] = imageDraft;
+        });
+        return merged;
+      });
+      setServerRefreshPending(true);
+    }
     if (stepOverride) {
       setActiveStep(stepOverride);
     } else if (!preserveStep) {
@@ -4745,19 +5053,195 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     loadPaymentSetup();
   }, [apiOnline, token, activeStep]);
 
+  function markDraftDirty() {
+    draftDirtyRef.current = true;
+    setDraftDirty(true);
+    setServerRefreshPending(false);
+  }
+
+  function mergeSavedDraftValues(values) {
+    setDraft((current) => {
+      const merged = { ...current, ...values };
+      return {
+        ...merged,
+        brandTheme: normalizeBrandTheme(merged.brandTheme, merged),
+        heroMedia: normalizeHeroMedia(merged.heroMedia, merged, gallery)
+      };
+    });
+  }
+
+  function updateMenuDraft(field, value) {
+    setMenuDraft((current) => ({ ...current, [field]: value }));
+    setMenuDraftDirty(true);
+    if (menuReviewState === "SAVED") {
+      setMenuReviewState("DIRTY");
+      setMenuReviewMessage("Menu changes have not been reviewed yet.");
+    }
+  }
+
+  function updateSocialDraft(field, value) {
+    setSocialDraft((current) => ({ ...current, [field]: value }));
+    setSocialDraftDirty(true);
+  }
+
+  function setGalleryStatus(imageId, status, messageText = "") {
+    setGallerySaveState((current) => ({ ...current, [imageId]: { status, message: messageText } }));
+  }
+
   function updateDraft(field, value) {
+    markDraftDirty();
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
   function updateSection(section, value) {
+    markDraftDirty();
     setDraft((current) => ({ ...current, sectionSettingsJson: { ...(current.sectionSettingsJson || {}), [section]: value } }));
   }
 
+  function updateBrandTheme(patch) {
+    markDraftDirty();
+    setDraft((current) => {
+      const nextTheme = normalizeBrandTheme({ ...(current.brandTheme || {}), ...patch }, current);
+      return {
+        ...current,
+        brandColor: nextTheme.brandColor,
+        accentColor: nextTheme.accentColor,
+        buttonColor: nextTheme.buttonColor,
+        headingFont: nextTheme.headingFont,
+        bodyFont: nextTheme.bodyFont,
+        brandTheme: nextTheme
+      };
+    });
+  }
+
+  function updateBrandColorText(field, value) {
+    markDraftDirty();
+    setDraft((current) => ({
+      ...current,
+      [field]: value,
+      brandTheme: {
+        ...(current.brandTheme || {}),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateBrandGradientStop(index, patch) {
+    markDraftDirty();
+    setDraft((current) => {
+      const theme = normalizeBrandTheme(current.brandTheme, current);
+      const stops = [...theme.gradientStops];
+      stops[index] = { ...(stops[index] || defaultBrandTheme.gradientStops[index] || defaultBrandTheme.gradientStops[0]), ...patch };
+      const nextTheme = normalizeBrandTheme({ ...theme, gradientStops: stops }, current);
+      return { ...current, brandTheme: nextTheme };
+    });
+  }
+
+  function addBrandGradientStop() {
+    const theme = normalizeBrandTheme(draft.brandTheme, draft);
+    updateBrandTheme({ gradientStops: [...theme.gradientStops, { color: theme.accentColor, position: 100, opacity: 1 }] });
+  }
+
+  function removeBrandGradientStop(index) {
+    const theme = normalizeBrandTheme(draft.brandTheme, draft);
+    const stops = theme.gradientStops.filter((_, stopIndex) => stopIndex !== index);
+    updateBrandTheme({ gradientStops: stops.length ? stops : defaultBrandTheme.gradientStops });
+  }
+
+  function applyBrandPreset(preset) {
+    updateBrandTheme({
+      mode: preset.mode,
+      brandColor: preset.brandColor,
+      accentColor: preset.accentColor,
+      buttonColor: preset.buttonColor,
+      headingFont: preset.headingFont,
+      bodyFont: preset.bodyFont,
+      gradientStops: [
+        { color: preset.brandColor, position: 0, opacity: 1 },
+        { color: preset.buttonColor, position: 100, opacity: 1 }
+      ]
+    });
+  }
+
+  function updateHeroMedia(patch) {
+    markDraftDirty();
+    setDraft((current) => ({
+      ...current,
+      heroMedia: normalizeHeroMedia({ ...(current.heroMedia || {}), ...patch }, current, gallery)
+    }));
+  }
+
+  function updateHeroSlide(index, patch) {
+    markDraftDirty();
+    setDraft((current) => {
+      const heroMedia = normalizeHeroMedia(current.heroMedia, current, gallery);
+      const slides = [...heroMedia.slides];
+      slides[index] = normalizeHeroSlide({ ...(slides[index] || {}), ...patch }, { index });
+      return { ...current, heroMedia: { ...heroMedia, slides } };
+    });
+  }
+
+  function addBlankHeroSlide() {
+    const heroMedia = normalizeHeroMedia(draft.heroMedia, draft, gallery);
+    updateHeroMedia({ slides: [...heroMedia.slides, normalizeHeroSlide({}, { id: `slide-${Date.now()}`, index: heroMedia.slides.length })] });
+  }
+
+  function addHeroSlideFromGallery(image) {
+    const heroMedia = normalizeHeroMedia(draft.heroMedia, draft, gallery);
+    updateHeroMedia({
+      slides: [
+        ...heroMedia.slides,
+        normalizeHeroSlide({
+          id: `gallery-${image.id || Date.now()}`,
+          imageUrl: image.imageUrl,
+          title: image.title,
+          subtitle: image.caption,
+          altText: image.altText,
+          published: true
+        }, { index: heroMedia.slides.length })
+      ]
+    });
+  }
+
+  function removeHeroSlide(index) {
+    const heroMedia = normalizeHeroMedia(draft.heroMedia, draft, gallery);
+    updateHeroMedia({ slides: heroMedia.slides.filter((_, slideIndex) => slideIndex !== index) });
+  }
+
+  function moveHeroSlide(index, direction) {
+    const heroMedia = normalizeHeroMedia(draft.heroMedia, draft, gallery);
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= heroMedia.slides.length) return;
+    const slides = [...heroMedia.slides];
+    const [slide] = slides.splice(index, 1);
+    slides.splice(nextIndex, 0, slide);
+    updateHeroMedia({ slides: slides.map((item, slideIndex) => normalizeHeroSlide(item, { index: slideIndex })) });
+  }
+
+  function resetBrandingDraft() {
+    if (!payload) return;
+    const resetDraft = draftFromPayload(payload);
+    setDraft(resetDraft);
+    draftDirtyRef.current = false;
+    setDraftDirty(false);
+    setServerRefreshPending(false);
+    setMessage("Branding changes reset to the latest saved values.");
+  }
+
+  async function saveBrandingPublishState(nextState) {
+    const nextDraft = { ...draft, brandPublishState: nextState };
+    markDraftDirty();
+    setDraft(nextDraft);
+    await saveStep("branding", nextDraft);
+  }
+
   function updateHour(day, value) {
+    markDraftDirty();
     setDraft((current) => ({ ...current, storeHoursJson: { ...(current.storeHoursJson || {}), [day]: value } }));
   }
 
   function updateHourDay(day, patch) {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       const nextDay = { ...hours[day], ...patch };
@@ -4768,6 +5252,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function updateHourWindow(day, index, patch) {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       const windows = [...(hours[day]?.windows || [])];
@@ -4777,6 +5262,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function addHourWindow(day) {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       return { ...current, storeHoursJson: { ...hours, [day]: { ...hours[day], closed: false, windows: [...(hours[day]?.windows || []), { open: "17:00", close: "21:00", overnight: false }] } } };
@@ -4784,6 +5270,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function removeHourWindow(day, index) {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       const windows = (hours[day]?.windows || []).filter((_, windowIndex) => windowIndex !== index);
@@ -4792,6 +5279,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function copyHourToAll(sourceDay) {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       const source = hours[sourceDay] || defaultBusinessHours[sourceDay];
@@ -4800,6 +5288,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function copyMondayToWeekdays() {
+    markDraftDirty();
     setDraft((current) => {
       const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
       const monday = hours.monday || defaultBusinessHours.monday;
@@ -4812,97 +5301,110 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   }
 
   function updateGalleryDraft(imageId, field, value) {
+    galleryDirtyRef.current = { ...galleryDirtyRef.current, [imageId]: true };
+    setGalleryDirtyMap((current) => ({ ...current, [imageId]: true }));
+    setGalleryStatus(imageId, "DIRTY", "Unsaved image metadata changes.");
     setGalleryDrafts((current) => ({ ...current, [imageId]: { ...(current[imageId] || {}), [field]: value } }));
   }
 
-  function bodyForStep(step) {
+  function bodyForStep(step, draftOverride = null) {
+    const source = draftOverride || draft;
     if (step === "business") {
       return {
-        businessName: draft.businessName,
-        publicBusinessName: draft.publicBusinessName,
-        businessType: draft.businessType,
-        categoryLabel: draft.categoryLabel,
-        description: draft.description,
-        businessEmail: draft.businessEmail,
-        phone: draft.phone,
-        address: draft.address,
-        city: draft.city,
-        state: draft.state,
-        zip: draft.zip,
-        timezone: draft.timezone,
-        pickupEnabled: draft.pickupEnabled,
-        deliveryEnabled: draft.deliveryEnabled,
+        businessName: source.businessName,
+        publicBusinessName: source.publicBusinessName,
+        businessType: source.businessType,
+        categoryLabel: source.categoryLabel,
+        description: source.description,
+        businessEmail: source.businessEmail,
+        phone: source.phone,
+        address: source.address,
+        city: source.city,
+        state: source.state,
+        zip: source.zip,
+        timezone: source.timezone,
+        pickupEnabled: source.pickupEnabled,
+        deliveryEnabled: source.deliveryEnabled,
         enabledModules: businessModules
       };
     }
-    if (step === "owner") return { ownerName: draft.ownerName, ownerEmail: draft.ownerEmail, ownerPhone: draft.ownerPhone };
+    if (step === "owner") return { ownerName: source.ownerName, ownerEmail: source.ownerEmail, ownerPhone: source.ownerPhone };
     if (step === "branding") {
+      const brandTheme = normalizeBrandTheme(source.brandTheme, source);
+      const heroMedia = normalizeHeroMedia(source.heroMedia, source, gallery);
       return {
-        logoUrl: draft.logoUrl,
-        heroImageUrl: draft.heroImageUrl,
-        mobileHeroImageUrl: draft.mobileHeroImageUrl,
-        faviconUrl: draft.faviconUrl,
-        brandColor: draft.brandColor,
-        accentColor: draft.accentColor,
-        buttonColor: draft.buttonColor,
-        headingFont: draft.headingFont,
-        bodyFont: draft.bodyFont
+        logoUrl: source.logoUrl,
+        heroImageUrl: source.heroImageUrl,
+        mobileHeroImageUrl: source.mobileHeroImageUrl,
+        faviconUrl: source.faviconUrl,
+        brandColor: brandTheme.brandColor,
+        accentColor: brandTheme.accentColor,
+        buttonColor: brandTheme.buttonColor,
+        headingFont: brandTheme.headingFont,
+        bodyFont: brandTheme.bodyFont,
+        sectionSettingsJson: {
+          ...(source.sectionSettingsJson || {}),
+          brandTheme,
+          heroMedia,
+          brandPreviewMode: source.brandPreviewMode || "desktop-public-site",
+          brandPublishState: source.brandPublishState || "draft"
+        }
       };
     }
     if (step === "content") {
       return {
-        heroTitle: draft.heroTitle,
-        heroSubtitle: draft.heroSubtitle,
-        tagline: draft.tagline,
-        cuisineType: draft.cuisineType,
-        aboutTitle: draft.aboutTitle,
-        aboutStory: draft.aboutStory,
-        missionStatement: draft.missionStatement,
-        ownerStory: draft.ownerStory,
-        specialOfferText: draft.specialOfferText,
-        ctaText: draft.ctaText,
-        contactMessage: draft.contactMessage,
-        cateringMessage: draft.cateringMessage,
-        publicEmail: draft.publicEmail,
-        sectionSettingsJson: draft.sectionSettingsJson
+        heroTitle: source.heroTitle,
+        heroSubtitle: source.heroSubtitle,
+        tagline: source.tagline,
+        cuisineType: source.cuisineType,
+        aboutTitle: source.aboutTitle,
+        aboutStory: source.aboutStory,
+        missionStatement: source.missionStatement,
+        ownerStory: source.ownerStory,
+        specialOfferText: source.specialOfferText,
+        ctaText: source.ctaText,
+        contactMessage: source.contactMessage,
+        cateringMessage: source.cateringMessage,
+        publicEmail: source.publicEmail,
+        sectionSettingsJson: source.sectionSettingsJson
       };
     }
-    if (step === "hours") return { storeHoursJson: draft.storeHoursJson };
+    if (step === "hours") return { storeHoursJson: source.storeHoursJson };
     if (step === "fulfillment") {
       return {
-        pickupEnabled: draft.pickupEnabled,
-        deliveryEnabled: draft.deliveryEnabled,
-        deliveryFeeCents: Number(draft.deliveryFeeCents || 0),
-        deliveryRadiusMiles: Number(draft.deliveryRadiusMiles || 0),
-        minimumOrderCents: Number(draft.minimumOrderCents || 0),
-        averagePrepMinutes: Number(draft.averagePrepMinutes || 20),
-        tipsEnabled: draft.tipsEnabled !== false,
-        deliveryZone: draft.deliveryEnabled ? {
-          name: draft.deliveryZoneName || "Local Delivery",
-          radiusMiles: Number(draft.deliveryRadiusMiles || 0),
-          deliveryFeeCents: Number(draft.deliveryFeeCents || 0),
-          minimumOrderCents: Number(draft.minimumOrderCents || 0),
+        pickupEnabled: source.pickupEnabled,
+        deliveryEnabled: source.deliveryEnabled,
+        deliveryFeeCents: Number(source.deliveryFeeCents || 0),
+        deliveryRadiusMiles: Number(source.deliveryRadiusMiles || 0),
+        minimumOrderCents: Number(source.minimumOrderCents || 0),
+        averagePrepMinutes: Number(source.averagePrepMinutes || 20),
+        tipsEnabled: source.tipsEnabled !== false,
+        deliveryZone: source.deliveryEnabled ? {
+          name: source.deliveryZoneName || "Local Delivery",
+          radiusMiles: Number(source.deliveryRadiusMiles || 0),
+          deliveryFeeCents: Number(source.deliveryFeeCents || 0),
+          minimumOrderCents: Number(source.minimumOrderCents || 0),
           active: true
         } : null
       };
     }
     if (step === "domain") {
       return {
-        defaultSubdomain: draft.defaultSubdomain,
-        customDomain: draft.customDomain,
-        seoTitle: draft.seoTitle,
-        seoDescription: draft.seoDescription,
-        seoKeywords: draft.seoKeywords,
-        canonicalUrl: draft.canonicalUrl,
-        ogImageUrl: draft.ogImageUrl,
-        indexingEnabled: draft.indexingEnabled !== false
+        defaultSubdomain: source.defaultSubdomain,
+        customDomain: source.customDomain,
+        seoTitle: source.seoTitle,
+        seoDescription: source.seoDescription,
+        seoKeywords: source.seoKeywords,
+        canonicalUrl: source.canonicalUrl,
+        ogImageUrl: source.ogImageUrl,
+        indexingEnabled: source.indexingEnabled !== false
       };
     }
-    if (step === "payments") return { paymentSetup: { provider: draft.paymentProvider, status: draft.paymentStatus } };
+    if (step === "payments") return { paymentSetup: { provider: source.paymentProvider, status: source.paymentStatus } };
     return {};
   }
 
-  async function saveStep(step = activeStep) {
+  async function saveStep(step = activeStep, draftOverride = null) {
     if (!apiOnline || !token) {
       setError("Live API connection and restaurant login are required for onboarding.");
       return;
@@ -4914,14 +5416,30 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         return;
       }
     }
+    setStepSaveState((current) => ({ ...current, [step]: { status: "SAVING", message: "Saving changes..." } }));
+    if (step === "menu") {
+      setMenuReviewState("SAVING");
+      setMenuReviewMessage("Saving menu review...");
+    }
     setSaving(step);
     setError("");
     setMessage("");
     try {
-      const nextPayload = await api(stepEndpoint(step), { method: "PATCH", token, body: bodyForStep(step) });
-      normalizePayload(nextPayload, { stepOverride: step });
+      const nextPayload = await api(stepEndpoint(step), { method: "PATCH", token, body: bodyForStep(step, draftOverride) });
+      normalizePayload(nextPayload, { stepOverride: step, forceDraft: step !== "menu", forceGallery: step === "gallery" });
+      setStepSaveState((current) => ({ ...current, [step]: { status: "SAVED", message: "Saved." } }));
+      if (step === "menu") {
+        setMenuDraftDirty(false);
+        setMenuReviewState("SAVED");
+        setMenuReviewMessage("Menu reviewed and saved.");
+      }
       setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} saved.`);
     } catch (saveError) {
+      setStepSaveState((current) => ({ ...current, [step]: { status: "ERROR", message: saveError.message } }));
+      if (step === "menu") {
+        setMenuReviewState("ERROR");
+        setMenuReviewMessage("Menu review could not be saved. Fix the error and try again.");
+      }
       setError(saveError.message);
     } finally {
       setSaving("");
@@ -4939,7 +5457,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     setMessage("");
     try {
       const nextPayload = await api(`${apiBase}/onboarding/${step}/skip`, { method: "POST", token });
-      normalizePayload(nextPayload, { stepOverride: step });
+      normalizePayload(nextPayload, { stepOverride: step, forceDraft: true, forceGallery: step === "gallery" });
       setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} skipped for now.`);
       nextStep();
     } catch (skipError) {
@@ -4971,11 +5489,13 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       const nextWebsite = uploaded.website || website;
       setPayload((current) => current ? { ...current, website: nextWebsite, restaurant: uploaded.restaurant || current.restaurant, gallery: uploaded.image ? [...(current.gallery || []), uploaded.image] : current.gallery } : current);
       if (uploaded.website) {
+        const savedValues = {};
         ["logoUrl", "heroImageUrl", "mobileHeroImageUrl", "faviconUrl"].forEach((field) => {
-          if (uploaded.website[field]) updateDraft(field, uploaded.website[field]);
+          if (uploaded.website[field]) savedValues[field] = uploaded.website[field];
         });
+        mergeSavedDraftValues(savedValues);
       }
-      if (uploaded.restaurant?.logoUrl) updateDraft("logoUrl", uploaded.restaurant.logoUrl);
+      if (uploaded.restaurant?.logoUrl) mergeSavedDraftValues({ logoUrl: uploaded.restaurant.logoUrl });
       setMessage("Image uploaded and saved.");
       await loadOnboarding({ preserveStep: true });
     } catch (uploadError) {
@@ -5008,7 +5528,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMessage("Gallery photo uploaded.");
-      await loadOnboarding({ preserveStep: true });
+      await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (uploadError) {
       setError(uploadError.message);
     } finally {
@@ -5016,8 +5536,25 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     }
   }
 
+  function validateGalleryDraft(imageId, draftImage) {
+    const errors = [];
+    if (String(draftImage.title || "").length > galleryTitleMaxLength) errors.push(`Gallery title must be ${galleryTitleMaxLength} characters or less.`);
+    if (String(draftImage.category || "").length > galleryCategoryMaxLength) errors.push(`Gallery category must be ${galleryCategoryMaxLength} characters or less.`);
+    if (String(draftImage.altText || "").length > galleryAltTextMaxLength) errors.push(`Gallery alt text must be ${galleryAltTextMaxLength} characters or less.`);
+    if (String(draftImage.caption || "").length > galleryCaptionMaxLength) errors.push(`Gallery caption must be ${galleryCaptionMaxLength} characters or less.`);
+    if (!Number.isInteger(Number(draftImage.sortOrder ?? 0)) || Number(draftImage.sortOrder ?? 0) < 0) errors.push("Gallery sort order must be a whole number of 0 or higher.");
+    if (errors.length) setGalleryStatus(imageId, "ERROR", errors.join(" "));
+    return errors;
+  }
+
   async function saveGalleryImage(imageId) {
     const draftImage = galleryDrafts[imageId] || {};
+    const validationErrors = validateGalleryDraft(imageId, draftImage);
+    if (validationErrors.length) {
+      setError(validationErrors.join(" "));
+      return;
+    }
+    setGalleryStatus(imageId, "SAVING", "Saving image metadata...");
     setSaving(`gallery:${imageId}`);
     setError("");
     try {
@@ -5034,9 +5571,13 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           published: draftImage.published !== false
         }
       });
+      galleryDirtyRef.current = { ...galleryDirtyRef.current, [imageId]: false };
+      setGalleryDirtyMap((current) => ({ ...current, [imageId]: false }));
+      setGalleryStatus(imageId, "SAVED", "Image metadata saved.");
       setMessage("Gallery image updated.");
-      await loadOnboarding({ preserveStep: true });
+      await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
+      setGalleryStatus(imageId, "ERROR", galleryError.message);
       setError(galleryError.message);
     } finally {
       setSaving("");
@@ -5064,7 +5605,8 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMessage("Gallery image replaced.");
-      await loadOnboarding({ preserveStep: true });
+      setGalleryStatus(imageId, "SAVED", "Image replaced.");
+      await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
       setError(galleryError.message);
     } finally {
@@ -5084,8 +5626,19 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         delete next[imageId];
         return next;
       });
+      galleryDirtyRef.current = { ...galleryDirtyRef.current, [imageId]: false };
+      setGalleryDirtyMap((current) => {
+        const next = { ...current };
+        delete next[imageId];
+        return next;
+      });
+      setGallerySaveState((current) => {
+        const next = { ...current };
+        delete next[imageId];
+        return next;
+      });
       setMessage("Gallery image deleted.");
-      await loadOnboarding({ preserveStep: true });
+      await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
       setError(galleryError.message);
     } finally {
@@ -5115,7 +5668,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMessage("Menu item image uploaded.");
-      await loadOnboarding({ preserveStep: true });
+      await loadOnboarding({ preserveStep: true, forceDraft: false });
     } catch (uploadError) {
       setError(uploadError.message);
     } finally {
@@ -5131,6 +5684,9 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     try {
       await api(`${apiBase}/menu/categories`, { method: "POST", token, body: { name: menuDraft.categoryName.trim(), sortOrder: categories.length + 1, active: true } });
       setMenuDraft((current) => ({ ...current, categoryName: "" }));
+      setMenuDraftDirty(true);
+      setMenuReviewState("DIRTY");
+      setMenuReviewMessage("Menu category added. Mark the menu reviewed when finished.");
       await loadOnboarding({ preserveStep: true });
       setMessage("Menu category added.");
     } catch (categoryError) {
@@ -5163,6 +5719,9 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMenuDraft((current) => ({ ...current, itemName: "", itemDescription: "", itemPriceCents: 1295 }));
+      setMenuDraftDirty(true);
+      setMenuReviewState("DIRTY");
+      setMenuReviewMessage("Menu item added. Mark the menu reviewed when finished.");
       await loadOnboarding({ preserveStep: true });
       setMessage("Menu item added.");
     } catch (itemError) {
@@ -5180,6 +5739,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     try {
       await api(`${apiBase}/social-links`, { method: "POST", token, body: socialDraft });
       setSocialDraft({ platform: "instagram", url: "" });
+      setSocialDraftDirty(false);
       await loadOnboarding({ preserveStep: true });
       setMessage("Social link saved.");
     } catch (socialError) {
@@ -5194,7 +5754,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     setError("");
     try {
       const nextPayload = await api(`${apiBase}/onboarding/publish`, { method: "POST", token });
-      normalizePayload(nextPayload);
+      normalizePayload(nextPayload, { forceDraft: true, forceGallery: true });
       setMessage(nextPayload.readiness?.orderingReady ? "Website and ordering are live." : "Website is live. Payments are still required before paid ordering.");
       window.setTimeout(() => navigateInApp(dashboardHref, { replace: true }), 900);
     } catch (publishError) {
@@ -5246,6 +5806,32 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   if (!apiOnline) return <AccessDenied title="Live API required" detail="Restaurant onboarding saves directly to PostgreSQL and requires the live API." loginHref="/restaurant/login" />;
   if (!payload) return <AppLoadingState title="Loading onboarding" detail="Preparing the restaurant setup checklist." />;
 
+  const activeStepSave = stepSaveState[activeStep];
+  const menuReviewButtonLabel = menuReviewState === "SAVING" || saving === "menu"
+    ? "Saving review..."
+    : menuReviewState === "SAVED"
+      ? "Menu reviewed"
+      : menuReviewState === "ERROR"
+        ? "Retry menu review"
+        : "Mark menu reviewed";
+  const currentBrandTheme = normalizeBrandTheme(draft.brandTheme, draft);
+  const currentHeroMedia = normalizeHeroMedia(draft.heroMedia, draft, gallery);
+  const brandButtonContrast = contrastRatioForColors(currentBrandTheme.buttonColor, "#ffffff");
+  const brandContrastStatus = brandButtonContrast >= 4.5 ? "AA ready" : "Needs review";
+  const heroSlideCount = currentHeroMedia.slides.filter((slide) => isValidImageUrl(slide.imageUrl)).length;
+  const brandingPreviewStyle = {
+    "--brand": currentBrandTheme.brandColor,
+    "--accent": currentBrandTheme.accentColor,
+    "--button": currentBrandTheme.buttonColor,
+    fontFamily: currentBrandTheme.bodyFont
+  };
+  const visibleBrandPalette = Array.from(new Set([
+    currentBrandTheme.brandColor,
+    currentBrandTheme.accentColor,
+    currentBrandTheme.buttonColor,
+    ...brandPaletteColors
+  ])).slice(0, 12);
+
   return (
     <div className="grid gap-5">
       <div className="panel flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -5263,8 +5849,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       </div>
 
       <InlineError message={error} />
+      <div className="sr-only" role="status" aria-live="polite">{liveAnnouncement}</div>
+      {serverRefreshPending ? <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">Fresh server data is available. Save your current edits before reloading this step.</div> : null}
       {paymentNotice ? <div className="success-box">{paymentNotice}</div> : null}
-      {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{message}</div> : null}
+      {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700" role="status" aria-live="polite">{message}</div> : null}
 
       <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
         <aside className="grid gap-2 self-start rounded-md border border-line bg-white p-3">
@@ -5283,6 +5871,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
               {optionalOnboardingSteps.has(activeStep) ? <button className="button-muted" type="button" onClick={() => skipStep(activeStep)} disabled={Boolean(saving)}>{saving === `skip:${activeStep}` ? "Skipping..." : "Skip for now"}</button> : null}
               {activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "payments" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
             </div>
+            {activeStepSave?.message ? <p className={`text-sm font-bold ${activeStepSave.status === "ERROR" ? "text-rose-600" : "text-slate-500"}`} role="status" aria-live="polite">{activeStepSave.message}</p> : null}
           </div>
 
           {activeStep === "business" ? (
@@ -5314,24 +5903,275 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
 
           {activeStep === "branding" ? (
             <div className="mt-5 grid gap-5">
-              <div className="grid gap-4 md:grid-cols-3">
-                <Field label="Brand color"><TextInput field="brandColor" type="color" /></Field>
-                <Field label="Accent color"><TextInput field="accentColor" type="color" /></Field>
-                <Field label="Button color"><TextInput field="buttonColor" type="color" /></Field>
-                <Field label="Heading font"><TextInput field="headingFont" placeholder="Inter, serif, system" /></Field>
-                <Field label="Body font"><TextInput field="bodyFont" placeholder="Inter, system" /></Field>
-              </div>
-              <div className="grid gap-4 md:grid-cols-4">
-                <label className="button-muted justify-center">Upload logo<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-logo", event)} /></label>
-                <label className="button-muted justify-center">Upload hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-hero", event)} /></label>
-                <label className="button-muted justify-center">Mobile hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-mobile-hero", event)} /></label>
-                <label className="button-muted justify-center">Favicon<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-favicon", event)} /></label>
-              </div>
-              {uploading ? <p className="text-sm font-bold text-slate-500">Uploading {readable(uploading)}...</p> : null}
-              <div className="grid gap-4 md:grid-cols-3">
-                {draft.logoUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.logoUrl)} alt="Logo preview" onError={handleSafeImageError} /> : null}
-                {draft.heroImageUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.heroImageUrl)} alt="Hero preview" onError={handleSafeImageError} /> : null}
-                {draft.mobileHeroImageUrl ? <img className="h-32 w-full rounded-md object-cover" src={resolveImage(draft.mobileHeroImageUrl)} alt="Mobile hero preview" onError={handleSafeImageError} /> : null}
+              <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                <div className="grid gap-4">
+                  <div className="rounded-md border border-line bg-slate-50 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-sm font-black uppercase text-mint">Brand design system</p>
+                        <h3 className="text-xl font-black text-ink">Presets and color behavior</h3>
+                        <p className="mt-1 text-sm text-slate-500">Draft changes stay local until you save this branding step.</p>
+                      </div>
+                      <Field label="Preview mode">
+                        <select className="input min-w-56" value={draft.brandPreviewMode || "desktop-public-site"} onChange={(event) => updateDraft("brandPreviewMode", event.target.value)}>
+                          {brandPreviewModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                        </select>
+                      </Field>
+                    </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {brandPresets.map((preset) => (
+                        <button className="rounded-md border border-line bg-white p-3 text-left transition hover:border-mint" type="button" key={preset.id} onClick={() => applyBrandPreset(preset)}>
+                          <span className="block text-sm font-black text-ink">{preset.label}</span>
+                          <span className="mt-2 flex gap-1">
+                            {[preset.brandColor, preset.accentColor, preset.buttonColor].map((color) => <span className="h-5 w-8 rounded border border-line" key={color} style={{ background: color }} />)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-4 grid gap-3 rounded-md border border-line bg-white p-3">
+                      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                          <p className="text-sm font-black uppercase text-slate-500">Draft and publish controls</p>
+                          <p className="text-xs font-bold text-slate-500">Preview updates immediately. Publishing only happens when you intentionally save it.</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button className={`nav-tab ${draft.brandPublishState !== "ready_to_publish" ? "active" : ""}`} type="button" onClick={() => updateDraft("brandPublishState", "draft")}>
+                            Draft preview
+                          </button>
+                          <button className={`nav-tab ${draft.brandPublishState === "ready_to_publish" ? "active" : ""}`} type="button" onClick={() => updateDraft("brandPublishState", "ready_to_publish")}>
+                            Published preview
+                          </button>
+                          <button className="button-primary" type="button" onClick={() => saveBrandingPublishState("ready_to_publish")} disabled={Boolean(saving)}>
+                            {saving === "branding" ? "Publishing..." : "Publish branding"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Field label="Brand color mode">
+                      <select className="input" value={currentBrandTheme.mode} onChange={(event) => updateBrandTheme({ mode: event.target.value })}>
+                        {brandColorModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Theme opacity">
+                      <input className="input" type="range" min="0" max="1" step="0.05" value={currentBrandTheme.opacity} onChange={(event) => updateBrandTheme({ opacity: event.target.value })} />
+                    </Field>
+                    <Field label="Brand color">
+                      <div className="grid grid-cols-[56px_1fr] gap-2">
+                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.brandColor} onChange={(event) => updateBrandTheme({ brandColor: event.target.value })} />
+                        <input className="input" value={draft.brandColor ?? currentBrandTheme.brandColor} onChange={(event) => updateBrandColorText("brandColor", event.target.value)} onBlur={(event) => updateBrandTheme({ brandColor: event.target.value })} />
+                      </div>
+                    </Field>
+                    <Field label="Accent color">
+                      <div className="grid grid-cols-[56px_1fr] gap-2">
+                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.accentColor} onChange={(event) => updateBrandTheme({ accentColor: event.target.value })} />
+                        <input className="input" value={draft.accentColor ?? currentBrandTheme.accentColor} onChange={(event) => updateBrandColorText("accentColor", event.target.value)} onBlur={(event) => updateBrandTheme({ accentColor: event.target.value })} />
+                      </div>
+                    </Field>
+                    <Field label="Button color">
+                      <div className="grid grid-cols-[56px_1fr] gap-2">
+                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.buttonColor} onChange={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
+                        <input className="input" value={draft.buttonColor ?? currentBrandTheme.buttonColor} onChange={(event) => updateBrandColorText("buttonColor", event.target.value)} onBlur={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
+                      </div>
+                    </Field>
+                    <Field label="Overlay opacity">
+                      <input className="input" type="range" min="0" max="0.9" step="0.05" value={currentBrandTheme.overlayOpacity} onChange={(event) => updateBrandTheme({ overlayOpacity: event.target.value })} />
+                    </Field>
+                    <Field label="Heading font">
+                      <select className="input" value={currentBrandTheme.headingFont} onChange={(event) => updateBrandTheme({ headingFont: event.target.value })}>
+                        {approvedBrandFonts.map((font) => <option key={font.id} value={font.stack}>{font.label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Body font">
+                      <select className="input" value={currentBrandTheme.bodyFont} onChange={(event) => updateBrandTheme({ bodyFont: event.target.value })}>
+                        {approvedBrandFonts.map((font) => <option key={font.id} value={font.stack}>{font.label}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+
+                  <div className="grid gap-4 rounded-md border border-line bg-white p-4">
+                    <div>
+                      <h3 className="text-lg font-black text-ink">Brand palette</h3>
+                      <p className="text-sm text-slate-500">Use approved restaurant color tokens, recent draft colors, and accessible text readouts.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2" aria-label="Brand palette">
+                      {visibleBrandPalette.map((color) => (
+                        <button
+                          className="h-10 w-10 rounded-md border border-line"
+                          type="button"
+                          key={color}
+                          onClick={() => updateBrandTheme({ brandColor: color })}
+                          style={{ background: color }}
+                          aria-label={`Use ${color} as brand color`}
+                        />
+                      ))}
+                    </div>
+                    <div className="grid gap-2 text-sm text-slate-600 md:grid-cols-3">
+                      <div className="rounded-md bg-slate-50 p-3"><span className="block text-xs font-black uppercase text-slate-400">Hex</span><strong>{currentBrandTheme.brandColor}</strong></div>
+                      <div className="rounded-md bg-slate-50 p-3"><span className="block text-xs font-black uppercase text-slate-400">RGB</span><strong>{rgbColorString(currentBrandTheme.brandColor)}</strong></div>
+                      <div className="rounded-md bg-slate-50 p-3"><span className="block text-xs font-black uppercase text-slate-400">HSL</span><strong>{hslColorString(currentBrandTheme.brandColor)}</strong></div>
+                    </div>
+                  </div>
+
+                  {["LINEAR_GRADIENT", "RADIAL_GRADIENT", "IMAGE_OVERLAY"].includes(currentBrandTheme.mode) ? (
+                    <div className="rounded-md border border-line bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h3 className="text-lg font-black text-ink">Gradient stops</h3>
+                          <p className="text-sm text-slate-500">Use 2-5 accessible color stops for gradients and image overlays.</p>
+                        </div>
+                        <Field label="Angle">
+                          <input className="input w-32" type="number" min="0" max="360" value={currentBrandTheme.gradientAngle} onChange={(event) => updateBrandTheme({ gradientAngle: event.target.value })} />
+                        </Field>
+                      </div>
+                      <div className="mt-4 grid gap-3">
+                        {currentBrandTheme.gradientStops.map((stop, index) => (
+                          <div className="grid gap-2 md:grid-cols-[60px_1fr_1fr_1fr_auto] md:items-end" key={`gradient-stop-${index}`}>
+                            <input className="h-10 w-full rounded-md border border-line" type="color" value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} />
+                            <Field label="Color"><input className="input" value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} /></Field>
+                            <Field label="Position"><input className="input" type="number" min="0" max="100" value={stop.position} onChange={(event) => updateBrandGradientStop(index, { position: event.target.valueAsNumber })} /></Field>
+                            <Field label="Opacity"><input className="input" type="number" min="0" max="1" step="0.05" value={stop.opacity} onChange={(event) => updateBrandGradientStop(index, { opacity: event.target.valueAsNumber })} /></Field>
+                            <button className="button-muted min-h-10" type="button" onClick={() => removeBrandGradientStop(index)} disabled={currentBrandTheme.gradientStops.length <= 2}><Trash2 size={16} />Remove</button>
+                          </div>
+                        ))}
+                        <button className="button-muted w-fit" type="button" onClick={addBrandGradientStop} disabled={currentBrandTheme.gradientStops.length >= 5}><Plus size={16} />Add stop</button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="rounded-md border border-line bg-white p-4">
+                    <h3 className="text-lg font-black text-ink">Hero media</h3>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <Field label="Hero mode">
+                        <select className="input" value={currentHeroMedia.mode} onChange={(event) => updateHeroMedia({ mode: event.target.value })}>
+                          {heroMediaModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Image behavior">
+                        <select className="input" value={currentHeroMedia.imageBehavior} onChange={(event) => updateHeroMedia({ imageBehavior: event.target.value })}>
+                          {["cover", "contain", "center"].map((behavior) => <option key={behavior} value={behavior}>{readable(behavior)}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Transition">
+                        <select className="input" value={currentHeroMedia.transition} onChange={(event) => updateHeroMedia({ transition: event.target.value })}>
+                          {["fade", "slide", "none"].map((transition) => <option key={transition} value={transition}>{readable(transition)}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Interval seconds"><input className="input" type="number" min="3" max="15" value={currentHeroMedia.intervalSeconds} onChange={(event) => updateHeroMedia({ intervalSeconds: event.target.valueAsNumber })} /></Field>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button className={`nav-tab ${currentHeroMedia.reducedMotionFallback ? "active" : ""}`} type="button" onClick={() => updateHeroMedia({ reducedMotionFallback: !currentHeroMedia.reducedMotionFallback })}>
+                        {currentHeroMedia.reducedMotionFallback ? <CheckCircle2 size={16} /> : null}Reduced motion fallback
+                      </button>
+                      <button className="button-muted" type="button" onClick={addBlankHeroSlide}><Plus size={16} />Add blank slide</button>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      {currentHeroMedia.slides.map((slide, index) => (
+                        <div className="grid gap-3 rounded-md border border-line bg-slate-50 p-3 lg:grid-cols-[120px_1fr_auto]" key={slide.id || `hero-slide-${index}`}>
+                          {slide.imageUrl ? <img className="h-24 w-full rounded-md object-cover" src={resolveImage(slide.imageUrl)} alt={slide.altText || "Hero slide preview"} onError={handleSafeImageError} /> : <div className="grid h-24 w-full place-items-center rounded-md bg-white text-xs font-black text-slate-400">Hero image</div>}
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <input className="input" value={slide.imageUrl} placeholder="Image URL" onChange={(event) => updateHeroSlide(index, { imageUrl: event.target.value })} />
+                            <input className="input" value={slide.mobileImageUrl} placeholder="Mobile image URL" onChange={(event) => updateHeroSlide(index, { mobileImageUrl: event.target.value })} />
+                            <input className="input" value={slide.title} placeholder="Slide title" onChange={(event) => updateHeroSlide(index, { title: event.target.value })} />
+                            <input className="input" value={slide.altText} placeholder="Accessible alt text" onChange={(event) => updateHeroSlide(index, { altText: event.target.value })} />
+                          </div>
+                          <div className="flex flex-wrap gap-2 self-start lg:grid">
+                            <button className={`nav-tab ${slide.published !== false ? "active" : ""}`} type="button" onClick={() => updateHeroSlide(index, { published: slide.published === false })}>
+                              {slide.published !== false ? <CheckCircle2 size={16} /> : null}{slide.published === false ? "Draft" : "Published"}
+                            </button>
+                            <button className="button-muted min-h-10" type="button" onClick={() => moveHeroSlide(index, -1)} disabled={index === 0}>Move up</button>
+                            <button className="button-muted min-h-10" type="button" onClick={() => moveHeroSlide(index, 1)} disabled={index === currentHeroMedia.slides.length - 1}>Move down</button>
+                            <button className="button-muted min-h-10" type="button" onClick={() => removeHeroSlide(index)}><Trash2 size={16} />Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {gallery.length ? (
+                      <div className="mt-4">
+                        <p className="text-sm font-black uppercase text-slate-500">Add from gallery</p>
+                        <div className="mt-2 flex gap-2 overflow-x-auto pb-2">
+                          {gallery.filter((image) => isValidImageUrl(image.imageUrl)).slice(0, 8).map((image) => (
+                            <button className="min-w-32 rounded-md border border-line bg-white p-2 text-left text-xs font-bold text-slate-600" type="button" key={image.id} onClick={() => addHeroSlideFromGallery(image)}>
+                              <img className="mb-2 h-16 w-full rounded object-cover" src={resolveImage(image.imageUrl)} alt={image.altText || image.title || "Gallery image"} onError={handleSafeImageError} />
+                              Add image
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {currentHeroMedia.mode === "VIDEO" ? (
+                      <div className="mt-4 grid gap-3 rounded-md border border-line bg-slate-50 p-4">
+                        <p className="text-sm font-black uppercase text-mint">Video hero foundation</p>
+                        <input className="input" value={currentHeroMedia.video.url} placeholder="Video URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, url: event.target.value } })} />
+                        <input className="input" value={currentHeroMedia.video.posterUrl} placeholder="Poster image URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, posterUrl: event.target.value } })} />
+                        <input className="input" value={currentHeroMedia.video.captionsUrl} placeholder="Captions URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, captionsUrl: event.target.value } })} />
+                        <div className="flex flex-wrap gap-2">
+                          {["muted", "loop", "controls"].map((field) => (
+                            <button className={`nav-tab ${currentHeroMedia.video[field] ? "active" : ""}`} type="button" key={field} onClick={() => updateHeroMedia({ video: { ...currentHeroMedia.video, [field]: !currentHeroMedia.video[field] } })}>
+                              {currentHeroMedia.video[field] ? <CheckCircle2 size={16} /> : null}{readable(field)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <aside className="grid gap-4 self-start">
+                  <div className="rounded-md border border-line bg-white p-4">
+                    <p className="text-sm font-black uppercase text-mint">Brand preview</p>
+                    <div className="mt-3 overflow-hidden rounded-md border border-line bg-slate-950 text-white" style={brandingPreviewStyle}>
+                      <div
+                        className="min-h-64 bg-cover bg-center p-5"
+                        style={currentBrandTheme.mode === "IMAGE_OVERLAY" && currentHeroMedia.slides[0]?.imageUrl
+                          ? { backgroundImage: `linear-gradient(rgba(0,0,0,${currentBrandTheme.overlayOpacity}), rgba(0,0,0,${currentBrandTheme.overlayOpacity})), url(${resolveImage(currentHeroMedia.slides[0].imageUrl)})` }
+                          : { background: brandThemeBackground(currentBrandTheme) }}
+                      >
+                        <p className="text-xs font-black uppercase tracking-wide" style={{ color: currentBrandTheme.accentColor }}>{draft.cuisineType || draft.categoryLabel || "Restaurant"}</p>
+                        <h3 className="mt-8 text-4xl font-black" style={{ fontFamily: currentBrandTheme.headingFont }}>{draft.heroTitle || draft.publicBusinessName || "Restaurant name"}</h3>
+                        <p className="mt-3 max-w-md text-sm leading-6 text-white/85">{draft.heroSubtitle || draft.description || "Your restaurant story and direct ordering message appear here."}</p>
+                        <button className="mt-5 rounded-md px-5 py-3 text-sm font-black text-white" type="button" style={{ background: currentBrandTheme.buttonColor }}>Order online</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-md border border-line bg-slate-50 p-4">
+                    <h3 className="text-lg font-black text-ink">Media uploads</h3>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="button-muted justify-center">Upload logo<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-logo", event)} /></label>
+                      <label className="button-muted justify-center">Upload favicon<input className="sr-only" type="file" accept={logoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-favicon", event)} /></label>
+                      <label className="button-muted justify-center">Upload hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-hero", event)} /></label>
+                      <label className="button-muted justify-center">Mobile hero<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => uploadOnboardingImage("restaurant-mobile-hero", event)} /></label>
+                    </div>
+                    {uploading ? <p className="text-sm font-bold text-slate-500" role="status" aria-live="polite">Uploading {readable(uploading)}...</p> : null}
+                    <div className="grid gap-3">
+                      {[
+                        ["Logo", draft.logoUrl],
+                        ["Hero", draft.heroImageUrl],
+                        ["Mobile hero", draft.mobileHeroImageUrl],
+                        ["Favicon", draft.faviconUrl]
+                      ].map(([label, imageUrl]) => imageUrl ? <img className="h-28 w-full rounded-md object-cover" key={label} src={resolveImage(imageUrl)} alt={`${label} preview`} onError={handleSafeImageError} /> : null)}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 rounded-md border border-line bg-white p-4 text-sm text-slate-600">
+                    <div className="summary-line"><span>Contrast</span><strong>{brandContrastStatus} ({brandButtonContrast}:1)</strong></div>
+                    <div className="summary-line"><span>Hero images</span><strong>{heroSlideCount}</strong></div>
+                    <div className="summary-line"><span>Animation</span><strong>{currentHeroMedia.reducedMotionFallback ? "Reduced motion ready" : "Needs fallback"}</strong></div>
+                    <div className="summary-line"><span>Performance</span><strong>5MB image limit</strong></div>
+                    <div className="summary-line"><span>Publish state</span><strong>{readable(draft.brandPublishState || "draft")}</strong></div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button className="button-primary flex-1 justify-center" type="button" onClick={() => saveStep("branding")} disabled={Boolean(saving)}>{saving === "branding" ? "Saving branding..." : "Save branding"}</button>
+                    <button className="button-muted flex-1 justify-center" type="button" onClick={resetBrandingDraft}>Reset changes</button>
+                  </div>
+                </aside>
               </div>
             </div>
           ) : null}
@@ -5380,6 +6220,8 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
               <div className="grid gap-3">
                 {businessHourDays.map((day) => {
                   const dayHours = normalizeBusinessHoursForDraft(draft.storeHoursJson)[day];
+                  const noteId = `hours-note-${day}`;
+                  const noteLength = String(dayHours.note || "").length;
                   return (
                     <div className="rounded-md border border-line bg-white p-4" key={day}>
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -5407,7 +6249,18 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                         </div>
                       ) : null}
                       <div className="mt-3">
-                        <Field label="Holiday or special-hours note"><input className="input" value={dayHours.note || ""} placeholder="Optional note" onChange={(event) => updateHourDay(day, { note: event.target.value })} /></Field>
+                        <Field label="Holiday or special-hours note">
+                          <textarea
+                            id={noteId}
+                            className="input min-h-20"
+                            value={dayHours.note || ""}
+                            placeholder="Optional note"
+                            maxLength={businessHourNoteMaxLength}
+                            aria-describedby={`${noteId}-counter`}
+                            onChange={(event) => updateHourDay(day, { note: event.target.value })}
+                          />
+                          <span id={`${noteId}-counter`} className="text-xs font-bold text-slate-500">{noteLength}/{businessHourNoteMaxLength}</span>
+                        </Field>
                       </div>
                     </div>
                   );
@@ -5436,14 +6289,14 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 <a className="button-muted self-center justify-center" href={`${dashboardHref}#menu`}>Open full menu manager</a>
               </div>
               <form className="grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={createQuickCategory}>
-                <input className="input" value={menuDraft.categoryName} placeholder="Quick add category" onChange={(event) => setMenuDraft((current) => ({ ...current, categoryName: event.target.value }))} />
-                <button className="button-primary" disabled={saving === "menu-category"}>{saving === "menu-category" ? "Adding..." : "Add category"}</button>
+                <input className="input" value={menuDraft.categoryName} placeholder="Quick add category" maxLength={80} onChange={(event) => updateMenuDraft("categoryName", event.target.value)} />
+                <button className="button-primary" type="submit" disabled={saving === "menu-category"}>{saving === "menu-category" ? "Adding..." : "Add category"}</button>
               </form>
               <form className="grid gap-3 md:grid-cols-4" onSubmit={createQuickItem}>
-                <input className="input" value={menuDraft.itemName} placeholder="Featured item name" onChange={(event) => setMenuDraft((current) => ({ ...current, itemName: event.target.value }))} />
-                <input className="input" value={menuDraft.itemDescription} placeholder="Description" onChange={(event) => setMenuDraft((current) => ({ ...current, itemDescription: event.target.value }))} />
-                <input className="input" type="number" value={menuDraft.itemPriceCents} onChange={(event) => setMenuDraft((current) => ({ ...current, itemPriceCents: event.target.valueAsNumber || 0 }))} />
-                <button className="button-primary" disabled={saving === "menu-item"}>{saving === "menu-item" ? "Adding..." : "Add item"}</button>
+                <input className="input" value={menuDraft.itemName} placeholder="Featured item name" maxLength={120} onChange={(event) => updateMenuDraft("itemName", event.target.value)} />
+                <input className="input" value={menuDraft.itemDescription} placeholder="Description" maxLength={500} onChange={(event) => updateMenuDraft("itemDescription", event.target.value)} />
+                <input className="input" type="number" value={menuDraft.itemPriceCents} onChange={(event) => updateMenuDraft("itemPriceCents", event.target.value)} />
+                <button className="button-primary" type="submit" disabled={saving === "menu-item"}>{saving === "menu-item" ? "Adding..." : "Add item"}</button>
               </form>
               <div className="grid gap-3">
                 {categories.flatMap((category) => (category.items || []).map((item) => ({ ...item, categoryName: category.name }))).slice(0, 8).map((item) => (
@@ -5456,7 +6309,8 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                   </div>
                 ))}
               </div>
-              <button className="button-primary justify-center" type="button" onClick={() => saveStep("menu")}>Mark menu reviewed</button>
+              {menuReviewMessage || menuDraftDirty ? <p className="text-sm font-bold text-slate-500" role="status" aria-live="polite">{menuReviewMessage || "Menu changes have not been reviewed yet."}</p> : null}
+              <button className="button-primary justify-center" type="button" onClick={() => saveStep("menu")} disabled={saving === "menu"} aria-busy={saving === "menu"}>{menuReviewButtonLabel}</button>
             </div>
           ) : null}
 
@@ -5474,26 +6328,29 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
                     .map((image) => {
                       const imageDraft = galleryDrafts[image.id] || {};
+                      const imageStatus = gallerySaveState[image.id] || { status: galleryDirtyMap[image.id] ? "DIRTY" : "IDLE", message: galleryDirtyMap[image.id] ? "Unsaved image metadata changes." : "" };
+                      const captionLength = String(imageDraft.caption || "").length;
                       return (
-                        <article className="rounded-md border border-line bg-white p-3" key={image.id}>
+                        <article className="rounded-md border border-line bg-white p-3" key={image.id} aria-busy={imageStatus.status === "SAVING"}>
                           <div className="grid gap-3 md:grid-cols-[160px_1fr]">
                             <a href={resolveImage(image.imageUrl)} target="_blank" rel="noreferrer">
                               <img className="h-40 w-full rounded-md object-cover" src={resolveImage(image.imageUrl)} alt={imageDraft.altText || image.altText || "Restaurant gallery"} onError={handleSafeImageError} />
                             </a>
                             <div className="grid gap-3">
                               <div className="grid gap-3 md:grid-cols-2">
-                                <Field label="Title"><input className="input" value={imageDraft.title || ""} onChange={(event) => updateGalleryDraft(image.id, "title", event.target.value)} /></Field>
-                                <Field label="Category"><input className="input" value={imageDraft.category || "food" } onChange={(event) => updateGalleryDraft(image.id, "category", event.target.value)} /></Field>
-                                <Field label="Alt text"><input className="input" value={imageDraft.altText || ""} onChange={(event) => updateGalleryDraft(image.id, "altText", event.target.value)} /></Field>
-                                <Field label="Sort order"><input className="input" type="number" value={imageDraft.sortOrder ?? 0} onChange={(event) => updateGalleryDraft(image.id, "sortOrder", event.target.valueAsNumber || 0)} /></Field>
+                                <Field label="Title"><input className="input" value={imageDraft.title || ""} maxLength={galleryTitleMaxLength} onChange={(event) => updateGalleryDraft(image.id, "title", event.target.value)} /></Field>
+                                <Field label="Category"><input className="input" value={imageDraft.category || "food" } maxLength={galleryCategoryMaxLength} onChange={(event) => updateGalleryDraft(image.id, "category", event.target.value)} /></Field>
+                                <Field label="Alt text"><input className="input" value={imageDraft.altText || ""} maxLength={galleryAltTextMaxLength} onChange={(event) => updateGalleryDraft(image.id, "altText", event.target.value)} /></Field>
+                                <Field label="Sort order"><input className="input" type="number" min="0" step="1" value={imageDraft.sortOrder ?? 0} onChange={(event) => updateGalleryDraft(image.id, "sortOrder", event.target.value)} /></Field>
                               </div>
-                              <Field label="Caption"><textarea className="input min-h-20" value={imageDraft.caption || ""} onChange={(event) => updateGalleryDraft(image.id, "caption", event.target.value)} /></Field>
+                              <Field label="Caption"><textarea className="input min-h-20" value={imageDraft.caption || ""} maxLength={galleryCaptionMaxLength} aria-describedby={`gallery-caption-${image.id}-counter`} onChange={(event) => updateGalleryDraft(image.id, "caption", event.target.value)} /><span id={`gallery-caption-${image.id}-counter`} className="text-xs font-bold text-slate-500">{captionLength}/{galleryCaptionMaxLength}</span></Field>
                               <div className="flex flex-wrap gap-2">
                                 <button className={`nav-tab ${imageDraft.published !== false ? "active" : ""}`} type="button" onClick={() => updateGalleryDraft(image.id, "published", imageDraft.published === false)}>Published</button>
                                 <label className="button-muted">{uploading === `gallery:${image.id}` ? "Replacing..." : "Replace"}<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => replaceGalleryImage(image.id, event)} /></label>
-                                <button className="button-muted" type="button" onClick={() => saveGalleryImage(image.id)} disabled={saving === `gallery:${image.id}`}>{saving === `gallery:${image.id}` ? "Saving..." : "Save image"}</button>
+                                <button className="button-muted" type="button" onClick={() => saveGalleryImage(image.id)} disabled={saving === `gallery:${image.id}`} aria-busy={saving === `gallery:${image.id}`}>{saving === `gallery:${image.id}` ? "Saving..." : imageStatus.status === "SAVED" ? "Saved" : imageStatus.status === "ERROR" ? "Retry save" : "Save image"}</button>
                                 <button className="button-muted" type="button" onClick={() => deleteGalleryImage(image.id)} disabled={saving === `gallery-delete:${image.id}`}>{saving === `gallery-delete:${image.id}` ? "Deleting..." : "Delete"}</button>
                               </div>
+                              {imageStatus.message ? <p className={`text-xs font-bold ${imageStatus.status === "ERROR" ? "text-rose-600" : "text-slate-500"}`} role="status" aria-live="polite">{imageStatus.message}</p> : null}
                               <p className="text-xs text-slate-500">Featured gallery image support is not enabled in the current database schema, so this editor preserves existing supported fields only.</p>
                             </div>
                           </div>
@@ -5505,10 +6362,11 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 <div className="rounded-md border border-dashed border-line bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No gallery images yet. Upload a photo to start the public gallery.</div>
               )}
               <form className="grid gap-3 md:grid-cols-[180px_1fr_auto]" onSubmit={addSocial}>
-                <select className="input" value={socialDraft.platform} onChange={(event) => setSocialDraft((current) => ({ ...current, platform: event.target.value }))}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
-                <input className="input" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => setSocialDraft((current) => ({ ...current, url: event.target.value }))} />
+                <select className="input" value={socialDraft.platform} onChange={(event) => updateSocialDraft("platform", event.target.value)}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
+                <input className="input" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => updateSocialDraft("url", event.target.value)} />
                 <button className="button-primary" type="submit" disabled={saving === "social"}>{saving === "social" ? "Saving..." : "Add social"}</button>
               </form>
+              {socialDraftDirty ? <p className="text-sm font-bold text-slate-500" role="status" aria-live="polite">Social link changes are not saved yet.</p> : null}
               <div className="flex flex-wrap gap-2">{socialLinks.map((link) => <StatusPill key={link.id}>{readable(link.platform)}</StatusPill>)}</div>
             </div>
           ) : null}
