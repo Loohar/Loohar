@@ -96,6 +96,16 @@ function encodeStoragePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
+function decodeStoragePath(path) {
+  return path.split("/").map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  }).join("/");
+}
+
 function storageFolderFor({ kind, menuItemId }) {
   if (kind === "restaurant-logo") return "branding/logo";
   if (kind === "restaurant-hero") return "branding/hero";
@@ -195,4 +205,57 @@ export async function uploadImageToSupabaseStorage({ restaurantId, kind, fileNam
     mimeType: parsed.mimeType,
     byteSize: parsed.byteSize
   };
+}
+
+export function storageKeyFromPublicUrl(publicUrl) {
+  if (!publicUrl) return "";
+  const { supabaseUrl, bucket } = supabaseStorageConfig();
+  const encodedBucket = encodeURIComponent(bucket);
+  const standardBase = `${supabaseUrl}/storage/v1/object/public/${encodedBucket}`;
+  const configuredBase = (process.env.SUPABASE_STORAGE_PUBLIC_BASE_URL || standardBase).replace(/\/+$/, "");
+  const candidates = [configuredBase, standardBase];
+
+  for (const baseUrl of candidates) {
+    if (publicUrl.startsWith(`${baseUrl}/`)) {
+      return decodeStoragePath(publicUrl.slice(baseUrl.length + 1));
+    }
+  }
+
+  try {
+    const parsed = new URL(publicUrl);
+    const prefix = `/storage/v1/object/public/${encodedBucket}/`;
+    if (parsed.pathname.startsWith(prefix)) {
+      return decodeStoragePath(parsed.pathname.slice(prefix.length));
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+export async function deleteImageFromSupabaseStorage({ publicUrl, restaurantId }) {
+  const { supabaseUrl, serviceRoleKey, bucket } = supabaseStorageConfig();
+  const key = storageKeyFromPublicUrl(publicUrl);
+  const safeRestaurantId = String(restaurantId).replace(/[^a-z0-9_-]/gi, "-");
+  if (!key || !key.startsWith(`tenants/${safeRestaurantId}/`)) {
+    return { provider: "supabase_storage", deleted: false, reason: "not-managed-by-tenant" };
+  }
+
+  const response = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ prefixes: [key] })
+  });
+
+  if (!response.ok && response.status !== 404) {
+    const detail = await response.text().catch(() => "");
+    throw apiError(`Supabase Storage delete failed: ${detail || response.statusText}`, response.status >= 400 && response.status < 500 ? response.status : 502);
+  }
+
+  return { provider: "supabase_storage", deleted: response.ok, key };
 }

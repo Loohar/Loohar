@@ -137,6 +137,24 @@ const imageMimeByExtension = {
   svg: "image/svg+xml"
 };
 const websiteSectionDefaults = { hero: true, featuredMenu: true, story: true, gallery: true, loyalty: true, catering: true, contact: true };
+const businessHourDays = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday"
+];
+const defaultBusinessHours = {
+  sunday: { closed: true, windows: [], note: "" },
+  monday: { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: "" },
+  tuesday: { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: "" },
+  wednesday: { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: "" },
+  thursday: { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: "" },
+  friday: { closed: false, windows: [{ open: "11:00", close: "22:00", overnight: false }], note: "" },
+  saturday: { closed: false, windows: [{ open: "11:00", close: "22:00", overnight: false }], note: "" }
+};
 const onboardingSteps = [
   { id: "business", label: "Business" },
   { id: "owner", label: "Owner" },
@@ -626,6 +644,107 @@ function emptyPublicRestaurant(slug = "") {
 
 function readable(value = "") {
   return value.toLowerCase().replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
+}
+
+function cloneBusinessHours(hours = defaultBusinessHours) {
+  return Object.fromEntries(businessHourDays.map((day) => {
+    const value = hours[day] || defaultBusinessHours[day];
+    return [day, {
+      closed: value.closed === true,
+      windows: Array.isArray(value.windows) ? value.windows.map((window) => ({ ...window })) : [],
+      note: value.note || ""
+    }];
+  }));
+}
+
+function timeTo24Hour(value = "") {
+  const raw = String(value || "").trim();
+  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const minute = match[2] || "00";
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hour < 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${minute}`;
+}
+
+function legacyHoursToDayConfig(value) {
+  const label = String(value || "").trim();
+  if (!label || label.toLowerCase() === "closed") return { closed: true, windows: [], note: "" };
+  const range = label.split(/\s+-\s+/);
+  const open = timeTo24Hour(range[0]);
+  const close = timeTo24Hour(range[1]);
+  if (!open || !close) return { closed: false, windows: [{ open: "11:00", close: "21:00", overnight: false }], note: label };
+  return { closed: false, windows: [{ open, close, overnight: close <= open }], note: "" };
+}
+
+function normalizeBusinessHoursForDraft(rawHours) {
+  const source = rawHours && typeof rawHours === "object" && !Array.isArray(rawHours) ? rawHours : {};
+  const hasAnyHours = businessHourDays.some((day) => source[day] !== undefined && source[day] !== null && source[day] !== "");
+  if (!hasAnyHours) return cloneBusinessHours();
+  return Object.fromEntries(businessHourDays.map((day) => {
+    const current = source[day];
+    if (typeof current === "string") return [day, legacyHoursToDayConfig(current)];
+    if (current && typeof current === "object" && !Array.isArray(current)) {
+      const windows = Array.isArray(current.windows) ? current.windows : [current];
+      const normalizedWindows = windows
+        .map((window) => ({
+          open: timeTo24Hour(window.open || window.start || window.from),
+          close: timeTo24Hour(window.close || window.end || window.to),
+          overnight: Boolean(window.overnight)
+        }))
+        .filter((window) => window.open && window.close);
+      return [day, {
+        closed: current.closed === true || (!normalizedWindows.length && String(current.label || "").toLowerCase() === "closed"),
+        windows: normalizedWindows.length ? normalizedWindows : cloneBusinessHours()[day].windows,
+        note: current.note || current.label || ""
+      }];
+    }
+    return [day, cloneBusinessHours()[day]];
+  }));
+}
+
+function minutesFromBusinessTime(value = "") {
+  const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function validateBusinessHours(hours = {}, timezone = "") {
+  const errors = [];
+  const normalized = normalizeBusinessHoursForDraft(hours);
+  if (!timezone || !/^[A-Za-z_]+\/[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)?$/.test(timezone)) {
+    errors.push("Enter a valid timezone, for example America/Denver.");
+  }
+  businessHourDays.forEach((day) => {
+    const config = normalized[day];
+    if (config.closed) return;
+    const ranges = [];
+    config.windows.forEach((window, index) => {
+      const open = minutesFromBusinessTime(window.open);
+      const close = minutesFromBusinessTime(window.close);
+      if (open === null || close === null) {
+        errors.push(`${readable(day)} window ${index + 1} needs valid opening and closing times.`);
+        return;
+      }
+      if (open >= close && !window.overnight) {
+        errors.push(`${readable(day)} closing time must be after opening time unless overnight is enabled.`);
+      }
+      ranges.push({ open, close: close <= open && window.overnight ? close + 1440 : close });
+    });
+    ranges.sort((a, b) => a.open - b.open);
+    for (let index = 1; index < ranges.length; index += 1) {
+      if (ranges[index].open < ranges[index - 1].close) {
+        errors.push(`${readable(day)} service windows cannot overlap.`);
+      }
+    }
+  });
+  return errors;
 }
 
 function integer(value = 0) {
@@ -3911,7 +4030,7 @@ function PricingPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) {
         </div>
         {planConfigIsPending ? (
           <div className="mt-4 min-h-14 rounded-md border border-line bg-slate-50 p-3 text-sm font-semibold text-slate-600" aria-live="polite">
-            Checking setup availability...
+            Checking secure checkout availability...
           </div>
         ) : null}
         {planConfigStatus === PLAN_CONFIG_STATUS.ERROR ? (
@@ -3972,7 +4091,8 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
   const selectedStartMode = planStartMode(selectedPlan, form.billingInterval);
   const visibleErrors = registrationVisibleErrors(errors, currentStep);
   const planConfigIsPending = planConfigPending(planConfigStatus);
-  const checkoutReady = apiOnline && planConfigStatus === PLAN_CONFIG_STATUS.READY && planStartAvailable(selectedPlan, form.billingInterval);
+  const planCheckoutAvailable = planStartAvailable(selectedPlan, form.billingInterval);
+  const checkoutReady = apiOnline && planConfigStatus === PLAN_CONFIG_STATUS.READY && planCheckoutAvailable;
 
   useEffect(() => {
     if (apiMode === "CHECKING") {
@@ -4081,8 +4201,8 @@ function RegistrationPage({ apiOnline, apiMode = apiOnline ? "LIVE" : "DEMO" }) 
       return;
     }
     if (!checkoutReady) {
-      if (planConfigIsPending) setError("Plan setup details are still loading. Please wait a moment.");
-      else if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) setError(planError || "Plan setup could not be confirmed. Please retry plan details.");
+      if (planConfigIsPending) setError("Plan details are still loading. Please wait a moment.");
+      else if (planConfigStatus === PLAN_CONFIG_STATUS.ERROR) setError(planError || "Checkout availability could not be confirmed. Please retry plan details.");
       else setError(apiOnline ? "Plan setup is temporarily unavailable. Please contact Loohar support to finish setup." : "Live API is required to start setup.");
       return;
     }
@@ -4421,6 +4541,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const [draft, setDraft] = useState({});
   const [menuDraft, setMenuDraft] = useState({ categoryName: "", itemName: "", itemDescription: "", itemPriceCents: 1295 });
   const [socialDraft, setSocialDraft] = useState({ platform: "instagram", url: "" });
+  const [galleryDrafts, setGalleryDrafts] = useState({});
   const [saving, setSaving] = useState("");
   const [uploading, setUploading] = useState("");
   const [error, setError] = useState("");
@@ -4444,27 +4565,20 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const currentStepIndex = Math.max(0, onboardingSteps.findIndex((step) => step.id === activeStep));
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
   const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
+  const businessHourErrors = activeStep === "hours" ? validateBusinessHours(draft.storeHoursJson, draft.timezone) : [];
 
   function stepEndpoint(step = activeStep) {
     return `${apiBase}/onboarding/${step}`;
   }
 
-  function normalizePayload(nextPayload) {
+  function normalizePayload(nextPayload, { preserveStep = false, stepOverride = "" } = {}) {
     setPayload(nextPayload);
     const nextRestaurant = nextPayload.restaurant || {};
     const nextWebsite = nextPayload.website || {};
     const nextDomain = nextPayload.domain || {};
     const nextOwner = nextPayload.owner || {};
     const nextDeliveryZones = nextPayload.deliveryZones || [];
-    const nextHours = nextWebsite.storeHoursJson || nextRestaurant.storeHoursJson || {
-      monday: "11:00 AM - 9:00 PM",
-      tuesday: "11:00 AM - 9:00 PM",
-      wednesday: "11:00 AM - 9:00 PM",
-      thursday: "11:00 AM - 9:00 PM",
-      friday: "11:00 AM - 10:00 PM",
-      saturday: "11:00 AM - 10:00 PM",
-      sunday: "Closed"
-    };
+    const nextHours = normalizeBusinessHoursForDraft(nextWebsite.storeHoursJson || nextRestaurant.storeHoursJson);
     setDraft({
       businessName: nextRestaurant.businessName || nextRestaurant.name || "",
       publicBusinessName: nextRestaurant.name || nextRestaurant.businessName || "",
@@ -4524,7 +4638,19 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       paymentStatus: nextPayload.readiness?.paymentStatus || "NOT_CONNECTED",
       paymentProvider: nextRestaurant.settingsJson?.paymentSetup?.provider || "stripe_connect"
     });
-    setActiveStep(nextPayload.progress?.currentStep || user?.onboardingCurrentStep || "business");
+    setGalleryDrafts(Object.fromEntries((nextPayload.gallery || []).map((image) => [image.id, {
+      title: image.title || "",
+      altText: image.altText || "",
+      caption: image.caption || "",
+      category: image.category || "food",
+      sortOrder: image.sortOrder ?? 0,
+      published: image.published !== false
+    }])));
+    if (stepOverride) {
+      setActiveStep(stepOverride);
+    } else if (!preserveStep) {
+      setActiveStep(nextPayload.progress?.currentStep || user?.onboardingCurrentStep || "business");
+    }
   }
 
   async function resolveRouteRestaurant() {
@@ -4534,12 +4660,12 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     if (tenant?.id) setRouteRestaurantId(tenant.id);
   }
 
-  async function loadOnboarding() {
+  async function loadOnboarding(options = {}) {
     if (!apiOnline || !token || !restaurantKey) return;
     setError("");
     try {
       const nextPayload = await api(`${apiBase}/onboarding`, { token });
-      normalizePayload(nextPayload);
+      normalizePayload(nextPayload, options);
     } catch (loadError) {
       setError(loadError.message);
     }
@@ -4629,6 +4755,64 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
 
   function updateHour(day, value) {
     setDraft((current) => ({ ...current, storeHoursJson: { ...(current.storeHoursJson || {}), [day]: value } }));
+  }
+
+  function updateHourDay(day, patch) {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      const nextDay = { ...hours[day], ...patch };
+      if (patch.closed === true) nextDay.windows = [];
+      if (patch.closed === false && !nextDay.windows.length) nextDay.windows = [{ open: "11:00", close: "21:00", overnight: false }];
+      return { ...current, storeHoursJson: { ...hours, [day]: nextDay } };
+    });
+  }
+
+  function updateHourWindow(day, index, patch) {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      const windows = [...(hours[day]?.windows || [])];
+      windows[index] = { ...(windows[index] || { open: "11:00", close: "21:00", overnight: false }), ...patch };
+      return { ...current, storeHoursJson: { ...hours, [day]: { ...hours[day], closed: false, windows } } };
+    });
+  }
+
+  function addHourWindow(day) {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      return { ...current, storeHoursJson: { ...hours, [day]: { ...hours[day], closed: false, windows: [...(hours[day]?.windows || []), { open: "17:00", close: "21:00", overnight: false }] } } };
+    });
+  }
+
+  function removeHourWindow(day, index) {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      const windows = (hours[day]?.windows || []).filter((_, windowIndex) => windowIndex !== index);
+      return { ...current, storeHoursJson: { ...hours, [day]: { ...hours[day], closed: !windows.length, windows } } };
+    });
+  }
+
+  function copyHourToAll(sourceDay) {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      const source = hours[sourceDay] || defaultBusinessHours[sourceDay];
+      return { ...current, storeHoursJson: Object.fromEntries(businessHourDays.map((day) => [day, { ...source, windows: source.windows.map((window) => ({ ...window })) }])) };
+    });
+  }
+
+  function copyMondayToWeekdays() {
+    setDraft((current) => {
+      const hours = normalizeBusinessHoursForDraft(current.storeHoursJson);
+      const monday = hours.monday || defaultBusinessHours.monday;
+      const nextHours = { ...hours };
+      ["tuesday", "wednesday", "thursday", "friday"].forEach((day) => {
+        nextHours[day] = { ...monday, windows: monday.windows.map((window) => ({ ...window })) };
+      });
+      return { ...current, storeHoursJson: nextHours };
+    });
+  }
+
+  function updateGalleryDraft(imageId, field, value) {
+    setGalleryDrafts((current) => ({ ...current, [imageId]: { ...(current[imageId] || {}), [field]: value } }));
   }
 
   function bodyForStep(step) {
@@ -4723,12 +4907,19 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       setError("Live API connection and restaurant login are required for onboarding.");
       return;
     }
+    if (step === "hours") {
+      const hourErrors = validateBusinessHours(draft.storeHoursJson, draft.timezone);
+      if (hourErrors.length) {
+        setError(hourErrors.join(" "));
+        return;
+      }
+    }
     setSaving(step);
     setError("");
     setMessage("");
     try {
       const nextPayload = await api(stepEndpoint(step), { method: "PATCH", token, body: bodyForStep(step) });
-      normalizePayload(nextPayload);
+      normalizePayload(nextPayload, { stepOverride: step });
       setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} saved.`);
     } catch (saveError) {
       setError(saveError.message);
@@ -4748,7 +4939,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     setMessage("");
     try {
       const nextPayload = await api(`${apiBase}/onboarding/${step}/skip`, { method: "POST", token });
-      normalizePayload(nextPayload);
+      normalizePayload(nextPayload, { stepOverride: step });
       setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} skipped for now.`);
       nextStep();
     } catch (skipError) {
@@ -4786,7 +4977,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       }
       if (uploaded.restaurant?.logoUrl) updateDraft("logoUrl", uploaded.restaurant.logoUrl);
       setMessage("Image uploaded and saved.");
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
     } catch (uploadError) {
       setError(uploadError.message);
     } finally {
@@ -4817,11 +5008,88 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMessage("Gallery photo uploaded.");
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
     } catch (uploadError) {
       setError(uploadError.message);
     } finally {
       setUploading("");
+    }
+  }
+
+  async function saveGalleryImage(imageId) {
+    const draftImage = galleryDrafts[imageId] || {};
+    setSaving(`gallery:${imageId}`);
+    setError("");
+    try {
+      await api(`/api/uploads/gallery/${imageId}`, {
+        method: "PATCH",
+        token,
+        body: {
+          restaurantId: restaurant.id,
+          title: draftImage.title,
+          altText: draftImage.altText,
+          caption: draftImage.caption,
+          category: draftImage.category,
+          sortOrder: Number(draftImage.sortOrder || 0),
+          published: draftImage.published !== false
+        }
+      });
+      setMessage("Gallery image updated.");
+      await loadOnboarding({ preserveStep: true });
+    } catch (galleryError) {
+      setError(galleryError.message);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function replaceGalleryImage(imageId, event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const validationError = validateImageFile(file, { accept: photoImageAccept, label: "replacement photo" });
+    if (validationError) return setError(validationError);
+    setUploading(`gallery:${imageId}`);
+    setError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await api(`/api/uploads/gallery/${imageId}/replace`, {
+        method: "POST",
+        token,
+        body: {
+          restaurantId: restaurant.id,
+          fileName: file.name,
+          mimeType: mimeTypeForFile(file),
+          base64: base64FromDataUrl(dataUrl)
+        }
+      });
+      setMessage("Gallery image replaced.");
+      await loadOnboarding({ preserveStep: true });
+    } catch (galleryError) {
+      setError(galleryError.message);
+    } finally {
+      setUploading("");
+    }
+  }
+
+  async function deleteGalleryImage(imageId) {
+    if (!window.confirm("Delete this gallery image?")) return;
+    setSaving(`gallery-delete:${imageId}`);
+    setError("");
+    try {
+      await api(`/api/uploads/gallery/${imageId}`, { method: "DELETE", token, body: { restaurantId: restaurant.id } });
+      setPayload((current) => current ? { ...current, gallery: (current.gallery || []).filter((image) => image.id !== imageId) } : current);
+      setGalleryDrafts((current) => {
+        const next = { ...current };
+        delete next[imageId];
+        return next;
+      });
+      setMessage("Gallery image deleted.");
+      await loadOnboarding({ preserveStep: true });
+    } catch (galleryError) {
+      setError(galleryError.message);
+    } finally {
+      setSaving("");
     }
   }
 
@@ -4847,7 +5115,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMessage("Menu item image uploaded.");
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
     } catch (uploadError) {
       setError(uploadError.message);
     } finally {
@@ -4863,7 +5131,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     try {
       await api(`${apiBase}/menu/categories`, { method: "POST", token, body: { name: menuDraft.categoryName.trim(), sortOrder: categories.length + 1, active: true } });
       setMenuDraft((current) => ({ ...current, categoryName: "" }));
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
       setMessage("Menu category added.");
     } catch (categoryError) {
       setError(categoryError.message);
@@ -4895,7 +5163,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         }
       });
       setMenuDraft((current) => ({ ...current, itemName: "", itemDescription: "", itemPriceCents: 1295 }));
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
       setMessage("Menu item added.");
     } catch (itemError) {
       setError(itemError.message);
@@ -4912,7 +5180,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     try {
       await api(`${apiBase}/social-links`, { method: "POST", token, body: socialDraft });
       setSocialDraft({ platform: "instagram", url: "" });
-      await loadOnboarding();
+      await loadOnboarding({ preserveStep: true });
       setMessage("Social link saved.");
     } catch (socialError) {
       setError(socialError.message);
@@ -5090,8 +5358,61 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           ) : null}
 
           {activeStep === "hours" ? (
-            <div className="mt-5 grid gap-3 md:grid-cols-2">
-              {Object.entries(draft.storeHoursJson || {}).map(([day, value]) => <Field label={readable(day)} key={day}><input className="input" value={value || ""} onChange={(event) => updateHour(day, event.target.value)} /></Field>)}
+            <div className="mt-5 grid gap-4">
+              <div className="rounded-md border border-line bg-slate-50 p-4">
+                <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-end">
+                  <Field label="Location timezone"><TextInput field="timezone" placeholder="America/Denver" /></Field>
+                  <button className="button-muted justify-center" type="button" onClick={copyMondayToWeekdays}>Copy Monday to weekdays</button>
+                  <button className="button-muted justify-center" type="button" onClick={() => copyHourToAll("monday")}>Copy Monday to all</button>
+                </div>
+                <p className="mt-3 text-sm text-slate-500">These hours power the public website and ordering availability. POS can stay internal even before public hours are complete.</p>
+              </div>
+
+              {businessHourErrors.length ? (
+                <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">
+                  <p className="font-black">Fix hours before saving:</p>
+                  <ul className="mt-2 grid gap-1">
+                    {businessHourErrors.map((hourError) => <li key={hourError}>- {hourError}</li>)}
+                  </ul>
+                </div>
+              ) : null}
+
+              <div className="grid gap-3">
+                {businessHourDays.map((day) => {
+                  const dayHours = normalizeBusinessHoursForDraft(draft.storeHoursJson)[day];
+                  return (
+                    <div className="rounded-md border border-line bg-white p-4" key={day}>
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <h3 className="text-lg font-black text-ink">{readable(day)}</h3>
+                          <p className="text-sm text-slate-500">{dayHours.closed ? "Closed" : `${dayHours.windows.length} service window${dayHours.windows.length === 1 ? "" : "s"}`}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button className={`nav-tab ${dayHours.closed ? "" : "active"}`} type="button" onClick={() => updateHourDay(day, { closed: false })}>Open</button>
+                          <button className={`nav-tab ${dayHours.closed ? "active" : ""}`} type="button" onClick={() => updateHourDay(day, { closed: true })}>Closed</button>
+                          <button className="button-muted min-h-10" type="button" onClick={() => copyHourToAll(day)}>Copy to all</button>
+                        </div>
+                      </div>
+                      {!dayHours.closed ? (
+                        <div className="mt-4 grid gap-3">
+                          {dayHours.windows.map((window, index) => (
+                            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto_auto] md:items-end" key={`${day}-${index}`}>
+                              <Field label="Open"><input className="input" type="time" value={window.open || ""} onChange={(event) => updateHourWindow(day, index, { open: event.target.value })} /></Field>
+                              <Field label="Close"><input className="input" type="time" value={window.close || ""} onChange={(event) => updateHourWindow(day, index, { close: event.target.value })} /></Field>
+                              <button className={`nav-tab min-h-10 ${window.overnight ? "active" : ""}`} type="button" onClick={() => updateHourWindow(day, index, { overnight: !window.overnight })}>Overnight</button>
+                              <button className="button-muted min-h-10" type="button" onClick={() => removeHourWindow(day, index)}>Remove</button>
+                            </div>
+                          ))}
+                          <button className="button-muted w-fit" type="button" onClick={() => addHourWindow(day)}>Add service window</button>
+                        </div>
+                      ) : null}
+                      <div className="mt-3">
+                        <Field label="Holiday or special-hours note"><input className="input" value={dayHours.note || ""} placeholder="Optional note" onChange={(event) => updateHourDay(day, { note: event.target.value })} /></Field>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : null}
 
@@ -5143,13 +5464,50 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
             <div className="mt-5 grid gap-5">
               <div className="flex flex-wrap gap-2">
                 <label className="button-muted">Upload gallery photo<input className="sr-only" type="file" accept={photoImageAccept} onChange={uploadGallery} /></label>
-                <button className="button-primary" type="button" onClick={() => saveStep("gallery")}>Save gallery step</button>
+                <button className="button-primary" type="button" onClick={() => saveStep("gallery")}>{saving === "gallery" ? "Saving..." : "Save gallery step"}</button>
               </div>
-              <div className="grid gap-3 md:grid-cols-4">{gallery.slice(0, 8).map((image) => <img className="h-28 w-full rounded-md object-cover" src={resolveImage(image.imageUrl)} alt={image.altText || "Restaurant gallery"} key={image.id} onError={handleSafeImageError} />)}</div>
+              {uploading === "gallery" ? <p className="text-sm font-bold text-slate-500">Uploading gallery photo...</p> : null}
+              {gallery.length ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  {gallery
+                    .slice()
+                    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+                    .map((image) => {
+                      const imageDraft = galleryDrafts[image.id] || {};
+                      return (
+                        <article className="rounded-md border border-line bg-white p-3" key={image.id}>
+                          <div className="grid gap-3 md:grid-cols-[160px_1fr]">
+                            <a href={resolveImage(image.imageUrl)} target="_blank" rel="noreferrer">
+                              <img className="h-40 w-full rounded-md object-cover" src={resolveImage(image.imageUrl)} alt={imageDraft.altText || image.altText || "Restaurant gallery"} onError={handleSafeImageError} />
+                            </a>
+                            <div className="grid gap-3">
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <Field label="Title"><input className="input" value={imageDraft.title || ""} onChange={(event) => updateGalleryDraft(image.id, "title", event.target.value)} /></Field>
+                                <Field label="Category"><input className="input" value={imageDraft.category || "food" } onChange={(event) => updateGalleryDraft(image.id, "category", event.target.value)} /></Field>
+                                <Field label="Alt text"><input className="input" value={imageDraft.altText || ""} onChange={(event) => updateGalleryDraft(image.id, "altText", event.target.value)} /></Field>
+                                <Field label="Sort order"><input className="input" type="number" value={imageDraft.sortOrder ?? 0} onChange={(event) => updateGalleryDraft(image.id, "sortOrder", event.target.valueAsNumber || 0)} /></Field>
+                              </div>
+                              <Field label="Caption"><textarea className="input min-h-20" value={imageDraft.caption || ""} onChange={(event) => updateGalleryDraft(image.id, "caption", event.target.value)} /></Field>
+                              <div className="flex flex-wrap gap-2">
+                                <button className={`nav-tab ${imageDraft.published !== false ? "active" : ""}`} type="button" onClick={() => updateGalleryDraft(image.id, "published", imageDraft.published === false)}>Published</button>
+                                <label className="button-muted">{uploading === `gallery:${image.id}` ? "Replacing..." : "Replace"}<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => replaceGalleryImage(image.id, event)} /></label>
+                                <button className="button-muted" type="button" onClick={() => saveGalleryImage(image.id)} disabled={saving === `gallery:${image.id}`}>{saving === `gallery:${image.id}` ? "Saving..." : "Save image"}</button>
+                                <button className="button-muted" type="button" onClick={() => deleteGalleryImage(image.id)} disabled={saving === `gallery-delete:${image.id}`}>{saving === `gallery-delete:${image.id}` ? "Deleting..." : "Delete"}</button>
+                              </div>
+                              <p className="text-xs text-slate-500">Featured gallery image support is not enabled in the current database schema, so this editor preserves existing supported fields only.</p>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-line bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No gallery images yet. Upload a photo to start the public gallery.</div>
+              )}
               <form className="grid gap-3 md:grid-cols-[180px_1fr_auto]" onSubmit={addSocial}>
                 <select className="input" value={socialDraft.platform} onChange={(event) => setSocialDraft((current) => ({ ...current, platform: event.target.value }))}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
                 <input className="input" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => setSocialDraft((current) => ({ ...current, url: event.target.value }))} />
-                <button className="button-primary" disabled={saving === "social"}>{saving === "social" ? "Saving..." : "Add social"}</button>
+                <button className="button-primary" type="submit" disabled={saving === "social"}>{saving === "social" ? "Saving..." : "Add social"}</button>
               </form>
               <div className="flex flex-wrap gap-2">{socialLinks.map((link) => <StatusPill key={link.id}>{readable(link.platform)}</StatusPill>)}</div>
             </div>

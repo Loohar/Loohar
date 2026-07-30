@@ -12,6 +12,7 @@ import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { notifyDriverAssignment, notifyOrderStatusUpdate } from "../services/notificationService.js";
 import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } from "../services/orderWorkflowService.js";
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
+import { deleteImageFromSupabaseStorage } from "../services/uploadService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
 import {
@@ -470,16 +471,64 @@ function mergeSettingsJson(current, patch) {
   return { ...asObject(current), ...asObject(patch) };
 }
 
+const businessHourDays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+function normalizeTimeValue(value = "") {
+  const raw = String(value || "").trim();
+  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = match[2] || "00";
+  const period = match[3].toUpperCase();
+  if (period === "PM" && hour < 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${minute}`;
+}
+
+function normalizeHourWindow(value = {}) {
+  const source = asObject(value, null);
+  if (!source) return null;
+  const open = normalizeTimeValue(source.open || source.start || source.from);
+  const close = normalizeTimeValue(source.close || source.end || source.to);
+  if (!open || !close) return null;
+  return { open, close, overnight: Boolean(source.overnight) };
+}
+
+function legacyHoursToConfig(value) {
+  const label = compactString(value);
+  if (!label || label.toLowerCase() === "closed") return { closed: true, windows: [], note: null };
+  const parts = label.split(/\s+-\s+/);
+  const open = normalizeTimeValue(parts[0]);
+  const close = normalizeTimeValue(parts[1]);
+  if (!open || !close) return { closed: false, windows: [], note: label };
+  return { closed: false, windows: [{ open, close, overnight: close <= open }], note: null };
+}
+
 function normalizeStoreHours(input) {
   const source = asObject(input);
-  return Object.fromEntries(Object.entries(source).map(([day, value]) => {
-    const label = compactString(typeof value === "object" ? value.label || `${value.open || ""} - ${value.close || ""}` : value);
-    return [day, label || "Closed"];
+  return Object.fromEntries(businessHourDays.map((day) => {
+    const value = source[day];
+    if (typeof value === "string") return [day, legacyHoursToConfig(value)];
+    const dayConfig = asObject(value, null);
+    if (!dayConfig) return [day, { closed: true, windows: [], note: null }];
+    const windows = (Array.isArray(dayConfig.windows) ? dayConfig.windows : [dayConfig])
+      .map(normalizeHourWindow)
+      .filter(Boolean);
+    const closed = dayConfig.closed === true || (!windows.length && String(dayConfig.label || "").trim().toLowerCase() === "closed");
+    return [day, {
+      closed,
+      windows: closed ? [] : windows,
+      note: compactString(dayConfig.note || dayConfig.label)
+    }];
   }));
 }
 
 function hasUsableHours(hours) {
   return Object.values(asObject(hours)).some((value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value.closed !== true && Array.isArray(value.windows) && value.windows.length > 0;
+    }
     const label = String(value || "").trim().toLowerCase();
     return label && label !== "closed";
   });
@@ -2319,6 +2368,7 @@ async function deleteGalleryImage(req, res, next) {
     const existing = await prisma.restaurantGalleryImage.findFirst({ where: { id: req.params.id, restaurantId } });
     if (!existing) return res.status(404).json({ error: "Gallery image not found" });
     await prisma.restaurantGalleryImage.delete({ where: { id: existing.id } });
+    await deleteImageFromSupabaseStorage({ publicUrl: existing.imageUrl, restaurantId }).catch(() => null);
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "gallery.image.deleted", entityType: "RestaurantGalleryImage", entityId: existing.id });
     res.status(204).send();
   } catch (error) {
