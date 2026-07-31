@@ -131,6 +131,7 @@
     "test:rate-limit-regression": "node scripts/rate-limit-regression-test.mjs",
     "test:loading-states": "node scripts/loading-state-test.mjs",
     "test:onboarding": "node scripts/onboarding-test.mjs",
+    "test:onboarding-input-focus": "node scripts/onboarding-input-focus-test.mjs",
     "test:onboarding-hours": "node scripts/onboarding-test.mjs",
     "test:onboarding-form-inputs": "node scripts/onboarding-test.mjs form-inputs",
     "test:onboarding-global-inputs": "node scripts/onboarding-test.mjs global-inputs",

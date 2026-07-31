@@ -24,6 +24,8 @@ const uploadService = read("apps/api/src/services/uploadService.js");
 const superAdminRoutes = read("apps/api/src/routes/superAdmin.js");
 const app = read("apps/web/src/App.jsx");
 const apiClient = read("apps/web/src/lib/api.js");
+const packageJson = read("package.json");
+const onboardingInputFocusTest = read("scripts/onboarding-input-focus-test.mjs");
 const onboardingWizard = app.slice(app.indexOf("function RestaurantOnboardingWizard"), app.indexOf("function AuthPage"));
 
 assert(schema.includes("enum OnboardingStatus"), "Prisma schema defines onboarding status");
@@ -59,11 +61,23 @@ assert(app.includes("Publish branding") && app.includes("Draft preview") && app.
 assert(app.includes("brandPaletteColors") && app.includes("rgbColorString") && app.includes("hslColorString") && app.includes("Brand palette"), "Branding editor exposes palette, RGB, and HSL readouts");
 assert(app.includes("moveHeroSlide") && app.includes("Move up") && app.includes("Move down") && app.includes("Published"), "Hero carousel editor supports slide ordering and publish state");
 assert(onboardingWizard.includes("draftDirtyRef") && onboardingWizard.includes("serverRefreshPending") && onboardingWizard.includes("forceDraft"), "Onboarding wizard protects dirty drafts from server refreshes");
+assert(app.indexOf("function TextInput") > -1 && app.indexOf("function TextInput") < app.indexOf("function RestaurantOnboardingWizard"), "Onboarding text field component is module-scoped to avoid remounting");
+assert(app.indexOf("function Field") > -1 && app.indexOf("function Field") < app.indexOf("function RestaurantOnboardingWizard"), "Onboarding field wrapper is module-scoped to avoid remounting");
+assert(app.indexOf("function Toggle") > -1 && app.indexOf("function Toggle") < app.indexOf("function RestaurantOnboardingWizard"), "Onboarding toggle component is module-scoped to avoid remounting");
+assert(app.indexOf("function StepStatus") > -1 && app.indexOf("function StepStatus") < app.indexOf("function RestaurantOnboardingWizard"), "Onboarding step status component is module-scoped to avoid remounting");
+assert(!onboardingWizard.includes("function TextInput") && !onboardingWizard.includes("function Field") && !onboardingWizard.includes("function Toggle") && !onboardingWizard.includes("function StepStatus"), "Onboarding wizard does not redefine child components during render");
+assert(app.includes("OnboardingFieldContext.Provider") && app.includes("useOnboardingFieldContext"), "Onboarding fields use stable context instead of render-local component closures");
+assert(app.includes("messageState") && app.includes("showStepMessage") && app.includes("messageState.step === activeStep"), "Onboarding success messages are scoped to the active step");
+assert(app.includes("loohar:onboarding-refetch") && app.includes("Fresh server data is available"), "Onboarding supports dirty-draft background refresh regression coverage");
+assert(app.includes("data-onboarding-field={field}") && app.includes('field="ownerPhone"') && app.includes('field="brandColor"') && app.includes('field="heroTitle"') && app.includes("hours-note-") && app.includes("gallery-title-") && app.includes('field="seoTitle"'), "Onboarding fields expose stable browser-test selectors across affected steps");
 assert(!/key=\{.*JSON\.stringify/.test(onboardingWizard), "Onboarding wizard does not use JSON-stringified values as React keys");
 assert(!/key=\{draft\./.test(onboardingWizard), "Onboarding wizard does not use editable draft values as React keys");
 assert(!/defaultValue=\{draft\./.test(onboardingWizard), "Onboarding wizard draft inputs remain controlled instead of defaultValue based");
 const updateDraftMatch = onboardingWizard.match(/function updateDraft[\s\S]*?\n  \}/);
 assert(updateDraftMatch && !updateDraftMatch[0].includes("api("), "Draft field edits do not trigger per-character API writes");
+assert(packageJson.includes('"test:onboarding-input-focus": "node scripts/onboarding-input-focus-test.mjs"'), "Package exposes onboarding input focus regression script");
+assert(onboardingInputFocusTest.includes("document.activeElement") && onboardingInputFocusTest.includes("elementHandle") && onboardingInputFocusTest.includes("mutationRequests"), "Browser regression test verifies focus identity and blocks per-character API mutations");
+assert(onboardingInputFocusTest.includes("Unsaved local draft survives refetch") && onboardingInputFocusTest.includes("Failed save preserves typed text") && onboardingInputFocusTest.includes("Branding saved message does not leak"), "Browser regression covers dirty refresh, failed save, and stale message behavior");
 
 if (failures.length) {
   console.error(`Onboarding test failed with ${failures.length} issue${failures.length === 1 ? "" : "s"}.`);

@@ -27,7 +27,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import QRCode from "qrcode";
 import DriverPwaApp from "./apps/driver/DriverApp.jsx";
@@ -4783,6 +4783,65 @@ function RegistrationResultPage({ type }) {
   );
 }
 
+const OnboardingFieldContext = createContext(null);
+
+function useOnboardingFieldContext() {
+  const context = useContext(OnboardingFieldContext);
+  if (!context) throw new Error("Onboarding field context is required.");
+  return context;
+}
+
+function Field({ label, children }) {
+  return <label className="grid gap-1 text-sm font-semibold text-slate-600"><span>{label}</span>{children}</label>;
+}
+
+function TextInput({ field, type = "text", placeholder = "", rows = 0 }) {
+  const { draft, updateDraft } = useOnboardingFieldContext();
+  const handleChange = (event) => {
+    const nextValue = type === "number" && !rows ? event.target.valueAsNumber || 0 : event.target.value;
+    updateDraft(field, nextValue);
+  };
+  if (rows) {
+    return (
+      <textarea
+        className="input min-h-28"
+        data-onboarding-field={field}
+        value={draft[field] || ""}
+        placeholder={placeholder}
+        onChange={handleChange}
+      />
+    );
+  }
+  return (
+    <input
+      className="input"
+      data-onboarding-field={field}
+      type={type}
+      value={draft[field] ?? ""}
+      placeholder={placeholder}
+      onChange={handleChange}
+    />
+  );
+}
+
+function Toggle({ field, label }) {
+  const { draft, updateDraft } = useOnboardingFieldContext();
+  return (
+    <button type="button" className={`nav-tab ${draft[field] ? "active" : ""}`} onClick={() => updateDraft(field, !draft[field])}>
+      {draft[field] ? <CheckCircle2 size={16} /> : null}{label}
+    </button>
+  );
+}
+
+function StepStatus({ step, index, done, active, onSelect }) {
+  return (
+    <button className={`nav-tab justify-start ${active ? "active" : ""}`} type="button" onClick={() => onSelect(step.id)}>
+      <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black ${done ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{done ? "✓" : index + 1}</span>
+      {step.label}
+    </button>
+  );
+}
+
 function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
   const restaurantKey = initialSlug || user?.restaurantSlug || routeRestaurantId || user?.restaurantId || "";
@@ -4807,7 +4866,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const [saving, setSaving] = useState("");
   const [uploading, setUploading] = useState("");
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [messageState, setMessageState] = useState(null);
   const [merchantAccount, setMerchantAccount] = useState(null);
   const [platformSubscription, setPlatformSubscription] = useState(null);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
@@ -4828,9 +4887,27 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
   const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
   const businessHourErrors = activeStep === "hours" ? validateBusinessHours(draft.storeHoursJson, draft.timezone) : [];
+  const message = messageState && (!messageState.step || messageState.step === activeStep) ? messageState.text : "";
   const liveAnnouncement = [message, error, menuReviewMessage, serverRefreshPending ? "Fresh server data is available after you save your current edits." : ""].filter(Boolean).join(" ");
   draftDirtyRef.current = draftDirty;
   galleryDirtyRef.current = galleryDirtyMap;
+
+  function clearMessage() {
+    setMessageState(null);
+  }
+
+  function showGlobalMessage(text) {
+    setMessageState(text ? { text, step: "" } : null);
+  }
+
+  function showStepMessage(step, text) {
+    setMessageState(text ? { text, step } : null);
+  }
+
+  function selectStep(stepId) {
+    clearMessage();
+    setActiveStep(stepId);
+  }
 
   function stepEndpoint(step = activeStep) {
     return `${apiBase}/onboarding/${step}`;
@@ -5053,6 +5130,15 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     loadPaymentSetup();
   }, [apiOnline, token, activeStep]);
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    const handleRefetch = () => {
+      loadOnboarding({ preserveStep: true });
+    };
+    window.addEventListener("loohar:onboarding-refetch", handleRefetch);
+    return () => window.removeEventListener("loohar:onboarding-refetch", handleRefetch);
+  }, [apiOnline, token, restaurantKey]);
+
   function markDraftDirty() {
     draftDirtyRef.current = true;
     setDraftDirty(true);
@@ -5225,7 +5311,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     draftDirtyRef.current = false;
     setDraftDirty(false);
     setServerRefreshPending(false);
-    setMessage("Branding changes reset to the latest saved values.");
+    showStepMessage("branding", "Branding changes reset to the latest saved values.");
   }
 
   async function saveBrandingPublishState(nextState) {
@@ -5423,7 +5509,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     }
     setSaving(step);
     setError("");
-    setMessage("");
+    clearMessage();
     try {
       const nextPayload = await api(stepEndpoint(step), { method: "PATCH", token, body: bodyForStep(step, draftOverride) });
       normalizePayload(nextPayload, { stepOverride: step, forceDraft: step !== "menu", forceGallery: step === "gallery" });
@@ -5433,7 +5519,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         setMenuReviewState("SAVED");
         setMenuReviewMessage("Menu reviewed and saved.");
       }
-      setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} saved.`);
+      showStepMessage(step, `${onboardingSteps.find((item) => item.id === step)?.label || "Step"} saved.`);
     } catch (saveError) {
       setStepSaveState((current) => ({ ...current, [step]: { status: "ERROR", message: saveError.message } }));
       if (step === "menu") {
@@ -5454,11 +5540,11 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     }
     setSaving(`skip:${step}`);
     setError("");
-    setMessage("");
+    clearMessage();
     try {
       const nextPayload = await api(`${apiBase}/onboarding/${step}/skip`, { method: "POST", token });
       normalizePayload(nextPayload, { stepOverride: step, forceDraft: true, forceGallery: step === "gallery" });
-      setMessage(`${onboardingSteps.find((item) => item.id === step)?.label || "Step"} skipped for now.`);
+      showStepMessage(step, `${onboardingSteps.find((item) => item.id === step)?.label || "Step"} skipped for now.`);
       nextStep();
     } catch (skipError) {
       setError(skipError.message);
@@ -5496,7 +5582,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         mergeSavedDraftValues(savedValues);
       }
       if (uploaded.restaurant?.logoUrl) mergeSavedDraftValues({ logoUrl: uploaded.restaurant.logoUrl });
-      setMessage("Image uploaded and saved.");
+      showStepMessage(activeStep, "Image uploaded and saved.");
       await loadOnboarding({ preserveStep: true });
     } catch (uploadError) {
       setError(uploadError.message);
@@ -5527,7 +5613,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           category: "food"
         }
       });
-      setMessage("Gallery photo uploaded.");
+      showStepMessage("gallery", "Gallery photo uploaded.");
       await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (uploadError) {
       setError(uploadError.message);
@@ -5574,7 +5660,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       galleryDirtyRef.current = { ...galleryDirtyRef.current, [imageId]: false };
       setGalleryDirtyMap((current) => ({ ...current, [imageId]: false }));
       setGalleryStatus(imageId, "SAVED", "Image metadata saved.");
-      setMessage("Gallery image updated.");
+      showStepMessage("gallery", "Gallery image updated.");
       await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
       setGalleryStatus(imageId, "ERROR", galleryError.message);
@@ -5604,7 +5690,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           base64: base64FromDataUrl(dataUrl)
         }
       });
-      setMessage("Gallery image replaced.");
+      showStepMessage("gallery", "Gallery image replaced.");
       setGalleryStatus(imageId, "SAVED", "Image replaced.");
       await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
@@ -5637,7 +5723,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         delete next[imageId];
         return next;
       });
-      setMessage("Gallery image deleted.");
+      showStepMessage("gallery", "Gallery image deleted.");
       await loadOnboarding({ preserveStep: true, forceGallery: true });
     } catch (galleryError) {
       setError(galleryError.message);
@@ -5667,7 +5753,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
           base64: base64FromDataUrl(dataUrl)
         }
       });
-      setMessage("Menu item image uploaded.");
+      showStepMessage("menu", "Menu item image uploaded.");
       await loadOnboarding({ preserveStep: true, forceDraft: false });
     } catch (uploadError) {
       setError(uploadError.message);
@@ -5688,7 +5774,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       setMenuReviewState("DIRTY");
       setMenuReviewMessage("Menu category added. Mark the menu reviewed when finished.");
       await loadOnboarding({ preserveStep: true });
-      setMessage("Menu category added.");
+      showStepMessage("menu", "Menu category added.");
     } catch (categoryError) {
       setError(categoryError.message);
     } finally {
@@ -5723,7 +5809,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       setMenuReviewState("DIRTY");
       setMenuReviewMessage("Menu item added. Mark the menu reviewed when finished.");
       await loadOnboarding({ preserveStep: true });
-      setMessage("Menu item added.");
+      showStepMessage("menu", "Menu item added.");
     } catch (itemError) {
       setError(itemError.message);
     } finally {
@@ -5741,7 +5827,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
       setSocialDraft({ platform: "instagram", url: "" });
       setSocialDraftDirty(false);
       await loadOnboarding({ preserveStep: true });
-      setMessage("Social link saved.");
+      showStepMessage("gallery", "Social link saved.");
     } catch (socialError) {
       setError(socialError.message);
     } finally {
@@ -5755,7 +5841,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     try {
       const nextPayload = await api(`${apiBase}/onboarding/publish`, { method: "POST", token });
       normalizePayload(nextPayload, { forceDraft: true, forceGallery: true });
-      setMessage(nextPayload.readiness?.orderingReady ? "Website and ordering are live." : "Website is live. Payments are still required before paid ordering.");
+      showGlobalMessage(nextPayload.readiness?.orderingReady ? "Website and ordering are live." : "Website is live. Payments are still required before paid ordering.");
       window.setTimeout(() => navigateInApp(dashboardHref, { replace: true }), 900);
     } catch (publishError) {
       setError(publishError.message);
@@ -5767,40 +5853,12 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
 
   function nextStep() {
     const next = onboardingSteps[Math.min(onboardingSteps.length - 1, currentStepIndex + 1)];
-    setActiveStep(next.id);
+    selectStep(next.id);
   }
 
   function previousStep() {
     const previous = onboardingSteps[Math.max(0, currentStepIndex - 1)];
-    setActiveStep(previous.id);
-  }
-
-  function Field({ label, children }) {
-    return <label className="grid gap-1 text-sm font-semibold text-slate-600"><span>{label}</span>{children}</label>;
-  }
-
-  function TextInput({ field, type = "text", placeholder = "", rows = 0 }) {
-    if (rows) return <textarea className="input min-h-28" value={draft[field] || ""} placeholder={placeholder} onChange={(event) => updateDraft(field, event.target.value)} />;
-    return <input className="input" type={type} value={draft[field] ?? ""} placeholder={placeholder} onChange={(event) => updateDraft(field, type === "number" ? event.target.valueAsNumber || 0 : event.target.value)} />;
-  }
-
-  function Toggle({ field, label }) {
-    return (
-      <button type="button" className={`nav-tab ${draft[field] ? "active" : ""}`} onClick={() => updateDraft(field, !draft[field])}>
-        {draft[field] ? <CheckCircle2 size={16} /> : null}{label}
-      </button>
-    );
-  }
-
-  function StepStatus({ step }) {
-    const done = readiness.sections?.[step.id];
-    const active = activeStep === step.id;
-    return (
-      <button className={`nav-tab justify-start ${active ? "active" : ""}`} type="button" onClick={() => setActiveStep(step.id)}>
-        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-black ${done ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{done ? "✓" : onboardingSteps.findIndex((item) => item.id === step.id) + 1}</span>
-        {step.label}
-      </button>
-    );
+    selectStep(previous.id);
   }
 
   if (!apiOnline) return <AccessDenied title="Live API required" detail="Restaurant onboarding saves directly to PostgreSQL and requires the live API." loginHref="/restaurant/login" />;
@@ -5831,8 +5889,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
     currentBrandTheme.buttonColor,
     ...brandPaletteColors
   ])).slice(0, 12);
+  const onboardingFieldContext = { draft, updateDraft };
 
   return (
+    <OnboardingFieldContext.Provider value={onboardingFieldContext}>
     <div className="grid gap-5">
       <div className="panel flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
@@ -5856,7 +5916,16 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
 
       <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
         <aside className="grid gap-2 self-start rounded-md border border-line bg-white p-3">
-          {onboardingSteps.map((step) => <StepStatus step={step} key={step.id} />)}
+          {onboardingSteps.map((step, index) => (
+            <StepStatus
+              active={activeStep === step.id}
+              done={Boolean(readiness.sections?.[step.id])}
+              index={index}
+              key={step.id}
+              onSelect={selectStep}
+              step={step}
+            />
+          ))}
         </aside>
 
         <section className="panel">
@@ -5878,7 +5947,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <Field label="Legal business name"><TextInput field="businessName" /></Field>
               <Field label="Public restaurant name"><TextInput field="publicBusinessName" /></Field>
-              <Field label="Business type"><select className="input" value={draft.businessType || "RESTAURANT"} onChange={(event) => updateDraft("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></Field>
+              <Field label="Business type"><select className="input" data-onboarding-field="businessType" value={draft.businessType || "RESTAURANT"} onChange={(event) => updateDraft("businessType", event.target.value)}>{businessTypes.map((type) => <option key={type} value={type}>{readable(type)}</option>)}</select></Field>
               <Field label="Cuisine/category label"><TextInput field="categoryLabel" /></Field>
               <Field label="Business email"><TextInput field="businessEmail" type="email" /></Field>
               <Field label="Phone"><TextInput field="phone" /></Field>
@@ -5913,7 +5982,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                         <p className="mt-1 text-sm text-slate-500">Draft changes stay local until you save this branding step.</p>
                       </div>
                       <Field label="Preview mode">
-                        <select className="input min-w-56" value={draft.brandPreviewMode || "desktop-public-site"} onChange={(event) => updateDraft("brandPreviewMode", event.target.value)}>
+                        <select className="input min-w-56" data-onboarding-field="brandPreviewMode" value={draft.brandPreviewMode || "desktop-public-site"} onChange={(event) => updateDraft("brandPreviewMode", event.target.value)}>
                           {brandPreviewModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
                         </select>
                       </Field>
@@ -5951,41 +6020,41 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Brand color mode">
-                      <select className="input" value={currentBrandTheme.mode} onChange={(event) => updateBrandTheme({ mode: event.target.value })}>
+                      <select className="input" data-onboarding-field="brand-color-mode" value={currentBrandTheme.mode} onChange={(event) => updateBrandTheme({ mode: event.target.value })}>
                         {brandColorModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
                       </select>
                     </Field>
                     <Field label="Theme opacity">
-                      <input className="input" type="range" min="0" max="1" step="0.05" value={currentBrandTheme.opacity} onChange={(event) => updateBrandTheme({ opacity: event.target.value })} />
+                      <input className="input" data-onboarding-field="brand-opacity" type="range" min="0" max="1" step="0.05" value={currentBrandTheme.opacity} onChange={(event) => updateBrandTheme({ opacity: event.target.value })} />
                     </Field>
                     <Field label="Brand color">
                       <div className="grid grid-cols-[56px_1fr] gap-2">
-                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.brandColor} onChange={(event) => updateBrandTheme({ brandColor: event.target.value })} />
-                        <input className="input" value={draft.brandColor ?? currentBrandTheme.brandColor} onChange={(event) => updateBrandColorText("brandColor", event.target.value)} onBlur={(event) => updateBrandTheme({ brandColor: event.target.value })} />
+                        <input className="h-10 w-full rounded-md border border-line" data-onboarding-field="brand-color-picker" type="color" value={currentBrandTheme.brandColor} onChange={(event) => updateBrandTheme({ brandColor: event.target.value })} />
+                        <input className="input" data-onboarding-field="brandColor" value={draft.brandColor ?? currentBrandTheme.brandColor} onChange={(event) => updateBrandColorText("brandColor", event.target.value)} onBlur={(event) => updateBrandTheme({ brandColor: event.target.value })} />
                       </div>
                     </Field>
                     <Field label="Accent color">
                       <div className="grid grid-cols-[56px_1fr] gap-2">
-                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.accentColor} onChange={(event) => updateBrandTheme({ accentColor: event.target.value })} />
-                        <input className="input" value={draft.accentColor ?? currentBrandTheme.accentColor} onChange={(event) => updateBrandColorText("accentColor", event.target.value)} onBlur={(event) => updateBrandTheme({ accentColor: event.target.value })} />
+                        <input className="h-10 w-full rounded-md border border-line" data-onboarding-field="accent-color-picker" type="color" value={currentBrandTheme.accentColor} onChange={(event) => updateBrandTheme({ accentColor: event.target.value })} />
+                        <input className="input" data-onboarding-field="accentColor" value={draft.accentColor ?? currentBrandTheme.accentColor} onChange={(event) => updateBrandColorText("accentColor", event.target.value)} onBlur={(event) => updateBrandTheme({ accentColor: event.target.value })} />
                       </div>
                     </Field>
                     <Field label="Button color">
                       <div className="grid grid-cols-[56px_1fr] gap-2">
-                        <input className="h-10 w-full rounded-md border border-line" type="color" value={currentBrandTheme.buttonColor} onChange={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
-                        <input className="input" value={draft.buttonColor ?? currentBrandTheme.buttonColor} onChange={(event) => updateBrandColorText("buttonColor", event.target.value)} onBlur={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
+                        <input className="h-10 w-full rounded-md border border-line" data-onboarding-field="button-color-picker" type="color" value={currentBrandTheme.buttonColor} onChange={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
+                        <input className="input" data-onboarding-field="buttonColor" value={draft.buttonColor ?? currentBrandTheme.buttonColor} onChange={(event) => updateBrandColorText("buttonColor", event.target.value)} onBlur={(event) => updateBrandTheme({ buttonColor: event.target.value })} />
                       </div>
                     </Field>
                     <Field label="Overlay opacity">
-                      <input className="input" type="range" min="0" max="0.9" step="0.05" value={currentBrandTheme.overlayOpacity} onChange={(event) => updateBrandTheme({ overlayOpacity: event.target.value })} />
+                      <input className="input" data-onboarding-field="brand-overlay-opacity" type="range" min="0" max="0.9" step="0.05" value={currentBrandTheme.overlayOpacity} onChange={(event) => updateBrandTheme({ overlayOpacity: event.target.value })} />
                     </Field>
                     <Field label="Heading font">
-                      <select className="input" value={currentBrandTheme.headingFont} onChange={(event) => updateBrandTheme({ headingFont: event.target.value })}>
+                      <select className="input" data-onboarding-field="headingFont" value={currentBrandTheme.headingFont} onChange={(event) => updateBrandTheme({ headingFont: event.target.value })}>
                         {approvedBrandFonts.map((font) => <option key={font.id} value={font.stack}>{font.label}</option>)}
                       </select>
                     </Field>
                     <Field label="Body font">
-                      <select className="input" value={currentBrandTheme.bodyFont} onChange={(event) => updateBrandTheme({ bodyFont: event.target.value })}>
+                      <select className="input" data-onboarding-field="bodyFont" value={currentBrandTheme.bodyFont} onChange={(event) => updateBrandTheme({ bodyFont: event.target.value })}>
                         {approvedBrandFonts.map((font) => <option key={font.id} value={font.stack}>{font.label}</option>)}
                       </select>
                     </Field>
@@ -6023,16 +6092,16 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                           <p className="text-sm text-slate-500">Use 2-5 accessible color stops for gradients and image overlays.</p>
                         </div>
                         <Field label="Angle">
-                          <input className="input w-32" type="number" min="0" max="360" value={currentBrandTheme.gradientAngle} onChange={(event) => updateBrandTheme({ gradientAngle: event.target.value })} />
+                          <input className="input w-32" data-onboarding-field="brand-gradient-angle" type="number" min="0" max="360" value={currentBrandTheme.gradientAngle} onChange={(event) => updateBrandTheme({ gradientAngle: event.target.value })} />
                         </Field>
                       </div>
                       <div className="mt-4 grid gap-3">
                         {currentBrandTheme.gradientStops.map((stop, index) => (
                           <div className="grid gap-2 md:grid-cols-[60px_1fr_1fr_1fr_auto] md:items-end" key={`gradient-stop-${index}`}>
-                            <input className="h-10 w-full rounded-md border border-line" type="color" value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} />
-                            <Field label="Color"><input className="input" value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} /></Field>
-                            <Field label="Position"><input className="input" type="number" min="0" max="100" value={stop.position} onChange={(event) => updateBrandGradientStop(index, { position: event.target.valueAsNumber })} /></Field>
-                            <Field label="Opacity"><input className="input" type="number" min="0" max="1" step="0.05" value={stop.opacity} onChange={(event) => updateBrandGradientStop(index, { opacity: event.target.valueAsNumber })} /></Field>
+                            <input className="h-10 w-full rounded-md border border-line" data-onboarding-field={`brand-gradient-picker-${index}`} type="color" value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} />
+                            <Field label="Color"><input className="input" data-onboarding-field={`brand-gradient-color-${index}`} value={stop.color} onChange={(event) => updateBrandGradientStop(index, { color: event.target.value })} /></Field>
+                            <Field label="Position"><input className="input" data-onboarding-field={`brand-gradient-position-${index}`} type="number" min="0" max="100" value={stop.position} onChange={(event) => updateBrandGradientStop(index, { position: event.target.valueAsNumber })} /></Field>
+                            <Field label="Opacity"><input className="input" data-onboarding-field={`brand-gradient-opacity-${index}`} type="number" min="0" max="1" step="0.05" value={stop.opacity} onChange={(event) => updateBrandGradientStop(index, { opacity: event.target.valueAsNumber })} /></Field>
                             <button className="button-muted min-h-10" type="button" onClick={() => removeBrandGradientStop(index)} disabled={currentBrandTheme.gradientStops.length <= 2}><Trash2 size={16} />Remove</button>
                           </div>
                         ))}
@@ -6045,21 +6114,21 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                     <h3 className="text-lg font-black text-ink">Hero media</h3>
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
                       <Field label="Hero mode">
-                        <select className="input" value={currentHeroMedia.mode} onChange={(event) => updateHeroMedia({ mode: event.target.value })}>
+                        <select className="input" data-onboarding-field="heroMediaMode" value={currentHeroMedia.mode} onChange={(event) => updateHeroMedia({ mode: event.target.value })}>
                           {heroMediaModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
                         </select>
                       </Field>
                       <Field label="Image behavior">
-                        <select className="input" value={currentHeroMedia.imageBehavior} onChange={(event) => updateHeroMedia({ imageBehavior: event.target.value })}>
+                        <select className="input" data-onboarding-field="heroImageBehavior" value={currentHeroMedia.imageBehavior} onChange={(event) => updateHeroMedia({ imageBehavior: event.target.value })}>
                           {["cover", "contain", "center"].map((behavior) => <option key={behavior} value={behavior}>{readable(behavior)}</option>)}
                         </select>
                       </Field>
                       <Field label="Transition">
-                        <select className="input" value={currentHeroMedia.transition} onChange={(event) => updateHeroMedia({ transition: event.target.value })}>
+                        <select className="input" data-onboarding-field="heroTransition" value={currentHeroMedia.transition} onChange={(event) => updateHeroMedia({ transition: event.target.value })}>
                           {["fade", "slide", "none"].map((transition) => <option key={transition} value={transition}>{readable(transition)}</option>)}
                         </select>
                       </Field>
-                      <Field label="Interval seconds"><input className="input" type="number" min="3" max="15" value={currentHeroMedia.intervalSeconds} onChange={(event) => updateHeroMedia({ intervalSeconds: event.target.valueAsNumber })} /></Field>
+                      <Field label="Interval seconds"><input className="input" data-onboarding-field="heroIntervalSeconds" type="number" min="3" max="15" value={currentHeroMedia.intervalSeconds} onChange={(event) => updateHeroMedia({ intervalSeconds: event.target.valueAsNumber })} /></Field>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button className={`nav-tab ${currentHeroMedia.reducedMotionFallback ? "active" : ""}`} type="button" onClick={() => updateHeroMedia({ reducedMotionFallback: !currentHeroMedia.reducedMotionFallback })}>
@@ -6073,10 +6142,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                         <div className="grid gap-3 rounded-md border border-line bg-slate-50 p-3 lg:grid-cols-[120px_1fr_auto]" key={slide.id || `hero-slide-${index}`}>
                           {slide.imageUrl ? <img className="h-24 w-full rounded-md object-cover" src={resolveImage(slide.imageUrl)} alt={slide.altText || "Hero slide preview"} onError={handleSafeImageError} /> : <div className="grid h-24 w-full place-items-center rounded-md bg-white text-xs font-black text-slate-400">Hero image</div>}
                           <div className="grid gap-2 md:grid-cols-2">
-                            <input className="input" value={slide.imageUrl} placeholder="Image URL" onChange={(event) => updateHeroSlide(index, { imageUrl: event.target.value })} />
-                            <input className="input" value={slide.mobileImageUrl} placeholder="Mobile image URL" onChange={(event) => updateHeroSlide(index, { mobileImageUrl: event.target.value })} />
-                            <input className="input" value={slide.title} placeholder="Slide title" onChange={(event) => updateHeroSlide(index, { title: event.target.value })} />
-                            <input className="input" value={slide.altText} placeholder="Accessible alt text" onChange={(event) => updateHeroSlide(index, { altText: event.target.value })} />
+                            <input className="input" data-onboarding-field={`hero-slide-image-${slide.id || index}`} value={slide.imageUrl} placeholder="Image URL" onChange={(event) => updateHeroSlide(index, { imageUrl: event.target.value })} />
+                            <input className="input" data-onboarding-field={`hero-slide-mobile-${slide.id || index}`} value={slide.mobileImageUrl} placeholder="Mobile image URL" onChange={(event) => updateHeroSlide(index, { mobileImageUrl: event.target.value })} />
+                            <input className="input" data-onboarding-field={`hero-slide-title-${slide.id || index}`} value={slide.title} placeholder="Slide title" onChange={(event) => updateHeroSlide(index, { title: event.target.value })} />
+                            <input className="input" data-onboarding-field={`hero-slide-alt-${slide.id || index}`} value={slide.altText} placeholder="Accessible alt text" onChange={(event) => updateHeroSlide(index, { altText: event.target.value })} />
                           </div>
                           <div className="flex flex-wrap gap-2 self-start lg:grid">
                             <button className={`nav-tab ${slide.published !== false ? "active" : ""}`} type="button" onClick={() => updateHeroSlide(index, { published: slide.published === false })}>
@@ -6107,9 +6176,9 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                     {currentHeroMedia.mode === "VIDEO" ? (
                       <div className="mt-4 grid gap-3 rounded-md border border-line bg-slate-50 p-4">
                         <p className="text-sm font-black uppercase text-mint">Video hero foundation</p>
-                        <input className="input" value={currentHeroMedia.video.url} placeholder="Video URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, url: event.target.value } })} />
-                        <input className="input" value={currentHeroMedia.video.posterUrl} placeholder="Poster image URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, posterUrl: event.target.value } })} />
-                        <input className="input" value={currentHeroMedia.video.captionsUrl} placeholder="Captions URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, captionsUrl: event.target.value } })} />
+                        <input className="input" data-onboarding-field="hero-video-url" value={currentHeroMedia.video.url} placeholder="Video URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, url: event.target.value } })} />
+                        <input className="input" data-onboarding-field="hero-video-poster" value={currentHeroMedia.video.posterUrl} placeholder="Poster image URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, posterUrl: event.target.value } })} />
+                        <input className="input" data-onboarding-field="hero-video-captions" value={currentHeroMedia.video.captionsUrl} placeholder="Captions URL" onChange={(event) => updateHeroMedia({ video: { ...currentHeroMedia.video, captionsUrl: event.target.value } })} />
                         <div className="flex flex-wrap gap-2">
                           {["muted", "loop", "controls"].map((field) => (
                             <button className={`nav-tab ${currentHeroMedia.video[field] ? "active" : ""}`} type="button" key={field} onClick={() => updateHeroMedia({ video: { ...currentHeroMedia.video, [field]: !currentHeroMedia.video[field] } })}>
@@ -6253,6 +6322,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                           <textarea
                             id={noteId}
                             className="input min-h-20"
+                            data-onboarding-field={noteId}
                             value={dayHours.note || ""}
                             placeholder="Optional note"
                             maxLength={businessHourNoteMaxLength}
@@ -6289,13 +6359,13 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 <a className="button-muted self-center justify-center" href={`${dashboardHref}#menu`}>Open full menu manager</a>
               </div>
               <form className="grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={createQuickCategory}>
-                <input className="input" value={menuDraft.categoryName} placeholder="Quick add category" maxLength={80} onChange={(event) => updateMenuDraft("categoryName", event.target.value)} />
+                <input className="input" data-onboarding-field="menu-category-name" value={menuDraft.categoryName} placeholder="Quick add category" maxLength={80} onChange={(event) => updateMenuDraft("categoryName", event.target.value)} />
                 <button className="button-primary" type="submit" disabled={saving === "menu-category"}>{saving === "menu-category" ? "Adding..." : "Add category"}</button>
               </form>
               <form className="grid gap-3 md:grid-cols-4" onSubmit={createQuickItem}>
-                <input className="input" value={menuDraft.itemName} placeholder="Featured item name" maxLength={120} onChange={(event) => updateMenuDraft("itemName", event.target.value)} />
-                <input className="input" value={menuDraft.itemDescription} placeholder="Description" maxLength={500} onChange={(event) => updateMenuDraft("itemDescription", event.target.value)} />
-                <input className="input" type="number" value={menuDraft.itemPriceCents} onChange={(event) => updateMenuDraft("itemPriceCents", event.target.value)} />
+                <input className="input" data-onboarding-field="menu-item-name" value={menuDraft.itemName} placeholder="Featured item name" maxLength={120} onChange={(event) => updateMenuDraft("itemName", event.target.value)} />
+                <input className="input" data-onboarding-field="menu-item-description" value={menuDraft.itemDescription} placeholder="Description" maxLength={500} onChange={(event) => updateMenuDraft("itemDescription", event.target.value)} />
+                <input className="input" data-onboarding-field="menu-item-price-cents" type="number" value={menuDraft.itemPriceCents} onChange={(event) => updateMenuDraft("itemPriceCents", event.target.value)} />
                 <button className="button-primary" type="submit" disabled={saving === "menu-item"}>{saving === "menu-item" ? "Adding..." : "Add item"}</button>
               </form>
               <div className="grid gap-3">
@@ -6338,12 +6408,12 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                             </a>
                             <div className="grid gap-3">
                               <div className="grid gap-3 md:grid-cols-2">
-                                <Field label="Title"><input className="input" value={imageDraft.title || ""} maxLength={galleryTitleMaxLength} onChange={(event) => updateGalleryDraft(image.id, "title", event.target.value)} /></Field>
-                                <Field label="Category"><input className="input" value={imageDraft.category || "food" } maxLength={galleryCategoryMaxLength} onChange={(event) => updateGalleryDraft(image.id, "category", event.target.value)} /></Field>
-                                <Field label="Alt text"><input className="input" value={imageDraft.altText || ""} maxLength={galleryAltTextMaxLength} onChange={(event) => updateGalleryDraft(image.id, "altText", event.target.value)} /></Field>
-                                <Field label="Sort order"><input className="input" type="number" min="0" step="1" value={imageDraft.sortOrder ?? 0} onChange={(event) => updateGalleryDraft(image.id, "sortOrder", event.target.value)} /></Field>
+                                <Field label="Title"><input className="input" data-onboarding-field={`gallery-title-${image.id}`} value={imageDraft.title || ""} maxLength={galleryTitleMaxLength} onChange={(event) => updateGalleryDraft(image.id, "title", event.target.value)} /></Field>
+                                <Field label="Category"><input className="input" data-onboarding-field={`gallery-category-${image.id}`} value={imageDraft.category ?? "food" } maxLength={galleryCategoryMaxLength} onChange={(event) => updateGalleryDraft(image.id, "category", event.target.value)} /></Field>
+                                <Field label="Alt text"><input className="input" data-onboarding-field={`gallery-alt-${image.id}`} value={imageDraft.altText || ""} maxLength={galleryAltTextMaxLength} onChange={(event) => updateGalleryDraft(image.id, "altText", event.target.value)} /></Field>
+                                <Field label="Sort order"><input className="input" data-onboarding-field={`gallery-sort-${image.id}`} type="number" min="0" step="1" value={imageDraft.sortOrder ?? 0} onChange={(event) => updateGalleryDraft(image.id, "sortOrder", event.target.value)} /></Field>
                               </div>
-                              <Field label="Caption"><textarea className="input min-h-20" value={imageDraft.caption || ""} maxLength={galleryCaptionMaxLength} aria-describedby={`gallery-caption-${image.id}-counter`} onChange={(event) => updateGalleryDraft(image.id, "caption", event.target.value)} /><span id={`gallery-caption-${image.id}-counter`} className="text-xs font-bold text-slate-500">{captionLength}/{galleryCaptionMaxLength}</span></Field>
+                              <Field label="Caption"><textarea className="input min-h-20" data-onboarding-field={`gallery-caption-${image.id}`} value={imageDraft.caption || ""} maxLength={galleryCaptionMaxLength} aria-describedby={`gallery-caption-${image.id}-counter`} onChange={(event) => updateGalleryDraft(image.id, "caption", event.target.value)} /><span id={`gallery-caption-${image.id}-counter`} className="text-xs font-bold text-slate-500">{captionLength}/{galleryCaptionMaxLength}</span></Field>
                               <div className="flex flex-wrap gap-2">
                                 <button className={`nav-tab ${imageDraft.published !== false ? "active" : ""}`} type="button" onClick={() => updateGalleryDraft(image.id, "published", imageDraft.published === false)}>Published</button>
                                 <label className="button-muted">{uploading === `gallery:${image.id}` ? "Replacing..." : "Replace"}<input className="sr-only" type="file" accept={photoImageAccept} onChange={(event) => replaceGalleryImage(image.id, event)} /></label>
@@ -6362,8 +6432,8 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 <div className="rounded-md border border-dashed border-line bg-slate-50 p-6 text-center text-sm font-semibold text-slate-500">No gallery images yet. Upload a photo to start the public gallery.</div>
               )}
               <form className="grid gap-3 md:grid-cols-[180px_1fr_auto]" onSubmit={addSocial}>
-                <select className="input" value={socialDraft.platform} onChange={(event) => updateSocialDraft("platform", event.target.value)}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
-                <input className="input" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => updateSocialDraft("url", event.target.value)} />
+                <select className="input" data-onboarding-field="social-platform" value={socialDraft.platform} onChange={(event) => updateSocialDraft("platform", event.target.value)}>{Object.keys(socialPlatformLabels).map((platform) => <option key={platform} value={platform}>{socialPlatformLabels[platform]}</option>)}</select>
+                <input className="input" data-onboarding-field="social-url" value={socialDraft.url} placeholder="https://instagram.com/restaurant" onChange={(event) => updateSocialDraft("url", event.target.value)} />
                 <button className="button-primary" type="submit" disabled={saving === "social"}>{saving === "social" ? "Saving..." : "Add social"}</button>
               </form>
               {socialDraftDirty ? <p className="text-sm font-bold text-slate-500" role="status" aria-live="polite">Social link changes are not saved yet.</p> : null}
@@ -6440,6 +6510,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
         </section>
       </div>
     </div>
+    </OnboardingFieldContext.Provider>
   );
 }
 
