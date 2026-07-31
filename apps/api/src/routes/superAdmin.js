@@ -184,11 +184,12 @@ router.get("/dashboard-summary", async (req, res, next) => {
 async function createBusiness(req, res, next) {
   try {
     const idempotencyKey = (req.get("Idempotency-Key") || "").trim();
-    const slugValidation = validatePublicSlug(req.body.slug);
+    const restaurantData = req.body;
+    const slugValidation = validatePublicSlug(restaurantData.slug);
     if (!slugValidation.ok) return res.status(400).json({ error: slugValidation.error });
     const auditMetadata = idempotencyKey ? { idempotencyKey } : undefined;
     const result = await provisionRestaurantTenant({
-      body: { ...req.body, slug: slugValidation.slug },
+      body: { ...restaurantData, slug: slugValidation.slug },
       actorUserId: req.user.id,
       source: "SUPER_ADMIN",
       idempotencyKey,
