@@ -4,6 +4,7 @@ import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
+import { emitKitchenTicketCreated } from "./realtimeService.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -426,6 +427,23 @@ async function taxRateBps(restaurantId) {
   return config?.taxRateBps ?? 825;
 }
 
+async function resolvePosLocationId(restaurantId, requestedLocationId) {
+  const locationId = String(requestedLocationId || "").trim();
+  const location = await prisma.restaurantLocation.findFirst({
+    where: {
+      restaurantId,
+      active: true,
+      ...(locationId ? { id: locationId } : {})
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+  if (locationId && !location) {
+    throw httpError("POS location access denied.", 403, { code: "POS_LOCATION_FORBIDDEN" });
+  }
+  return location?.id || null;
+}
+
 export async function createPosQuote({ restaurantId, user, body, deviceId = null, sessionId = null }) {
   await assertPosFeature(restaurantId, "POST");
   await assertPosPermission(user, restaurantId, POS_PERMISSION.CREATE_ORDER);
@@ -475,11 +493,12 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
   const taxCents = Math.round((taxableAmountCents * await taxRateBps(restaurantId)) / 10_000);
   const totalCents = Math.max(0, taxableAmountCents + deliveryFeeCents + taxCents + tipCents);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const locationId = await resolvePosLocationId(restaurantId, body?.locationId);
 
   const quote = await prisma.orderQuote.create({
     data: {
       restaurantId,
-      locationId: body?.locationId || null,
+      locationId,
       deviceId,
       sessionId,
       createdByUserId: user.id,
@@ -563,11 +582,24 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
   if (quote.acceptedAt) throw httpError("POS quote has already been submitted.", 409);
 
   const result = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.orderQuote.updateMany({
+      where: {
+        id: quote.id,
+        restaurantId,
+        acceptedAt: null,
+        voidedAt: null,
+        expiresAt: { gt: new Date() }
+      },
+      data: { acceptedAt: new Date() }
+    });
+    if (claimed.count !== 1) throw httpError("POS quote has already been submitted or expired.", 409);
+
     const customer = await ensurePosCustomer(tx, restaurantId, quote.id, customerJson);
     const orderNumber = await nextOrderNumber(tx, restaurantId);
     const order = await tx.order.create({
       data: {
         restaurantId,
+        locationId: quote.locationId,
         customerId: customer.id,
         orderNumber,
         type: quote.orderType,
@@ -603,9 +635,13 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
           }
         }
       },
-      include: { items: true }
+      include: {
+        customer: true,
+        location: true,
+        items: true,
+        statusHistory: { orderBy: { createdAt: "asc" } }
+      }
     });
-    await tx.orderQuote.update({ where: { id: quote.id }, data: { acceptedAt: new Date() } });
     if (sessionId) {
       await tx.posOrderSession.updateMany({
         where: { id: sessionId, restaurantId },
@@ -628,6 +664,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
     return { order, receipt };
   });
 
+  emitKitchenTicketCreated(result.order);
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
@@ -642,10 +679,11 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
 export async function holdPosOrder({ restaurantId, user, body, deviceId = null }) {
   await assertPosFeature(restaurantId, "POST");
   await assertPosPermission(user, restaurantId, POS_PERMISSION.HOLD_ORDER);
+  const locationId = await resolvePosLocationId(restaurantId, body?.locationId);
   const session = await prisma.posOrderSession.create({
     data: {
       restaurantId,
-      locationId: body?.locationId || null,
+      locationId,
       deviceId,
       shiftId: body?.shiftId || null,
       name: String(body?.name || "Held order").slice(0, 120),
@@ -663,7 +701,7 @@ export async function holdPosOrder({ restaurantId, user, body, deviceId = null }
     action: "pos.order.held",
     entityType: "PosOrderSession",
     entityId: session.id,
-    metadata: { name: session.name }
+    metadata: { name: session.name, locationId }
   });
   return session;
 }

@@ -152,6 +152,7 @@ router.use([
 router.use([
   "/:restaurantId/orders/:orderId/print-kitchen-ticket",
   "/:restaurantId/orders/:orderId/print-customer-receipt",
+  "/:restaurantId/orders/:orderId/print-guest-check",
   "/:restaurantId/orders/:orderId/print-driver-slip",
   "/:restaurantId/printing"
 ], featureGuard(FEATURE.PRINTING));
@@ -247,6 +248,15 @@ function customerReceiptText(order) {
   return lines.join("\n");
 }
 
+function guestCheckText(order) {
+  return [
+    "GUEST CHECK - UNPAID",
+    "NOT A PAYMENT RECEIPT",
+    "",
+    customerReceiptText(order).replace(/^RECEIPT/, "ORDER")
+  ].join("\n");
+}
+
 function driverSlipText(order) {
   return [
     `DRIVER SLIP #${order.orderNumber}`,
@@ -272,6 +282,7 @@ function receiptKindFor(req, fallback = "customer") {
   const requested = String(req.body?.kind || req.query?.kind || fallback).toLowerCase();
   if (["kitchen", "kitchen_ticket"].includes(requested)) return "kitchen";
   if (["driver", "driver_slip"].includes(requested)) return "driver";
+  if (["guest", "guest_check"].includes(requested)) return "guest";
   if (["test"].includes(requested)) return "test";
   return fallback === "receipt" ? "receipt" : "customer";
 }
@@ -283,6 +294,7 @@ function receiptReprintFor(req) {
 function ticketTextForKind(order, kind) {
   if (kind === "kitchen") return kitchenTicketText(order);
   if (kind === "driver") return driverSlipText(order);
+  if (kind === "guest") return guestCheckText(order);
   return customerReceiptText(order);
 }
 
@@ -290,6 +302,7 @@ function auditActionForReceipt(kind, isReprint = false) {
   if (isReprint) return "receipt.reprinted";
   if (kind === "kitchen") return "print.kitchen_ticket";
   if (kind === "driver") return "print.driver_slip";
+  if (kind === "guest") return "print.guest_check";
   return "print.customer_receipt";
 }
 
@@ -1550,7 +1563,7 @@ router.patch("/:restaurantId/orders/:orderId/status", async (req, res, next) => 
         status: req.body.status,
         statusHistory: { create: { status: req.body.status, note: req.body.note, changedBy: req.user.id } }
       },
-      include: { statusHistory: true, delivery: true, customer: true, restaurant: true }
+      include: { statusHistory: true, delivery: true, customer: true, restaurant: true, items: true, location: true }
     });
     await Promise.allSettled([notifyOrderStatusUpdate({ order })]);
     emitOrderUpdate(order);
@@ -2000,6 +2013,7 @@ router.get("/:restaurantId/orders/:orderId/receipt", async (req, res, next) => {
 
 router.post("/:restaurantId/orders/:orderId/print-kitchen-ticket", (req, res, next) => printOrder(req, res, next, "kitchen"));
 router.post("/:restaurantId/orders/:orderId/print-customer-receipt", (req, res, next) => printOrder(req, res, next, "receipt"));
+router.post("/:restaurantId/orders/:orderId/print-guest-check", (req, res, next) => printOrder(req, res, next, "guest"));
 router.post("/:restaurantId/orders/:orderId/print-driver-slip", (req, res, next) => printOrder(req, res, next, "driver"));
 
 router.get("/:restaurantId/notification-settings", async (req, res, next) => {

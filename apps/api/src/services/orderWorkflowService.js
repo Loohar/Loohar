@@ -167,6 +167,7 @@ function receiptTypeForKind(kind = "customer") {
   const normalized = String(kind || "customer").toLowerCase();
   if (normalized === "kitchen" || normalized === "kitchen_ticket") return "KITCHEN_TICKET";
   if (normalized === "driver" || normalized === "driver_slip") return "DRIVER_SLIP";
+  if (normalized === "guest" || normalized === "guest_check") return "GUEST_CHECK";
   if (normalized === "test") return "TEST_RECEIPT";
   return "CUSTOMER_RECEIPT";
 }
@@ -174,6 +175,7 @@ function receiptTypeForKind(kind = "customer") {
 function receiptTitleForType(type) {
   if (type === "KITCHEN_TICKET") return "Kitchen ticket";
   if (type === "DRIVER_SLIP") return "Driver delivery slip";
+  if (type === "GUEST_CHECK") return "Guest check - unpaid";
   if (type === "TEST_RECEIPT") return "Printer test receipt";
   return "Customer receipt";
 }
@@ -334,12 +336,24 @@ function receiptQrCodes(order, trackingToken, receiptType) {
 export function buildReceiptPayload(order, { kind = "customer", trackingToken, format = "80mm", isReprint = false } = {}) {
   const isDelivery = order.type === "DELIVERY";
   const receiptType = receiptTypeForKind(kind);
-  const receiptNumberSuffix = receiptType === "KITCHEN_TICKET" ? "K" : receiptType === "DRIVER_SLIP" ? "D" : receiptType === "TEST_RECEIPT" ? "T" : "C";
+  const receiptNumberSuffix = receiptType === "KITCHEN_TICKET" ? "K" : receiptType === "DRIVER_SLIP" ? "D" : receiptType === "GUEST_CHECK" ? "G" : receiptType === "TEST_RECEIPT" ? "T" : "C";
   const receiptNumber = `R-${order.orderNumber}-${receiptNumberSuffix}`;
   const receiptId = `${order.id}:${receiptType}`;
   const restaurant = receiptRestaurant(order);
   const totals = receiptTotals(order);
-  const payment = receiptPayment(order, totals);
+  const settledPayment = receiptPayment(order, totals);
+  const payment = receiptType === "GUEST_CHECK"
+    ? {
+        provider: null,
+        status: "UNPAID",
+        paidAt: null,
+        authorizedAt: null,
+        refundedAt: null,
+        refundedCents: 0,
+        balanceCents: totals.totalCents,
+        reference: null
+      }
+    : settledPayment;
   const qr = receiptQrCodes(order, trackingToken, receiptType);
   const issuedAt = new Date();
 
@@ -356,6 +370,7 @@ export function buildReceiptPayload(order, { kind = "customer", trackingToken, f
     kind,
     type: receiptType,
     title: receiptTitleForType(receiptType),
+    isPaymentReceipt: receiptType !== "GUEST_CHECK",
     issuedAt,
     isReprint: Boolean(isReprint),
     layout: { format: format === "58mm" ? "58mm" : "80mm", provider: "browser_print" },
@@ -395,7 +410,8 @@ export function buildReceiptPayload(order, { kind = "customer", trackingToken, f
     },
     text: {
       totals: totalsTextRows(totals, payment),
-      footer: "Powered by Loohar"
+      notice: receiptType === "GUEST_CHECK" ? "GUEST CHECK - UNPAID - NOT A PAYMENT RECEIPT" : null,
+      footer: receiptType === "GUEST_CHECK" ? "Amount due - not a payment receipt" : "Powered by Loohar"
     }
   };
 }

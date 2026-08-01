@@ -8504,6 +8504,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
+  function openGuestCheck() {
+    if (!lastOrder?.id) return setError("Submit an order before printing a guest check.");
+    const restaurantBasePath = restaurantKey ? `/restaurant/${restaurantKey}` : "/restaurant";
+    navigateInApp(`${restaurantBasePath}/orders/${encodeURIComponent(lastOrder.id)}/receipt?kind=guest`);
+  }
+
   async function setKiosk(enabled) {
     if (!activeDevice?.id) return setError("Register this device before enabling kiosk mode.");
     setSaving(enabled ? "kiosk" : "kiosk-exit");
@@ -8741,6 +8747,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             <div className="pos-last-order">
               <strong>{lastOrder.orderNumber}</strong>
               <span>{money(lastOrder.totalCents)} · {readable(lastOrder.status || "pending")}</span>
+              <button className="button-muted mt-3 w-full justify-center" type="button" onClick={openGuestCheck}><ReceiptText size={16} />Print Guest Check</button>
               <div className="pos-action-grid mt-3">
                 <button className="button-muted justify-center" type="button" onClick={acceptCashPayment} disabled={!canAcceptCash || saving === "cash"}><ReceiptText size={16} />Cash</button>
                 <button className="button-muted justify-center" type="button" onClick={requestCardPayment} disabled={!canAcceptCard || saving === "card"}><CreditCard size={16} />Card</button>
@@ -8918,6 +8925,7 @@ function receiptDocumentKind(kind = "receipt") {
   const normalized = String(kind || "receipt").toLowerCase();
   if (normalized === "kitchen" || normalized === "kitchen_ticket") return "kitchen";
   if (normalized === "driver" || normalized === "driver_slip") return "driver";
+  if (normalized === "guest" || normalized === "guest_check") return "guest";
   return "receipt";
 }
 
@@ -8925,6 +8933,7 @@ function receiptKindLabel(kind = "receipt") {
   const normalized = receiptDocumentKind(kind);
   if (normalized === "kitchen") return "Kitchen ticket";
   if (normalized === "driver") return "Driver slip";
+  if (normalized === "guest") return "Guest check";
   return "Customer receipt";
 }
 
@@ -8995,6 +9004,7 @@ function ReceiptPrintDocument({ receipt }) {
   const layoutFormat = receipt.layout?.format === "58mm" ? "58mm" : "80mm";
   const isKitchen = receipt.type === "KITCHEN_TICKET";
   const isDriver = receipt.type === "DRIVER_SLIP";
+  const isGuestCheck = receipt.type === "GUEST_CHECK";
   const customerQr = isKitchen ? null : receiptQrFromPayload(receipt, "customer", restaurant.orderUrl);
   const trackingQr = isKitchen ? null : receiptQrFromPayload(receipt, "tracking");
   const driverQr = isKitchen ? null : receiptQrFromPayload(receipt, "driver");
@@ -9017,6 +9027,12 @@ function ReceiptPrintDocument({ receipt }) {
         <span>{receipt.title || receiptKindLabel(receipt.kind)}</span>
         <strong>{receiptInfo.receiptNumber || receipt.receiptNumber}</strong>
       </section>
+      {isGuestCheck ? (
+        <div className="receipt-center">
+          <p className="receipt-stamp">GUEST CHECK - UNPAID</p>
+          <p className="receipt-subtle">Not a payment receipt</p>
+        </div>
+      ) : null}
       {receiptInfo.isReprint || receipt.isReprint ? <p className="receipt-center receipt-stamp">REPRINT</p> : null}
       <section className="receipt-meta">
         <span>Order</span>
@@ -9076,7 +9092,7 @@ function ReceiptPrintDocument({ receipt }) {
         {trackingQr ? <ReceiptQr qr={trackingQr} description="Track this order from a secure customer link." /> : null}
         {driverQr ? <ReceiptQr qr={driverQr} description="Install the lightweight Loohar driver app." /> : null}
       </section>
-      <p className="receipt-powered">{receipt.text?.footer || "Powered by Loohar"}</p>
+      <p className="receipt-powered">{receipt.text?.notice || receipt.text?.footer || "Powered by Loohar"}</p>
     </article>
   );
 }
@@ -9127,7 +9143,7 @@ function RestaurantReceiptPreviewPage({ apiOnline, token, restaurantId, orderId,
     setError("");
     setMessage("");
     try {
-      const path = kind === "kitchen" ? "print-kitchen-ticket" : kind === "driver" ? "print-driver-slip" : "print-customer-receipt";
+      const path = kind === "kitchen" ? "print-kitchen-ticket" : kind === "driver" ? "print-driver-slip" : kind === "guest" ? "print-guest-check" : "print-customer-receipt";
       const payload = await api(`/api/restaurants/${restaurantId}/orders/${encodeURIComponent(orderId)}/${path}`, {
         method: "POST",
         token,
@@ -9645,16 +9661,15 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   }, [apiOnline, token, restaurantId, reportRange]);
 
   useEffect(() => {
-    if (!apiOnline || !restaurantId) return undefined;
-    const socket = io(API_ORIGIN, { transports: ["websocket", "polling"] });
+    if (!apiOnline || !token || !restaurantId) return undefined;
+    const socket = io(API_ORIGIN, {
+      transports: ["websocket", "polling"],
+      auth: { token, scope: "restaurant", restaurantId }
+    });
     const refresh = () => {
       window.clearTimeout(realtimeRefreshTimerRef.current);
       realtimeRefreshTimerRef.current = window.setTimeout(() => loadRestaurant({ force: true }), 500);
     };
-    socket.on("connect", () => {
-      socket.emit("join:restaurant", restaurantId);
-      socket.emit("join:kitchen", restaurantId);
-    });
     socket.on("order:update", refresh);
     socket.on("delivery:update", refresh);
     socket.on("kitchen:update", refresh);
@@ -11729,8 +11744,17 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
     }));
   const [restaurant, setRestaurant] = useState(demoRestaurant);
   const [orders, setOrders] = useState(demoKitchenOrders);
+  const [locations, setLocations] = useState([]);
+  const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [realtimeState, setRealtimeState] = useState("offline");
+  const [newOrderAlert, setNewOrderAlert] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const reconciliationCursorRef = useRef("");
+  const seenEventIdsRef = useRef(new Set());
+  const orderVersionsRef = useRef(new Map());
+  const reconciliationInFlightRef = useRef(false);
+  const [clock, setClock] = useState(() => Date.now());
   const activeOrders = orders.filter((order) => !["COMPLETED", "CANCELLED"].includes(order.kdsStatus || kdsStatusFor(order.status)));
   const completedOrders = orders.filter((order) => ["COMPLETED", "CANCELLED"].includes(order.kdsStatus || kdsStatusFor(order.status)));
   function kitchenActionsFor(order) {
@@ -11742,70 +11766,184 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
     ];
   }
 
-  async function loadKitchen() {
+  function rememberEvent(eventId) {
+    if (!eventId) return true;
+    if (seenEventIdsRef.current.has(eventId)) return false;
+    seenEventIdsRef.current.add(eventId);
+    if (seenEventIdsRef.current.size > 500) {
+      const oldest = seenEventIdsRef.current.values().next().value;
+      seenEventIdsRef.current.delete(oldest);
+    }
+    return true;
+  }
+
+  function mergeKitchenTicket(ticket, version = ticket?.updatedAt) {
+    if (!ticket?.id || (restaurant?.id && ticket.restaurantId !== restaurant.id)) return;
+    if (selectedLocationId && ticket.locationId !== selectedLocationId) return;
+    const incomingVersion = version ? new Date(version).getTime() : Date.now();
+    const currentVersion = orderVersionsRef.current.get(ticket.id) || 0;
+    if (Number.isFinite(incomingVersion) && incomingVersion <= currentVersion) return;
+    orderVersionsRef.current.set(ticket.id, Number.isFinite(incomingVersion) ? incomingVersion : Date.now());
+    const nextTicket = {
+      ...ticket,
+      kdsStatus: ticket.kdsStatus || kdsStatusFor(ticket.status),
+      elapsedSeconds: Math.max(0, Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 1000))
+    };
+    setOrders((current) => {
+      const existingIndex = current.findIndex((row) => row.id === nextTicket.id);
+      if (existingIndex < 0) return [nextTicket, ...current];
+      const next = [...current];
+      next[existingIndex] = { ...current[existingIndex], ...nextTicket };
+      return next;
+    });
+  }
+
+  function applyKitchenEvent(event) {
+    if (!event || event.schemaVersion !== 1 || !rememberEvent(event.eventId)) return;
+    if (restaurant?.id && event.restaurantId !== restaurant.id) return;
+    if (selectedLocationId && event.locationId !== selectedLocationId) return;
+    mergeKitchenTicket(event.ticket, event.version);
+    if (event.eventType === "kitchen.ticket.created.v1") {
+      setNewOrderAlert(`New order #${event.ticket?.orderNumber || "received"}`);
+      window.setTimeout(() => setNewOrderAlert(""), 5000);
+    }
+  }
+
+  async function loadKitchen({ reconcile = false, silent = false } = {}) {
     if (!apiOnline) {
       setRestaurant(demoRestaurant);
       setOrders(demoKitchenOrders);
-      return;
+      setRealtimeState("offline");
+      return false;
     }
     if (!token) {
       setOrders([]);
       setError("Kitchen staff, cashier, manager, or owner login is required.");
-      return;
+      return false;
     }
-    setLoading(true);
-    setError("");
+    if (reconcile && reconciliationInFlightRef.current) return false;
+    if (reconcile) reconciliationInFlightRef.current = true;
+    if (!silent) setLoading(true);
+    if (!reconcile) setError("");
     try {
-      const payload = await api(routeSlug ? `/api/kitchen/${routeSlug}/orders` : "/api/kitchen/orders", { token });
+      const params = new window.URLSearchParams();
+      if (selectedLocationId) params.set("locationId", selectedLocationId);
+      if (reconcile && reconciliationCursorRef.current) params.set("since", reconciliationCursorRef.current);
+      const query = params.toString();
+      const basePath = routeSlug ? `/api/kitchen/${routeSlug}/orders` : "/api/kitchen/orders";
+      const payload = await api(`${basePath}${query ? `?${query}` : ""}`, { token, skipDedupe: true });
       setRestaurant(payload.restaurant || demoRestaurant);
-      setOrders(payload.orders || []);
+      setLocations(payload.locations || []);
+      if (!selectedLocationId && payload.selectedLocation?.id) setSelectedLocationId(payload.selectedLocation.id);
+      if (reconcile) {
+        (payload.orders || []).forEach((order) => mergeKitchenTicket(order, order.updatedAt));
+      } else {
+        orderVersionsRef.current = new Map((payload.orders || []).map((order) => [order.id, new Date(order.updatedAt || order.createdAt).getTime()]));
+        setOrders(payload.orders || []);
+      }
+      reconciliationCursorRef.current = payload.cursor || new Date().toISOString();
+      return true;
     } catch (loadError) {
       setError(loadError.message);
+      return false;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      if (reconcile) reconciliationInFlightRef.current = false;
     }
   }
 
   useEffect(() => {
+    reconciliationCursorRef.current = "";
+    seenEventIdsRef.current.clear();
+    orderVersionsRef.current.clear();
     loadKitchen();
-  }, [apiOnline, token, routeSlug]);
+  }, [apiOnline, token, routeSlug, selectedLocationId]);
 
   useEffect(() => {
-    if (!apiOnline || !restaurant?.id) return undefined;
-    const socket = io(API_ORIGIN, { transports: ["websocket", "polling"] });
-    const refresh = () => loadKitchen();
-    socket.on("connect", () => {
-      socket.emit("join:kitchen", restaurant.id);
-      socket.emit("join:restaurant", restaurant.id);
+    if (!apiOnline || !token || !restaurant?.id || !reconciliationCursorRef.current) return undefined;
+    const socket = io(API_ORIGIN, {
+      transports: ["websocket", "polling"],
+      auth: {
+        token,
+        scope: "kitchen",
+        restaurantId: restaurant.id,
+        locationId: selectedLocationId || undefined
+      }
     });
-    socket.on("kitchen:update", refresh);
-    socket.on("order:update", refresh);
-    return () => socket.disconnect();
-  }, [apiOnline, restaurant?.id, token, routeSlug]);
+    let sessionEnded = false;
+    socket.on("connect", () => {
+      sessionEnded = false;
+      setRealtimeState("reconciling");
+      loadKitchen({ reconcile: true, silent: true }).then((reconciled) => {
+        setRealtimeState(reconciled ? "live" : "error");
+      });
+    });
+    socket.on("connect_error", (socketError) => {
+      setRealtimeState("error");
+      setError(socketError.message || "Kitchen realtime connection failed.");
+    });
+    socket.on("realtime:session-ended", () => {
+      sessionEnded = true;
+      setRealtimeState("error");
+      setError("Your session expired or was revoked. Sign in again to resume Kitchen realtime updates.");
+    });
+    socket.on("disconnect", () => {
+      if (!sessionEnded) setRealtimeState("reconnecting");
+    });
+    socket.on("kitchen.ticket.created.v1", applyKitchenEvent);
+    socket.on("kitchen.ticket.updated.v1", applyKitchenEvent);
+    socket.on("kitchen.ticket.cancelled.v1", applyKitchenEvent);
+    socket.on("order.status.updated.v1", applyKitchenEvent);
+    const reconciliationTimer = window.setInterval(() => loadKitchen({ reconcile: true, silent: true }), 30_000);
+    return () => {
+      window.clearInterval(reconciliationTimer);
+      socket.disconnect();
+    };
+  }, [apiOnline, restaurant?.id, selectedLocationId, token, routeSlug]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function updateKitchenOrder(order, status) {
     if (!apiOnline) {
       return setOrders((current) => current.map((item) => item.id === order.id ? { ...item, kdsStatus: status, status: status === "COMPLETED" ? "DELIVERED" : status } : item));
     }
     try {
-      const path = routeSlug ? `/api/kitchen/${routeSlug}/orders/${order.id}/status` : `/api/kitchen/orders/${order.id}/status`;
+      const locationQuery = selectedLocationId ? `?locationId=${encodeURIComponent(selectedLocationId)}` : "";
+      const path = routeSlug
+        ? `/api/kitchen/${routeSlug}/orders/${order.id}/status${locationQuery}`
+        : `/api/kitchen/orders/${order.id}/status${locationQuery}`;
       const payload = await api(path, { method: "PATCH", token, body: { status } });
       setOrders((current) => current.map((item) => item.id === order.id ? payload.order : item));
-      await loadKitchen();
+      orderVersionsRef.current.set(payload.order.id, new Date(payload.order.updatedAt || Date.now()).getTime());
     } catch (statusError) {
       setError(statusError.message);
     }
   }
 
   function itemModifiers(item) {
-    const modifiers = Array.isArray(item.optionsJson) ? item.optionsJson : item.options || [];
+    const modifiers = Array.isArray(item.optionsJson)
+      ? item.optionsJson
+      : Array.isArray(item.optionsJson?.modifiers)
+        ? item.optionsJson.modifiers
+        : Array.isArray(item.optionsJson?.options)
+          ? item.optionsJson.options
+          : item.modifiers || item.options || [];
     return modifiers.map((modifier) => modifier.group ? `${modifier.group}: ${modifier.name}` : modifier.name).filter(Boolean).join(" / ");
+  }
+
+  function kitchenElapsed(order) {
+    if (!order.createdAt) return elapsedLabel(order.elapsedSeconds || 0);
+    return elapsedLabel(Math.max(0, Math.floor((clock - new Date(order.createdAt).getTime()) / 1000)));
   }
 
   return (
     <div className="kds-shell" id="kitchen">
-      <SectionHeader eyebrow="Kitchen Display System" title={restaurant.businessName || restaurant.name || "Kitchen"} icon={ReceiptText} action={<button className="button-muted" onClick={loadKitchen}><RefreshCw size={18} />{loading ? "Loading" : "Refresh"}</button>} />
+      <SectionHeader eyebrow="Kitchen Display System" title={restaurant.businessName || restaurant.name || "Kitchen"} icon={ReceiptText} action={<div className="flex flex-wrap items-center gap-2">{locations.length > 1 ? <select className="select" aria-label="Kitchen location" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select> : null}<StatusPill tone={realtimeState === "live" ? "good" : realtimeState === "error" ? "bad" : "warn"}>{realtimeState === "live" ? "Realtime" : readable(realtimeState)}</StatusPill><button className="button-muted" onClick={() => loadKitchen()}><RefreshCw size={18} />{loading ? "Loading" : "Refresh"}</button></div>} />
       <InlineError message={error} />
+      {newOrderAlert ? <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700" role="status" aria-live="assertive"><ReceiptText size={18} />{newOrderAlert}</div> : null}
       <div className="grid gap-4 md:grid-cols-4" id="kitchen-summary">
         <Stat icon={ReceiptText} label="Incoming" value={orders.filter((order) => (order.kdsStatus || kdsStatusFor(order.status)) === "NEW").length} detail="New orders" />
         <Stat icon={Activity} label="Preparing" value={orders.filter((order) => (order.kdsStatus || kdsStatusFor(order.status)) === "PREPARING").length} detail="Kitchen queue" />
@@ -11827,7 +11965,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
                 </div>
                 <div className="text-right">
                   <StatusPill tone={kdsStatus === "READY" ? "warn" : kdsStatus === "NEW" ? "bad" : "neutral"}>{kdsStatus}</StatusPill>
-                  <p className="mt-2 text-sm font-black text-ink">{elapsedLabel(order.elapsedSeconds)}</p>
+                  <p className="mt-2 text-sm font-black text-ink">{kitchenElapsed(order)}</p>
                 </div>
               </div>
               <div className="mt-5 space-y-3">

@@ -5,56 +5,72 @@ export function authError(res, status, code, error) {
   return res.status(status).json({ error, code });
 }
 
+function accessError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
+export async function authenticateAccessToken(token) {
+  if (!token) throw accessError("Missing bearer token", 401, "AUTH_ACCESS_TOKEN_MISSING");
+
+  const payload = verifyAccessToken(token);
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      status: true,
+      restaurantId: true,
+      forcePasswordChange: true,
+      temporaryPassword: true,
+      passwordChangedAt: true,
+      lastLoginAt: true,
+      sessionVersion: true,
+      mfaEnabled: true,
+      mfaSetupStatus: true,
+      mfaVerifiedAt: true,
+      restaurant: { select: { id: true, name: true, businessName: true, slug: true } }
+    }
+  });
+
+  if (!user) throw accessError("Invalid bearer token", 401, "AUTH_ACCESS_TOKEN_INVALID");
+  if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) {
+    throw accessError("Session is no longer valid", 401, "AUTH_SESSION_REVOKED");
+  }
+  if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) {
+    throw accessError("Account is not active", 403, "AUTH_USER_INACTIVE");
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    status: user.status,
+    restaurantId: user.restaurantId,
+    restaurantSlug: user.restaurant?.slug || null,
+    restaurantName: user.restaurant?.businessName || user.restaurant?.name || null,
+    forcePasswordChange: user.forcePasswordChange,
+    temporaryPassword: user.temporaryPassword,
+    passwordChangedAt: user.passwordChangedAt,
+    lastLoginAt: user.lastLoginAt,
+    sessionVersion: user.sessionVersion,
+    mfaEnabled: user.mfaEnabled,
+    mfaSetupStatus: user.mfaSetupStatus,
+    mfaVerifiedAt: user.mfaVerifiedAt
+  };
+}
+
 export async function requireAuth(req, res, next) {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (!token) return authError(res, 401, "AUTH_ACCESS_TOKEN_MISSING", "Missing bearer token");
-
-    const payload = verifyAccessToken(token);
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        status: true,
-        restaurantId: true,
-        forcePasswordChange: true,
-        temporaryPassword: true,
-        passwordChangedAt: true,
-        lastLoginAt: true,
-        sessionVersion: true,
-        mfaEnabled: true,
-        mfaSetupStatus: true,
-        mfaVerifiedAt: true,
-        restaurant: { select: { id: true, name: true, businessName: true, slug: true } }
-      }
-    });
-
-    if (!user) return authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
-    if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) return authError(res, 401, "AUTH_SESSION_REVOKED", "Session is no longer valid");
-    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
-    req.user = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      status: user.status,
-      restaurantId: user.restaurantId,
-      restaurantSlug: user.restaurant?.slug || null,
-      restaurantName: user.restaurant?.businessName || user.restaurant?.name || null,
-      forcePasswordChange: user.forcePasswordChange,
-      temporaryPassword: user.temporaryPassword,
-      passwordChangedAt: user.passwordChangedAt,
-      lastLoginAt: user.lastLoginAt,
-      sessionVersion: user.sessionVersion,
-      mfaEnabled: user.mfaEnabled,
-      mfaSetupStatus: user.mfaSetupStatus,
-      mfaVerifiedAt: user.mfaVerifiedAt
-    };
-    req.tenantId = user.restaurantId;
+    req.user = await authenticateAccessToken(token);
+    req.tenantId = req.user.restaurantId;
     next();
   } catch (error) {
     if (error.name === "TokenExpiredError") {
@@ -63,6 +79,7 @@ export async function requireAuth(req, res, next) {
     if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) {
       return authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
     }
+    if (error.status && error.code) return authError(res, error.status, error.code, error.message);
     next(error);
   }
 }

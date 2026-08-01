@@ -176,6 +176,7 @@ enum PosPaymentChannel {
 enum PosReceiptKind {
   CUSTOMER_RECEIPT
   KITCHEN_TICKET
+  GUEST_CHECK
 }
 
 enum PosReceiptStatus {
@@ -647,6 +648,7 @@ model MenuItemOption {
 model Order {
   id               String               @id @default(cuid())
   restaurantId     String
+  locationId       String?
   customerId       String
   orderNumber      String
   type             OrderType
@@ -673,6 +675,7 @@ model Order {
   trackingTokenHash String?            @unique
   trackingTokenExpiresAt DateTime?
   restaurant       Restaurant           @relation(fields: [restaurantId], references: [id])
+  location         RestaurantLocation?   @relation(fields: [locationId], references: [id])
   customer         Customer             @relation(fields: [customerId], references: [id])
   items            OrderItem[]
   statusHistory    OrderStatusHistory[]
@@ -688,6 +691,7 @@ model Order {
   @@unique([restaurantId, orderNumber])
   @@unique([id, restaurantId])
   @@index([trackingTokenExpiresAt])
+  @@index([restaurantId, locationId, updatedAt])
 }
 
 model OrderItem {
@@ -830,6 +834,7 @@ model RestaurantLocation {
   cashLedgerEntries CashLedgerEntry[]
   posOrderSessions PosOrderSession[]
   orderQuotes  OrderQuote[]
+  orders       Order[]
   posReceipts  PosReceipt[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

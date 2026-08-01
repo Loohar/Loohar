@@ -26,6 +26,7 @@ function receiptKindFor(req) {
   const requested = String(req.body?.kind || req.query?.kind || "customer").toLowerCase();
   if (["kitchen", "kitchen_ticket"].includes(requested)) return "kitchen";
   if (["driver", "driver_slip"].includes(requested)) return "driver";
+  if (["guest", "guest_check"].includes(requested)) return "guest";
   return "customer";
 }
 
