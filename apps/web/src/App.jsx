@@ -11747,6 +11747,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
   const [locations, setLocations] = useState([]);
   const [selectedLocationId, setSelectedLocationId] = useState("");
   const [realtimeState, setRealtimeState] = useState("offline");
+  const [realtimePrerequisitesReady, setRealtimePrerequisitesReady] = useState(false);
   const [newOrderAlert, setNewOrderAlert] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -11811,18 +11812,21 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
 
   async function loadKitchen({ reconcile = false, silent = false } = {}) {
     if (!apiOnline) {
+      if (!reconcile) setRealtimePrerequisitesReady(false);
       setRestaurant(demoRestaurant);
       setOrders(demoKitchenOrders);
       setRealtimeState("offline");
       return false;
     }
     if (!token) {
+      if (!reconcile) setRealtimePrerequisitesReady(false);
       setOrders([]);
       setError("Kitchen staff, cashier, manager, or owner login is required.");
       return false;
     }
     if (reconcile && reconciliationInFlightRef.current) return false;
     if (reconcile) reconciliationInFlightRef.current = true;
+    if (!reconcile) setRealtimePrerequisitesReady(false);
     if (!silent) setLoading(true);
     if (!reconcile) setError("");
     try {
@@ -11842,8 +11846,10 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
         setOrders(payload.orders || []);
       }
       reconciliationCursorRef.current = payload.cursor || new Date().toISOString();
+      if (!reconcile) setRealtimePrerequisitesReady(true);
       return true;
     } catch (loadError) {
+      if (!reconcile) setRealtimePrerequisitesReady(false);
       setError(loadError.message);
       return false;
     } finally {
@@ -11860,7 +11866,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
   }, [apiOnline, token, routeSlug, selectedLocationId]);
 
   useEffect(() => {
-    if (!apiOnline || !token || !restaurant?.id || !reconciliationCursorRef.current) return undefined;
+    if (!apiOnline || !token || !restaurant?.id || !realtimePrerequisitesReady || !reconciliationCursorRef.current) return undefined;
     const socket = io(API_ORIGIN, {
       transports: ["websocket", "polling"],
       auth: {
@@ -11899,7 +11905,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
       window.clearInterval(reconciliationTimer);
       socket.disconnect();
     };
-  }, [apiOnline, restaurant?.id, selectedLocationId, token, routeSlug]);
+  }, [apiOnline, restaurant?.id, selectedLocationId, token, routeSlug, realtimePrerequisitesReady]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 15_000);
