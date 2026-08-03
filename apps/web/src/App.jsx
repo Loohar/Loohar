@@ -27,10 +27,37 @@ import {
   Users,
   X
 } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import QRCode from "qrcode";
 import DriverPwaApp from "./apps/driver/DriverApp.jsx";
+import {
+  CashierBadge,
+  CashierPinScreen,
+  NewOrderSetupScreen,
+  OrderCompleteScreen,
+  OrderEntryScreen,
+  OrderReviewScreen,
+  PaymentResultScreen,
+  PaymentSelectionScreen,
+  PosBootScreen,
+  PosOfflineScreen,
+  PosOrdersScreen,
+  RecoveryScreen,
+  RegisterHomeScreen,
+  RegisterLockScreen,
+  RegisterSettingsScreen,
+  ShiftManagementScreen
+} from "./apps/pos/PosWorkflowScreens.jsx";
+import {
+  POS_EVENT,
+  POS_WORKFLOW,
+  clearPosOrderDraft,
+  initialPosWorkflowState,
+  loadPosOrderDraft,
+  posWorkflowReducer,
+  savePosOrderDraft
+} from "./apps/pos/stateMachine.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
@@ -7633,21 +7660,6 @@ function RestaurantDashboardPage({ children }) {
   return <div className="restaurant-owner-page restaurant-owner-page-dashboard">{children}</div>;
 }
 
-const posDeviceTypes = [
-  { value: "POS_KIOSK", label: "POS kiosk" },
-  { value: "MAIN_TERMINAL", label: "Main terminal" },
-  { value: "APPROVED_MOBILE", label: "Approved mobile" },
-  { value: "KITCHEN_DISPLAY", label: "Kitchen display" },
-  { value: "MANAGER_DEVICE", label: "Manager device" }
-];
-
-const posOrderTypes = [
-  { value: "WALK_IN", label: "Walk-in" },
-  { value: "DINE_IN", label: "Dine-in" },
-  { value: "PICKUP", label: "Pickup" },
-  { value: "DELIVERY", label: "Delivery" }
-];
-
 function posDeviceFingerprint() {
   if (typeof window === "undefined") return "";
   const storageKey = "loohar-pos-device-fingerprint";
@@ -7724,12 +7736,6 @@ function PosNotice({ error, user, onRetry, subscriptionHref }) {
       {isRateLimit ? <button className="button-muted" type="button" onClick={onRetry}>Retry</button> : null}
     </div>
   );
-}
-
-function centsFromDollarInput(value) {
-  const cleaned = String(value || "").replace(/[^0-9.]/g, "");
-  if (!cleaned) return 0;
-  return Math.max(0, Math.round(Number(cleaned) * 100) || 0);
 }
 
 function itemCategoryId(item) {
@@ -7908,6 +7914,46 @@ function posSelectionsFromOptionIds(item = {}, optionIds = []) {
   ]));
 }
 
+function emptyPosCustomer() {
+  return {
+    name: "Walk-in guest",
+    phone: "",
+    email: "",
+    seat: "",
+    server: "",
+    guestCount: "",
+    pickupTime: "",
+    deliveryAddress: "",
+    deliveryInstructions: "",
+    deliveryZoneId: "",
+    vehicle: "",
+    parkingSpot: "",
+    eventName: "",
+    eventDateTime: "",
+    headcount: ""
+  };
+}
+
+function normalizePosCustomer(source = {}) {
+  const empty = emptyPosCustomer();
+  return Object.fromEntries(Object.keys(empty).map((key) => [
+    key,
+    String(source?.[key] ?? empty[key]).slice(0, key === "deliveryAddress" || key === "deliveryInstructions" ? 500 : 160)
+  ]));
+}
+
+function posOperationalNotes(orderType, customer, tableNumber, notes) {
+  const details = {
+    DINE_IN: [tableNumber && `Table: ${tableNumber}`, customer.seat && `Seat: ${customer.seat}`, customer.server && `Server: ${customer.server}`, customer.guestCount && `Guests: ${customer.guestCount}`],
+    PICKUP: [customer.pickupTime && `Pickup time: ${customer.pickupTime}`],
+    DELIVERY: [customer.deliveryInstructions && `Delivery instructions: ${customer.deliveryInstructions}`],
+    DRIVE_THRU: [customer.vehicle && `Vehicle: ${customer.vehicle}`],
+    CURBSIDE: [customer.vehicle && `Vehicle: ${customer.vehicle}`, customer.parkingSpot && `Parking spot: ${customer.parkingSpot}`],
+    CATERING: [customer.eventName && `Event: ${customer.eventName}`, customer.eventDateTime && `Event time: ${customer.eventDateTime}`, customer.headcount && `Headcount: ${customer.headcount}`]
+  };
+  return [...(details[orderType] || []), String(notes || "").trim()].filter(Boolean).join("\n");
+}
+
 function RestaurantKioskShell({ apiOnline, apiMode, token, user, restaurantSlug, onLogout }) {
   const ownerOperator = posCanManageSubscription(user);
   const profile = {
@@ -7939,6 +7985,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const deviceStorageKey = restaurantKey ? `loohar-pos-device-id:${restaurantKey}` : "loohar-pos-device-id";
   const subscriptionHref = restaurantKey ? `/restaurant/${restaurantKey}/settings/subscription` : "/restaurant/settings/subscription";
   const ownerOperator = posCanManageSubscription(user);
+  const [workflow, dispatchWorkflow] = useReducer(posWorkflowReducer, initialPosWorkflowState);
+  const [now, setNow] = useState(() => new Date());
+  const [cashierPin, setCashierPin] = useState("");
+  const [newCashierPin, setNewCashierPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinLockedUntil, setPinLockedUntil] = useState(null);
+  const [openOrders, setOpenOrders] = useState([]);
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [orderListMode, setOrderListMode] = useState("recent");
+  const [tableNumber, setTableNumber] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [amountReceived, setAmountReceived] = useState("");
+  const [paymentResult, setPaymentResult] = useState(null);
   const [fingerprint, setFingerprint] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [config, setConfig] = useState(null);
@@ -7949,18 +8008,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [cart, setCart] = useState([]);
   const [quote, setQuote] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
+  const [lastOrderReceiptKind, setLastOrderReceiptKind] = useState("guest");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [deviceForm, setDeviceForm] = useState({ name: "Front counter POS", deviceType: "POS_KIOSK", cardPaymentsEnabled: false });
+  const [deviceForm, setDeviceForm] = useState({ name: "Front counter POS", deviceType: "MAIN_TERMINAL", cardPaymentsEnabled: false, locationId: "" });
   const [openingCashCents, setOpeningCashCents] = useState(10000);
   const [kioskPin, setKioskPin] = useState("");
   const [exitPin, setExitPin] = useState("");
-  const [customer, setCustomer] = useState({ name: "Walk-in guest", phone: "", email: "" });
+  const [customer, setCustomer] = useState(() => emptyPosCustomer());
   const [orderType, setOrderType] = useState("WALK_IN");
-  const [tipCents, setTipCents] = useState(0);
-  const [customTip, setCustomTip] = useState("");
   const [notes, setNotes] = useState("");
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [showKioskExit, setShowKioskExit] = useState(false);
@@ -7972,6 +8030,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const posMenuSequenceRef = useRef(0);
   const acceptedPosMenuSequenceRef = useRef(0);
   const loadedOnceRef = useRef(false);
+  const inactivityTimerRef = useRef(null);
+  const posSessionTokenRef = useRef("");
 
   useEffect(() => {
     setFingerprint(posDeviceFingerprint());
@@ -7985,16 +8045,38 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     ...(fingerprint ? { "x-loohar-device-fingerprint": fingerprint } : {})
   }), [deviceId, fingerprint]);
 
-  async function posApi(path, options = {}) {
+  function rememberPosSession(value = "") {
+    posSessionTokenRef.current = value;
+  }
+
+  function lockRegister() {
+    rememberPosSession("");
+    setCashierPin("");
+    dispatchWorkflow({ type: POS_EVENT.LOCK });
+  }
+
+  async function posApi(path, options = {}, sessionOverride = null) {
     if (!posBasePath) throw new Error("Restaurant POS route is not available yet.");
-    return api(`${posBasePath}${path}`, {
-      ...options,
-      token,
-      headers: {
-        ...deviceHeaders,
-        ...(options.headers || {})
+    const activePosSession = sessionOverride || posSessionTokenRef.current;
+    try {
+      return await api(`${posBasePath}${path}`, {
+        ...options,
+        token,
+        authRetry: false,
+        clearOnUnauthorized: false,
+        skipDedupe: true,
+        headers: {
+          ...deviceHeaders,
+          ...(activePosSession ? { "x-loohar-pos-session": activePosSession } : {}),
+          ...(options.headers || {})
+        }
+      });
+    } catch (posError) {
+      if (String(posError?.payload?.code || posError?.code || "").startsWith("POS_SESSION_")) {
+        lockRegister();
       }
-    });
+      throw posError;
+    }
   }
 
   async function loadPos(options = {}) {
@@ -8019,19 +8101,16 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       try {
         let configPayload;
         let menuPayload;
-        let heldPayload;
         try {
           const bootstrapPayload = await posApi("/bootstrap", { headers: { "x-loohar-pos-request-id": requestId } });
           configPayload = bootstrapPayload.config;
           menuPayload = bootstrapPayload.menu;
-          heldPayload = { heldOrders: bootstrapPayload.heldOrders || [] };
         } catch (bootstrapError) {
           const status = Number(bootstrapError?.status || bootstrapError?.payload?.status || 0);
           if (![404, 405].includes(status)) throw bootstrapError;
-          [configPayload, menuPayload, heldPayload] = await Promise.all([
+          [configPayload, menuPayload] = await Promise.all([
             posApi("/config"),
-            posApi("/menu", { headers: { "x-loohar-pos-request-id": requestId } }),
-            posApi("/held-orders")
+            posApi("/menu", { headers: { "x-loohar-pos-request-id": requestId } })
           ]);
         }
         posPerformanceMark("pos-config-ready");
@@ -8049,7 +8128,14 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         }
         acceptedPosMenuSequenceRef.current = requestSequence;
         setConfig(configPayload);
-        setHeldOrders(heldPayload.heldOrders || []);
+        setLocationId((current) => current || configPayload.device?.locationId || configPayload.locations?.[0]?.id || "");
+        setDeviceForm((current) => ({
+          ...current,
+          name: configPayload.device?.name || current.name,
+          deviceType: configPayload.device?.deviceType || current.deviceType,
+          cardPaymentsEnabled: configPayload.device?.cardPaymentsEnabled ?? current.cardPaymentsEnabled,
+          locationId: configPayload.device?.locationId || current.locationId || configPayload.locations?.[0]?.id || ""
+        }));
         setPosMenuState((current) => {
           const nextStatus = normalizedMenu.itemCount > 0 ? POS_MENU_STATUS.SUCCESS : POS_MENU_STATUS.EMPTY;
           return {
@@ -8076,6 +8162,15 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           setDeviceId((current) => current === configPayload.device.id ? current : configPayload.device.id);
           if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
         }
+        if (!loadedOnceRef.current) {
+          dispatchWorkflow({
+            type: POS_EVENT.BOOTSTRAP_READY,
+            payload: {
+              hasDevice: Boolean(configPayload.device?.id),
+              pinConfigured: Boolean(configPayload.pinStatus?.configured)
+            }
+          });
+        }
         loadedOnceRef.current = true;
         posPerformanceMark("pos-interactive");
         posPerformanceMeasure("pos-auth-duration", "pos-route-start", "pos-config-ready");
@@ -8099,6 +8194,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         });
         debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(posError), message: posError?.message });
         setError(posError);
+        if (!loadedOnceRef.current) dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_FAILED, payload: { message: posError?.message } });
       } finally {
         setLoading(false);
         inflightLoadRef.current = null;
@@ -8111,6 +8207,54 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     if (!fingerprint) return;
     loadPos({ silent: loadedOnceRef.current });
   }, [apiOnline, token, posBasePath, fingerprint]);
+
+  useEffect(() => {
+    if (!apiOnline) {
+      rememberPosSession("");
+      dispatchWorkflow({ type: POS_EVENT.API_OFFLINE });
+    }
+    else if (workflow.value === POS_WORKFLOW.OFFLINE) dispatchWorkflow({ type: POS_EVENT.API_ONLINE });
+  }, [apiOnline, workflow.value]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const draft = loadPosOrderDraft(restaurantKey);
+    if (!draft) return;
+    setCart(draft.cart || []);
+    setCustomer(normalizePosCustomer(draft.customer));
+    setOrderType(draft.orderType || "WALK_IN");
+    setNotes(draft.notes || "");
+    setLocationId(draft.locationId || "");
+    setTableNumber(draft.tableNumber || "");
+  }, [restaurantKey]);
+
+  useEffect(() => {
+    if (!cart.length) {
+      clearPosOrderDraft(restaurantKey);
+      return;
+    }
+    savePosOrderDraft(restaurantKey, { cart, customer, orderType, notes, locationId, tableNumber });
+  }, [cart, customer, orderType, notes, locationId, tableNumber, restaurantKey]);
+
+  useEffect(() => {
+    if ([POS_WORKFLOW.BOOTING, POS_WORKFLOW.OFFLINE, POS_WORKFLOW.LOCKED, POS_WORKFLOW.CASHIER_AUTHENTICATION].includes(workflow.value)) return undefined;
+    const reset = () => {
+      window.clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = window.setTimeout(lockRegister, 5 * 60 * 1000);
+    };
+    reset();
+    window.addEventListener("pointerdown", reset);
+    window.addEventListener("keydown", reset);
+    return () => {
+      window.clearTimeout(inactivityTimerRef.current);
+      window.removeEventListener("pointerdown", reset);
+      window.removeEventListener("keydown", reset);
+    };
+  }, [workflow.value]);
 
   const categoriesForRegister = useMemo(() => (
     posMenuState.categories.length ? posMenuState.categories : posMenuState.lastSuccessfulCategories
@@ -8148,30 +8292,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         : currentCashDrawer?.status !== "OPEN"
       ? "Open cash drawer required."
       : "";
-  const posMenuItemCount = posMenuState.itemCount || countPosMenuItems(categoriesForRegister);
-  const posMenuTone = [POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)
-    ? "good"
-    : posMenuState.status === POS_MENU_STATUS.STALE
-      ? "warn"
-      : posMenuState.status === POS_MENU_STATUS.ENTITLEMENT_DENIED || posMenuState.status === POS_MENU_STATUS.ERROR
-        ? "bad"
-        : "neutral";
-  const posMenuLabel = posMenuState.status === POS_MENU_STATUS.REFRESHING
-    ? `Refreshing ${posMenuItemCount} items`
-    : posMenuState.status === POS_MENU_STATUS.STALE
-      ? `Stale ${posMenuItemCount} items`
-      : posMenuState.status === POS_MENU_STATUS.EMPTY
-        ? "Empty"
-        : posMenuItemCount ? `${posMenuItemCount} items` : readable(posMenuState.status || "loading");
-  const statusChips = [
-    { icon: CreditCard, label: "Device", value: activeDevice ? readable(activeDevice.deviceType) : "Unregistered", tone: activeDevice?.status === "ACTIVE" ? "good" : "warn" },
-    { icon: Clock, label: "Shift", value: activeShift?.status || "Closed", tone: activeShift?.status === "OPEN" ? "good" : "neutral" },
-    { icon: Store, label: "Menu", value: posMenuLabel, tone: posMenuTone },
-    { icon: ReceiptText, label: "Cart", value: `${cartItemCount} item${cartItemCount === 1 ? "" : "s"} / ${money(quote?.totalCents ?? cartTotalCents)}`, tone: cartItemCount ? "good" : "neutral" },
-    { icon: Shield, label: "Kiosk", value: activeDevice?.kioskModeEnabled || kioskOnly ? "Locked" : "Off", tone: activeDevice?.kioskModeEnabled || kioskOnly ? "good" : "neutral" }
-  ];
   const kioskLocked = Boolean(activeDevice?.kioskModeEnabled || kioskOnly);
-  const canOpenKiosk = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.kioskModeEnabled);
+  const posMenuItemCount = posMenuState.itemCount || countPosMenuItems(categoriesForRegister);
   const hiddenPosMenuItems = Number(posMenuState.menuDiagnostics?.totalItems || 0);
   const hasHiddenPosMenuItems = !normalizedSearch && posMenuState.status !== POS_MENU_STATUS.ERROR && hiddenPosMenuItems > 0 && posMenuItemCount === 0;
   const posEmptyTitle = normalizedSearch
@@ -8204,6 +8326,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setModifierSelections(defaults);
     setModifierInstructions("");
     setModifierError("");
+    dispatchWorkflow({ type: POS_EVENT.CUSTOMIZE_ITEM, payload: { menuItemId: item.id } });
   }
 
   function closeModifierDialog() {
@@ -8211,6 +8334,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setModifierSelections({});
     setModifierInstructions("");
     setModifierError("");
+    dispatchWorkflow({ type: POS_EVENT.CLOSE_CUSTOMIZATION });
   }
 
   function toggleModifierSelection(group, option) {
@@ -8243,7 +8367,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     const signature = posModifierSignature(optionIds, specialInstructions);
     setQuote(null);
     setLastOrder(null);
-    setMobileCartOpen(true);
     setCart((current) => {
       const existing = current.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
       if (existing) {
@@ -8263,11 +8386,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         specialInstructions
       }];
     });
-    closeModifierDialog();
-  }
-
-  function setQuantity(cartLineId, quantity) {
-    updateCartLine(cartLineId, { quantity: Math.max(1, Number(quantity) || 1) });
+    if (customizingItem) closeModifierDialog();
   }
 
   function adjustQuantity(cartLineId, delta) {
@@ -8277,42 +8396,23 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       .filter((line) => line.quantity > 0));
   }
 
-  function setTipPreset(mode) {
-    setQuote(null);
-    if (mode === "none") {
-      setTipCents(0);
-      setCustomTip("");
-      return;
-    }
-    if (mode === "custom") return;
-    const percent = Number(mode);
-    setTipCents(Math.round(cartTotalCents * (percent / 100)));
-    setCustomTip("");
-  }
-
-  function updateCartLine(cartLineId, changes) {
-    setQuote(null);
-    setCart((current) => current
-      .map((line) => line.cartLineId === cartLineId ? { ...line, ...changes, quantity: Math.max(1, Number(changes.quantity ?? line.quantity) || 1) } : line)
-      .filter((line) => line.quantity > 0));
-  }
-
   function removeCartLine(cartLineId) {
     setQuote(null);
     setCart((current) => current.filter((line) => line.cartLineId !== cartLineId));
   }
 
   async function registerDevice(event) {
-    event.preventDefault();
+    event?.preventDefault?.();
     setSaving("device");
     setError("");
     setNotice("");
     try {
-      const payload = await posApi("/devices", {
-        method: "POST",
+      const payload = await posApi(activeDevice?.id ? `/devices/${activeDevice.id}` : "/devices", {
+        method: activeDevice?.id ? "PATCH" : "POST",
         body: {
           ...deviceForm,
           fingerprint,
+          locationId: deviceForm.locationId || locationId || null,
           cashDrawerId: deviceForm.deviceType === "MAIN_TERMINAL" ? firstCashDrawer?.id || null : null,
           status: "ACTIVE"
         }
@@ -8321,6 +8421,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, payload.device.id);
       setNotice("POS device registered for this restaurant.");
       await loadPos();
+      dispatchWorkflow({
+        type: POS_EVENT.BOOTSTRAP_READY,
+        payload: { hasDevice: true, pinConfigured: Boolean(config?.pinStatus?.configured || newCashierPin) }
+      });
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8381,7 +8485,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         method: "POST",
         body: {
           orderType,
-          tipCents,
+          deliveryZoneId: customer.deliveryZoneId || null,
+          locationId: locationId || activeDevice?.locationId || null,
           lineItems: cart.map((line) => ({
             menuItemId: line.menuItemId,
             quantity: line.quantity,
@@ -8413,7 +8518,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         body: {
           name: customer.name || "Held POS order",
           orderType,
-          customer,
+          locationId: locationId || activeDevice?.locationId || null,
+          customer: { ...customer, tableNumber },
           cart: {
             lineItems: cart.map((line) => ({
               menuItemId: line.menuItemId,
@@ -8430,6 +8536,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setQuote(null);
       setNotice("Order held for later.");
       await loadPos();
+      dispatchWorkflow({ type: POS_EVENT.HOLD_ORDER });
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8437,68 +8544,89 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
-  async function submitOrder() {
+  async function submitOrder({ preserveCart = false, quoteOverride = null } = {}) {
     setSaving("submit");
     setError("");
     setNotice("");
     try {
-      const activeQuote = quote || await calculateQuote();
+      const activeQuote = quoteOverride || quote || await calculateQuote();
       if (!activeQuote) return;
       const payload = await posApi("/orders", {
         method: "POST",
         body: {
           quoteId: activeQuote.id,
-          customer,
-          notes
+          customer: { ...customer, tableNumber },
+          notes: posOperationalNotes(orderType, customer, tableNumber, notes)
         }
       });
       setLastOrder(payload.order);
-      setCart([]);
-      setQuote(null);
+      setLastOrderReceiptKind("guest");
+      if (!preserveCart) {
+        setCart([]);
+        setQuote(null);
+      }
       setNotice("Order sent to the kitchen queue.");
       await onRefresh?.();
+      return payload.order;
     } catch (posError) {
       setError(posError);
+      return null;
     } finally {
       setSaving("");
     }
   }
 
-  async function acceptCashPayment() {
-    if (!lastOrder?.id) return setError("Submit an order before accepting payment.");
+  async function acceptCashPayment(amountCents) {
     setSaving("cash");
     setError("");
     setNotice("");
+    dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
     try {
-      await posApi("/payments/cash", {
+      const paymentQuote = await calculateQuote();
+      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote }) : null);
+      if (!order?.id) throw new Error("The order could not be committed before payment.");
+      const payload = await posApi("/payments/cash", {
         method: "POST",
         body: {
-          orderId: lastOrder.id,
-          amountCents: lastOrder.totalCents
+          orderId: order.id,
+          amountCents
         }
       });
+      setPaymentResult({ success: true, changeDueCents: payload.changeDueCents || 0, message: "Cash payment recorded." });
+      setLastOrderReceiptKind("final");
       setNotice("Cash payment accepted and receipt recorded.");
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order.id } });
       await loadPos();
     } catch (posError) {
       setError(posError);
+      setPaymentResult({ success: false, message: posError?.message || "Cash payment was not recorded." });
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
     } finally {
       setSaving("");
     }
   }
 
   async function requestCardPayment() {
-    if (!lastOrder?.id) return setError("Submit an order before requesting card payment.");
     setSaving("card");
     setError("");
     setNotice("");
+    dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
     try {
+      const paymentQuote = await calculateQuote();
+      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote }) : null);
+      if (!order?.id) throw new Error("The order could not be committed before payment.");
       const payload = await posApi("/payments/card", {
         method: "POST",
-        body: { orderId: lastOrder.id }
+        body: { orderId: order.id }
       });
-      setNotice(payload.message || "Hosted card payment request created.");
+      const message = payload.message || "Continue on the approved payment terminal.";
+      setNotice(message);
+      setPaymentResult({ success: false, message });
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message, requiresHostedPayment: true } });
     } catch (posError) {
       setError(posError);
+      setPaymentResult({ success: false, message: posError?.message || "Card payment could not be started." });
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
     } finally {
       setSaving("");
     }
@@ -8508,6 +8636,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     if (!lastOrder?.id) return setError("Submit an order before printing a guest check.");
     const restaurantBasePath = restaurantKey ? `/restaurant/${restaurantKey}` : "/restaurant";
     navigateInApp(`${restaurantBasePath}/orders/${encodeURIComponent(lastOrder.id)}/receipt?kind=guest`);
+  }
+
+  function openFinalReceipt() {
+    if (!lastOrder?.id) return setError("Complete an order before printing its final receipt.");
+    const restaurantBasePath = restaurantKey ? `/restaurant/${restaurantKey}` : "/restaurant";
+    navigateInApp(`${restaurantBasePath}/orders/${encodeURIComponent(lastOrder.id)}/receipt?kind=final`);
   }
 
   async function setKiosk(enabled) {
@@ -8533,11 +8667,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
-  function recallHeldOrder(session) {
+  function hydrateHeldOrder(session) {
     const lines = session.cartJson?.lineItems || [];
     const itemById = new Map(itemsForRegister.map((item) => [item.id, item]));
     setOrderType(session.orderType || "WALK_IN");
-    setCustomer({ name: session.customerJson?.name || "Walk-in guest", phone: session.customerJson?.phone || "", email: session.customerJson?.email || "" });
+    setCustomer(normalizePosCustomer(session.customerJson));
+    setTableNumber(String(session.customerJson?.tableNumber || ""));
     setCart(lines.map((line) => {
       const item = itemById.get(line.menuItemId) || {};
       const optionIds = line.modifierOptionIds || line.optionIds || [];
@@ -8562,260 +8697,411 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setNotice("Held order loaded into the register.");
   }
 
-  if (!apiOnline) {
-    return (
-      <div className="pos-register">
-        <div className="pos-alert">Live API is required for POS register, payments, cash controls, and kiosk mode.</div>
-      </div>
-    );
+  async function recallHeldOrder(session) {
+    setSaving("recall");
+    setError("");
+    try {
+      const payload = await posApi(`/held-orders/${session.id}/recall`, { method: "POST" });
+      hydrateHeldOrder(payload.session);
+      dispatchWorkflow({ type: POS_EVENT.START_ORDER, payload: { recalledSessionId: session.id } });
+    } catch (posError) {
+      setError(posError);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function saveCashierPin() {
+    setSaving("pin-save");
+    setPinError("");
+    try {
+      const payload = await posApi("/pin", { method: "PATCH", body: { pin: newCashierPin } });
+      setConfig((current) => current ? { ...current, pinStatus: payload.pinStatus } : current);
+      setNewCashierPin("");
+      setNotice("Cashier PIN saved securely.");
+      dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_READY, payload: { hasDevice: Boolean(activeDevice?.id), pinConfigured: true } });
+    } catch (posError) {
+      setPinError(posError?.message || "PIN could not be saved.");
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function unlockRegister(event) {
+    event.preventDefault();
+    setSaving("unlock");
+    setPinError("");
+    try {
+      const payload = await posApi("/unlock", { method: "POST", body: { pin: cashierPin } });
+      if (!payload.posSessionToken) throw new Error("The register did not receive an authorized POS session.");
+      rememberPosSession(payload.posSessionToken);
+      setCashierPin("");
+      setPinLockedUntil(null);
+      dispatchWorkflow({ type: POS_EVENT.UNLOCK_SUCCESS, payload: { unlockedBy: payload.employee, unlockedAt: payload.unlockedAt } });
+      await loadOrderLists(payload.posSessionToken);
+    } catch (posError) {
+      setCashierPin("");
+      setPinLockedUntil(posError?.payload?.lockedUntil || null);
+      setPinError(posError?.message || "Register unlock failed.");
+      dispatchWorkflow({ type: POS_EVENT.UNLOCK_FAILED, payload: { code: posError?.payload?.code } });
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function loadOrderLists(sessionOverride = null) {
+    if (!activeDevice?.id) return;
+    try {
+      const [openPayload, recentPayload, heldPayload] = await Promise.all([
+        posApi("/open-orders", {}, sessionOverride),
+        posApi("/recent-orders", {}, sessionOverride),
+        posApi("/held-orders", {}, sessionOverride)
+      ]);
+      setOpenOrders(openPayload.orders || []);
+      setRecentOrders(recentPayload.orders || []);
+      setHeldOrders(heldPayload.heldOrders || []);
+    } catch (posError) {
+      setError(posError);
+    }
+  }
+
+  function resetCurrentOrder() {
+    setCart([]);
+    setQuote(null);
+    setLastOrder(null);
+    setLastOrderReceiptKind("guest");
+    setAmountReceived("");
+    setPaymentResult(null);
+    setCustomer(emptyPosCustomer());
+    setOrderType("WALK_IN");
+    setNotes("");
+    setTableNumber("");
+    setMobileCartOpen(false);
+    clearPosOrderDraft(restaurantKey);
+  }
+
+  async function reviewCurrentOrder() {
+    const activeQuote = await calculateQuote();
+    if (activeQuote) dispatchWorkflow({ type: POS_EVENT.REVIEW_ORDER });
+  }
+
+  async function sendCurrentOrderToKitchen() {
+    dispatchWorkflow({ type: POS_EVENT.SEND_TO_KITCHEN });
+    const order = await submitOrder({ preserveCart: true });
+    if (!order) {
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: "Order submission failed." } });
+      return;
+    }
+    resetCurrentOrder();
+    setLastOrder(order);
+    setLastOrderReceiptKind("guest");
+    dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order.id } });
+  }
+
+  function finishPaidOrder() {
+    const order = lastOrder;
+    const receiptKind = lastOrderReceiptKind;
+    resetCurrentOrder();
+    setLastOrder(order);
+    setLastOrderReceiptKind(receiptKind);
+    dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
+  }
+
+  function beginNewOrder() {
+    resetCurrentOrder();
+    dispatchWorkflow({ type: POS_EVENT.OPEN_NEW_ORDER });
+  }
+
+  function returnHome() {
+    setMobileCartOpen(false);
+    setPinError("");
+    dispatchWorkflow({ type: POS_EVENT.HOME });
+  }
+
+  function openOrderList(mode) {
+    setOrderListMode(mode);
+    loadOrderLists();
+    dispatchWorkflow({ type: POS_EVENT.VIEW_RECENT_ORDERS });
+  }
+
+  function openOrderReceipt(order) {
+    if (!order?.id) return;
+    setLastOrder(order);
+    const restaurantBasePath = restaurantKey ? `/restaurant/${restaurantKey}` : "/restaurant";
+    navigateInApp(`${restaurantBasePath}/orders/${encodeURIComponent(order.id)}/receipt?kind=guest`);
+  }
+
+  const effectiveWorkflow = !apiOnline ? POS_WORKFLOW.OFFLINE : workflow.value;
+  const restaurantForPos = config?.restaurant || profile;
+  const savingAction = Boolean(saving);
+  let workflowScreen;
+
+  switch (effectiveWorkflow) {
+    case POS_WORKFLOW.BOOTING:
+      workflowScreen = <PosBootScreen restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />;
+      break;
+    case POS_WORKFLOW.OFFLINE:
+      workflowScreen = <PosOfflineScreen hasDraft={cart.length > 0} onRetry={() => loadPos()} />;
+      break;
+    case POS_WORKFLOW.LOCKED:
+      workflowScreen = (
+        <RegisterLockScreen
+          restaurant={restaurantForPos}
+          device={activeDevice}
+          shift={activeShift}
+          online={apiOnline}
+          now={now}
+          onBegin={() => dispatchWorkflow({ type: POS_EVENT.BEGIN_UNLOCK })}
+        />
+      );
+      break;
+    case POS_WORKFLOW.CASHIER_AUTHENTICATION:
+    case POS_WORKFLOW.MANAGER_OVERRIDE:
+      workflowScreen = (
+        <CashierPinScreen
+          pin={cashierPin}
+          setPin={setCashierPin}
+          error={pinError}
+          lockedUntil={pinLockedUntil}
+          saving={saving === "unlock"}
+          onSubmit={unlockRegister}
+          onCancel={lockRegister}
+        />
+      );
+      break;
+    case POS_WORKFLOW.REGISTER_HOME:
+      workflowScreen = (
+        <RegisterHomeScreen
+          restaurant={restaurantForPos}
+          device={activeDevice}
+          shift={activeShift}
+          heldCount={heldOrders.length}
+          openCount={openOrders.length}
+          recentCount={recentOrders.length}
+          onNewOrder={beginNewOrder}
+          onHeld={() => dispatchWorkflow({ type: POS_EVENT.VIEW_HELD_ORDERS })}
+          onOpen={() => openOrderList("open")}
+          onRecent={() => openOrderList("recent")}
+          onReprint={() => openOrderList("recent")}
+          onShift={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SHIFT })}
+          onSettings={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
+          onManager={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
+          onLock={lockRegister}
+        />
+      );
+      break;
+    case POS_WORKFLOW.NEW_ORDER_SETUP:
+      workflowScreen = (
+        <NewOrderSetupScreen
+          orderType={orderType}
+          setOrderType={(value) => { setOrderType(value); setQuote(null); }}
+          customer={customer}
+          setCustomer={setCustomer}
+          tableNumber={tableNumber}
+          setTableNumber={setTableNumber}
+          notes={notes}
+          setNotes={setNotes}
+          locations={config?.locations || []}
+          deliveryZones={config?.deliveryZones || []}
+          orderFieldPolicy={config?.orderFieldPolicy || {}}
+          locationId={locationId}
+          setLocationId={(value) => { setLocationId(value); setQuote(null); }}
+          onStart={() => dispatchWorkflow({ type: POS_EVENT.START_ORDER })}
+          onBack={returnHome}
+        />
+      );
+      break;
+    case POS_WORKFLOW.ORDER_ENTRY:
+    case POS_WORKFLOW.ITEM_CUSTOMIZATION:
+      workflowScreen = (
+        <OrderEntryScreen
+          items={visibleItems}
+          categories={categoriesForRegister}
+          selectedCategory={selectedCategory}
+          setSelectedCategory={setSelectedCategory}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          cart={cart}
+          cartItemCount={cartItemCount}
+          cartTotalCents={cartTotalCents}
+          mobileCartOpen={mobileCartOpen}
+          setMobileCartOpen={setMobileCartOpen}
+          onAdd={addToCart}
+          onIncrease={(cartLineId) => adjustQuantity(cartLineId, 1)}
+          onDecrease={(cartLineId) => adjustQuantity(cartLineId, -1)}
+          onRemove={removeCartLine}
+          onClear={() => { setCart([]); setQuote(null); }}
+          onReview={reviewCurrentOrder}
+          onHold={holdOrder}
+          onHome={returnHome}
+          saving={savingAction}
+          emptyTitle={posEmptyTitle}
+          emptyDetail={posEmptyDetail}
+          onImageError={handleSafeImageError}
+        />
+      );
+      break;
+    case POS_WORKFLOW.ORDER_REVIEW:
+      workflowScreen = (
+        <OrderReviewScreen
+          cart={cart}
+          quote={quote}
+          orderType={orderType}
+          customer={customer}
+          notes={notes}
+          onEdit={() => dispatchWorkflow({ type: POS_EVENT.EDIT_ORDER })}
+          onSend={sendCurrentOrderToKitchen}
+          onPay={() => dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT })}
+          onHold={holdOrder}
+          saving={savingAction}
+        />
+      );
+      break;
+    case POS_WORKFLOW.PAYMENT_SELECTION:
+      workflowScreen = (
+        <PaymentSelectionScreen
+          quote={quote}
+          canAcceptCash={canAcceptCash}
+          canAcceptCard={canAcceptCard}
+          cashDisabledReason={cashDisabledReason}
+          amountReceived={amountReceived}
+          setAmountReceived={setAmountReceived}
+          saving={savingAction}
+          error={error?.message || (typeof error === "string" ? error : "")}
+          onBack={() => dispatchWorkflow({ type: POS_EVENT.EDIT_ORDER })}
+          onCash={acceptCashPayment}
+          onCard={requestCardPayment}
+        />
+      );
+      break;
+    case POS_WORKFLOW.PAYMENT_PROCESSING:
+      workflowScreen = <PosBootScreen restaurantName="payment" />;
+      break;
+    case POS_WORKFLOW.PAYMENT_SUCCESS:
+    case POS_WORKFLOW.PAYMENT_FAILED:
+      workflowScreen = (
+        <PaymentResultScreen
+          success={effectiveWorkflow === POS_WORKFLOW.PAYMENT_SUCCESS}
+          order={lastOrder}
+          changeDueCents={paymentResult?.changeDueCents || 0}
+          message={paymentResult?.message || workflow.context.message}
+          onComplete={finishPaidOrder}
+          onRetry={() => dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT })}
+        />
+      );
+      break;
+    case POS_WORKFLOW.SEND_TO_KITCHEN:
+      workflowScreen = <PosBootScreen restaurantName="Kitchen submission" />;
+      break;
+    case POS_WORKFLOW.PRINTING:
+      workflowScreen = <PosBootScreen restaurantName="receipt" />;
+      break;
+    case POS_WORKFLOW.ORDER_COMPLETE:
+      workflowScreen = (
+        <OrderCompleteScreen
+          order={lastOrder}
+          onPrint={lastOrderReceiptKind === "final" ? openFinalReceipt : openGuestCheck}
+          printLabel={lastOrderReceiptKind === "final" ? "Print final receipt" : "Print Guest Check"}
+          onNewOrder={beginNewOrder}
+          onHome={returnHome}
+        />
+      );
+      break;
+    case POS_WORKFLOW.HELD_ORDERS:
+      workflowScreen = (
+        <PosOrdersScreen
+          eyebrow="Order recovery"
+          title="Held orders"
+          orders={heldOrders}
+          emptyText="No held orders at this register location."
+          onBack={returnHome}
+          onRecall={recallHeldOrder}
+        />
+      );
+      break;
+    case POS_WORKFLOW.RECENT_ORDERS:
+      workflowScreen = (
+        <PosOrdersScreen
+          eyebrow={orderListMode === "open" ? "In progress" : "Order history"}
+          title={orderListMode === "open" ? "Open orders" : "Recent orders"}
+          orders={orderListMode === "open" ? openOrders : recentOrders}
+          emptyText={orderListMode === "open" ? "No open orders at this location." : "No recent orders at this location."}
+          onBack={returnHome}
+          onSelect={openOrderReceipt}
+        />
+      );
+      break;
+    case POS_WORKFLOW.SHIFT_MANAGEMENT:
+      workflowScreen = (
+        <ShiftManagementScreen
+          shift={activeShift}
+          drawer={currentCashDrawer}
+          openingCashCents={openingCashCents}
+          setOpeningCashCents={setOpeningCashCents}
+          saving={savingAction}
+          onOpen={openRegisterShift}
+          onClose={closeRegisterShift}
+          onBack={returnHome}
+        />
+      );
+      break;
+    case POS_WORKFLOW.REGISTER_SETTINGS:
+      workflowScreen = (
+        <RegisterSettingsScreen
+          device={activeDevice}
+          deviceForm={deviceForm}
+          setDeviceForm={setDeviceForm}
+          locations={config?.locations || []}
+          saving={savingAction}
+          ownerOperator={ownerOperator}
+          pinConfigured={Boolean(config?.pinStatus?.configured)}
+          pinValue={newCashierPin}
+          setPinValue={setNewCashierPin}
+          onSavePin={saveCashierPin}
+          onRegister={registerDevice}
+          onKiosk={() => activeDevice?.kioskModeEnabled ? setShowKioskExit(true) : setKiosk(true)}
+          onBack={returnHome}
+        />
+      );
+      break;
+    case POS_WORKFLOW.RECOVERY:
+    default:
+      workflowScreen = (
+        <RecoveryScreen
+          message={workflow.context.message || error?.message || (typeof error === "string" ? error : "")}
+          onRetry={() => { dispatchWorkflow({ type: POS_EVENT.RECOVER }); loadPos(); }}
+          onLock={lockRegister}
+        />
+      );
+      break;
   }
 
   return (
-    <div className={`pos-register ${kioskLocked ? "kiosk-active" : ""}`}>
-      <div className="pos-command-bar">
-        <div>
-          <p className="restaurant-shell-breadcrumb">{kioskOnly ? "Secure Kiosk" : "Restaurant POS"}</p>
-          <h2>{kioskOnly ? "Counter register" : profile.businessName || profile.name || "POS register"}</h2>
-          <p>{activeShift?.status === "OPEN" ? `Shift opened ${new Date(activeShift.openedAt).toLocaleTimeString()}` : "Register device, shift, menu, and checkout in one flow."}</p>
+    <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""}`}>
+      <div className="pos-workflow-topline">
+        <CashierBadge user={workflow.context.unlockedBy || user} />
+        <div className="pos-workflow-status">
+          <span className={apiOnline ? "online" : "offline"}>{apiOnline ? "Online" : "Offline"}</span>
+          <span>{activeDevice?.name || "Register not configured"}</span>
+          <span>{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
         </div>
-        <div className="pos-command-actions">
-          {kioskLocked ? <button className="button-muted" type="button" onClick={() => setShowKioskExit(true)}><Shield size={18} />Manager exit</button> : null}
-          {!kioskOnly && ownerOperator && canOpenKiosk ? <a className="button-muted" href={restaurantKey ? `/restaurant/${restaurantKey}/kiosk` : "/restaurant/kiosk"}><Shield size={18} />Open Kiosk</a> : null}
-          {!kioskOnly ? <button className="button-muted" type="button" onClick={() => loadPos()} disabled={loading}><RefreshCw size={18} />Refresh</button> : null}
-        </div>
-      </div>
-
-      <PosNotice error={error} user={user} onRetry={() => loadPos()} subscriptionHref={subscriptionHref} />
-      {notice ? <div className="success-box">{notice}</div> : null}
-      {posMenuState.status === POS_MENU_STATUS.STALE ? (
-        <div className="pos-menu-state stale" role="status">
-          Showing the last synced POS menu. Refresh failed, but the current order and menu remain available.
-        </div>
-      ) : null}
-      {posMenuState.status === POS_MENU_STATUS.REFRESHING ? (
-        <div className="pos-menu-state refreshing" role="status">
-          Refreshing menu in the background...
-        </div>
-      ) : null}
-      {posMenuState.status === POS_MENU_STATUS.ENTITLEMENT_DENIED ? (
-        <div className="pos-menu-state denied" role="alert">
-          POS menu access is restricted by the current subscription or tenant status.
-        </div>
-      ) : null}
-
-      {loading && !loadedOnceRef.current ? <div className="pos-loading-panel">Loading POS register...</div> : null}
-
-      <div className="pos-status-strip" aria-label="POS register status">
-        {statusChips.map(({ icon: Icon, label, value, tone }) => (
-          <div className={`pos-status-chip ${tone}`} key={label}>
-            <Icon size={17} aria-hidden="true" />
-            <span>{label}</span>
-            <strong>{value}</strong>
-          </div>
-        ))}
-      </div>
-
-      <div className="pos-layout">
-        <section className="pos-catalog panel">
-          <div className="pos-menu-toolbar">
-            <h3 className="panel-title">Menu</h3>
-            <label className="pos-menu-search">
-              <Search size={17} aria-hidden="true" />
-              <span className="sr-only">Search POS menu items</span>
-              <input value={searchQuery} placeholder="Search items..." onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearchQuery(""); }} />
-              {searchQuery ? <button type="button" onClick={() => setSearchQuery("")} aria-label="Clear search"><X size={16} /></button> : null}
-            </label>
-            <select className="select pos-category-select" aria-label="Filter by menu category" value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}>
-              <option value="all">All categories</option>
-              {categoriesForRegister.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </select>
-          </div>
-          <div className="pos-category-pills" aria-label="POS menu categories">
-            <button className={`pos-category-pill ${selectedCategory === "all" ? "active" : ""}`} type="button" aria-pressed={selectedCategory === "all"} onClick={() => setSelectedCategory("all")}>All</button>
-            {categoriesForRegister.map((category) => (
-              <button className={`pos-category-pill ${selectedCategory === category.id ? "active" : ""}`} type="button" aria-pressed={selectedCategory === category.id} key={category.id} onClick={() => setSelectedCategory(category.id)}>
-                {category.name}
-              </button>
-            ))}
-          </div>
-          {visibleItems.length === 0 ? (
-            <EmptyState
-              title={posEmptyTitle}
-              detail={posEmptyDetail}
-            />
-          ) : (
-            <div className="pos-item-grid">
-              {visibleItems.map((item) => (
-                <button className="pos-menu-item" type="button" key={item.id} onClick={() => addToCart(item)}>
-                  {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={handleSafeImageError} /> : <span className="pos-menu-item-fallback"><Store size={20} /></span>}
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>{itemCategoryName(item)}</small>
-                  </span>
-                  <b>{money(item.priceCents)}</b>
-                  {normalizePosModifierGroups(item).length ? <em className="customizable">Customizable</em> : null}
-                  {item.featured || item.recommended ? <em>Popular</em> : null}
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <aside className={`pos-cart panel ${mobileCartOpen ? "open" : ""}`}>
-          <div className="pos-section-head">
-            <div>
-              <h3 className="panel-title">Current order</h3>
-              <p>{cartItemCount ? `${cartItemCount} item${cartItemCount === 1 ? "" : "s"} in progress` : "Tap menu items to start."}</p>
-            </div>
-            <div className="pos-cart-head-actions">
-              <button className="button-muted pos-mobile-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button>
-              <button className="button-muted" type="button" onClick={() => { setCart([]); setQuote(null); setLastOrder(null); }} disabled={!cart.length}><Trash2 size={16} />Clear</button>
-            </div>
-          </div>
-          <div className="pos-cart-body">
-          <div className="pos-form-grid">
-            <label>Order type
-              <select className="select mt-1" value={orderType} onChange={(event) => { setOrderType(event.target.value); setQuote(null); }}>
-                {posOrderTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="pos-tip-panel">
-              <span>Tip</span>
-              <div className="pos-tip-buttons">
-                {["none", "10", "15", "20"].map((mode) => <button className="seg" type="button" key={mode} onClick={() => setTipPreset(mode)}>{mode === "none" ? "No tip" : `${mode}%`}</button>)}
-                <button className="seg" type="button" onClick={() => setTipPreset("custom")}>Custom</button>
-              </div>
-              <input className="input mt-2" inputMode="decimal" placeholder="$0.00" value={customTip} onChange={(event) => { setCustomTip(event.target.value); setTipCents(centsFromDollarInput(event.target.value)); setQuote(null); }} aria-label="Custom tip amount" />
-            </div>
-          </div>
-          <div className="pos-form-grid mt-3">
-            <label>Guest name
-              <input className="input mt-1" value={customer.name} onChange={(event) => setCustomer({ ...customer, name: event.target.value })} />
-            </label>
-            <label>Phone
-              <input className="input mt-1" value={customer.phone} onChange={(event) => setCustomer({ ...customer, phone: event.target.value })} />
-            </label>
-          </div>
-          <label className="mt-3 block text-sm font-semibold text-slate-600">Order notes
-            <textarea className="input mt-1 min-h-20 py-2" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          </label>
-
-          <div className="pos-cart-lines">
-            {cart.length === 0 ? <EmptyState title="Cart is empty" detail="Select menu items to start a walk-in, dine-in, pickup, or delivery order." /> : cart.map((line) => (
-              <div className="pos-cart-line" key={line.cartLineId}>
-                <div>
-                  <strong>{line.name}</strong>
-                  <small>{money(line.priceCents)} each / {money((line.priceCents || 0) * line.quantity)}</small>
-                  {line.modifiers?.length ? (
-                    <ul className="pos-cart-modifiers" aria-label={`${line.name} modifiers`}>
-                      {line.modifiers.map((modifier) => (
-                        <li key={modifier.optionId || modifier.id}>
-                          {modifier.groupName ? `${modifier.groupName}: ` : ""}{modifier.name}
-                          {modifier.priceCents ? ` +${money(modifier.priceCents)}` : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  {line.specialInstructions ? <small className="pos-cart-instructions">Note: {line.specialInstructions}</small> : null}
-                </div>
-                <div className="pos-qty-stepper">
-                  <button type="button" onClick={() => adjustQuantity(line.cartLineId, -1)} aria-label={`Decrease ${line.name}`}><Minus size={14} /></button>
-                  <input className="input" type="number" min="1" value={line.quantity} onChange={(event) => setQuantity(line.cartLineId, event.target.value)} aria-label={`Quantity for ${line.name}`} />
-                  <button type="button" onClick={() => adjustQuantity(line.cartLineId, 1)} aria-label={`Increase ${line.name}`}><Plus size={14} /></button>
-                </div>
-                <button className="icon-button" type="button" onClick={() => removeCartLine(line.cartLineId)} aria-label={`Remove ${line.name}`}><Trash2 size={16} /></button>
-              </div>
-            ))}
-          </div>
-
-          </div>
-          <div className="pos-cart-footer">
-          <div className="pos-total-box">
-            <span>Server quote</span>
-            <strong>{money(quote?.totalCents ?? cartTotalCents)}</strong>
-            {quote ? <small>Tax {money(quote.taxCents)} · expires {new Date(quote.expiresAt).toLocaleTimeString()}</small> : <small>Recalculate before sending to kitchen.</small>}
-            {quote ? <small className="pos-fee-disclosure">{paymentFeeDisclosureText(quote)}</small> : null}
-          </div>
-
-          <div className="pos-action-grid">
-            <button className="button-muted justify-center" type="button" onClick={calculateQuote} disabled={saving === "quote" || !cart.length}><ReceiptText size={16} />Quote</button>
-            <button className="button-muted justify-center" type="button" onClick={holdOrder} disabled={saving === "hold" || !cart.length}><Clock size={16} />Hold</button>
-            <button className="button-primary justify-center" type="button" onClick={submitOrder} disabled={saving === "submit" || !cart.length}><ChefHat size={16} />Send to kitchen</button>
-          </div>
-
-          {lastOrder ? (
-            <div className="pos-last-order">
-              <strong>{lastOrder.orderNumber}</strong>
-              <span>{money(lastOrder.totalCents)} · {readable(lastOrder.status || "pending")}</span>
-              <button className="button-muted mt-3 w-full justify-center" type="button" onClick={openGuestCheck}><ReceiptText size={16} />Print Guest Check</button>
-              <div className="pos-action-grid mt-3">
-                <button className="button-muted justify-center" type="button" onClick={acceptCashPayment} disabled={!canAcceptCash || saving === "cash"}><ReceiptText size={16} />Cash</button>
-                <button className="button-muted justify-center" type="button" onClick={requestCardPayment} disabled={!canAcceptCard || saving === "card"}><CreditCard size={16} />Card</button>
-              </div>
-              {!canAcceptCash && cashDisabledReason ? <small className="field-error">{cashDisabledReason}</small> : null}
-            </div>
+        <div className="pos-workflow-topline-actions">
+          {effectiveWorkflow !== POS_WORKFLOW.BOOTING && effectiveWorkflow !== POS_WORKFLOW.OFFLINE ? (
+            <button className="icon-button" type="button" onClick={lockRegister} aria-label="Lock register"><Shield size={18} /></button>
           ) : null}
-          </div>
-        </aside>
+          <button className="icon-button" type="button" onClick={() => loadPos()} disabled={loading} aria-label="Refresh register"><RefreshCw size={18} /></button>
+        </div>
       </div>
 
-      {!kioskOnly && ownerOperator ? <div className="pos-admin-grid">
-        <section className="panel">
-          <h3 className="panel-title" id="pos-device-controls">Device controls</h3>
-          <form className="pos-device-form" onSubmit={registerDevice}>
-            <label>Device name
-              <input className="input mt-1" value={deviceForm.name} onChange={(event) => setDeviceForm({ ...deviceForm, name: event.target.value })} />
-            </label>
-            <label>Device type
-              <select className="select mt-1" value={deviceForm.deviceType} onChange={(event) => setDeviceForm({ ...deviceForm, deviceType: event.target.value })}>
-                {posDeviceTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label className="seg mt-6"><input type="checkbox" checked={deviceForm.cardPaymentsEnabled} onChange={(event) => setDeviceForm({ ...deviceForm, cardPaymentsEnabled: event.target.checked })} />Card payments</label>
-            <button className="button-primary mt-6 justify-center" type="submit" disabled={saving === "device"}><Shield size={16} />Register device</button>
-          </form>
-          <div className="pos-kiosk-controls">
-            <label>Kiosk exit PIN
-              <input className="input mt-1" type="password" autoComplete="new-password" value={kioskPin} onChange={(event) => setKioskPin(event.target.value)} />
-            </label>
-            <button className="button-muted justify-center" type="button" onClick={() => setKiosk(true)} disabled={!activeDevice || saving === "kiosk"}><Shield size={16} />Enable kiosk</button>
-          </div>
-        </section>
+      {error && ![POS_WORKFLOW.CASHIER_AUTHENTICATION, POS_WORKFLOW.PAYMENT_SELECTION, POS_WORKFLOW.PAYMENT_FAILED].includes(effectiveWorkflow) ? (
+        <PosNotice error={error} user={user} onRetry={() => loadPos()} subscriptionHref={subscriptionHref} />
+      ) : null}
+      {notice ? <div className="success-box" role="status">{notice}</div> : null}
+      {posMenuState.status === POS_MENU_STATUS.STALE ? <div className="pos-menu-state stale" role="status">Showing the last synced POS menu while refresh is unavailable.</div> : null}
+      {posMenuState.status === POS_MENU_STATUS.REFRESHING ? <div className="pos-menu-state refreshing" role="status">Refreshing the menu in the background...</div> : null}
+      {workflow.invalidTransition && import.meta.env.DEV ? <div className="pos-menu-state stale" role="status">Development warning: blocked invalid transition from {workflow.invalidTransition.from} via {workflow.invalidTransition.event}.</div> : null}
 
-        <section className="panel">
-          <h3 className="panel-title">Shift and cash drawer</h3>
-          <div className="pos-device-form">
-            <label>Opening cash cents
-              <input className="input mt-1" type="number" min="0" value={openingCashCents} onChange={(event) => setOpeningCashCents(Number(event.target.value) || 0)} />
-            </label>
-            <div className="pos-mini-card">
-              <strong>{currentCashDrawer?.name || "No cash drawer"}</strong>
-              <span>{currentCashDrawer ? `${readable(currentCashDrawer.status)} · ${money(currentCashDrawer.currentBalanceCents)}` : "Cash drawer required for cash payments."}</span>
-            </div>
-            {activeShift ? <button className="button-muted justify-center" type="button" onClick={closeRegisterShift} disabled={saving === "shift-close"}>Close shift</button> : <button className="button-primary justify-center" type="button" onClick={openRegisterShift} disabled={!activeDevice || saving === "shift"}>Open shift</button>}
-          </div>
-        </section>
-
-        <section className="panel">
-          <h3 className="panel-title">Held orders</h3>
-          {heldOrders.length === 0 ? <EmptyState title="No held orders" detail="Held POS carts will appear here." /> : (
-            <div className="pos-held-list">
-              {heldOrders.map((session) => (
-                <button className="pos-held-order" type="button" key={session.id} onClick={() => recallHeldOrder(session)}>
-                  <strong>{session.name}</strong>
-                  <span>{readable(session.orderType)} · {new Date(session.updatedAt).toLocaleTimeString()}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-      </div> : null}
-
-      <button className="pos-mobile-cart-summary" type="button" onClick={() => setMobileCartOpen(true)}>
-        <span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span>
-        <strong>{money(quote?.totalCents ?? cartTotalCents)}</strong>
-        <span>View order</span>
-      </button>
+      {workflowScreen}
 
       {customizingItem ? (
         <div className="pos-modifier-dialog" role="dialog" aria-modal="true" aria-label={`Customize ${customizingItem.name}`}>
@@ -8835,10 +9121,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
                 const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
                 return (
                   <fieldset className="pos-modifier-group" key={group.id}>
-                    <legend>
-                      <strong>{group.name}</strong>
-                      <span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span>
-                    </legend>
+                    <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
                     <div className="pos-modifier-options">
                       {group.options.map((option) => {
                         const selected = selectedIds.includes(option.id);
@@ -8881,7 +9164,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     </div>
   );
 }
-
 function RestaurantPosPage({ children }) {
   return <div className="restaurant-owner-page restaurant-owner-page-pos">{children}</div>;
 }

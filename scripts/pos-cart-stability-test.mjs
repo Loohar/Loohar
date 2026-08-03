@@ -4,6 +4,7 @@ import { join } from "node:path";
 const root = process.cwd();
 const mode = process.argv[2] || "all";
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
+const screens = readFileSync(join(root, "apps/web/src/apps/pos/PosWorkflowScreens.jsx"), "utf8");
 const styles = readFileSync(join(root, "apps/web/src/styles/index.css"), "utf8");
 const failures = [];
 
@@ -26,35 +27,34 @@ function includesAll(content, values) {
 }
 
 if (mode === "all" || mode === "sticky") {
-  assertCheck(includesAll(app, [
-    "pos-cart-body",
-    "pos-cart-footer",
+  assertCheck(includesAll(screens, [
+    "pos-entry-cart-lines",
+    "pos-entry-cart-footer",
     "Current order",
-    "Server quote",
-    "Send to kitchen"
-  ]), "Current Order separates scrollable body from persistent quote/actions footer");
+    "Estimated subtotal",
+    "Review order"
+  ]), "Current Order separates scrollable item lines from persistent review and hold actions");
   assertCheck(includesAll(styles, [
-    "--pos-current-order-top",
     "@media (min-width: 1024px)",
     "position: sticky",
-    "max-height: calc(100dvh",
-    "overflow: hidden",
-    "lg:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.85fr)]"
+    "max-height: calc(100vh",
+    "overflow-y: auto",
+    "lg:grid-cols-[minmax(0,1fr)_360px]",
+    "xl:grid-cols-[minmax(0,1fr)_400px]"
   ]), "Desktop/tablet POS cart is sticky and bounded without moving during page scroll");
 }
 
 if (mode === "all" || mode === "scroll") {
   assertCheck(includesAll(styles, [
-    ".pos-cart-body",
-    "overflow-y-auto",
-    ".pos-cart-footer",
-    "shrink-0",
-    ".pos-mobile-cart-summary",
-    "lg:hidden",
+    ".pos-entry-cart-lines",
+    "overflow-y: auto",
+    ".pos-entry-cart-footer",
+    ".pos-entry-mobile-summary",
     "@media (max-width: 1023px)",
-    ".pos-cart.open",
+    ".pos-entry-cart.open",
     "translateY(110%)"
   ]), "POS cart body scrolls internally and mobile cart remains a drawer");
+  assertCheck(includesAll(screens, ["onClick={() => onAdd(item)}", 'onClick={() => setMobileCartOpen(true)}', 'onClick={() => setMobileCartOpen(false)}']), "Adding a mobile menu item does not force the order drawer open");
 }
 
 if (failures.length) {

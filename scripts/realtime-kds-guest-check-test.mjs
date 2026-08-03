@@ -13,6 +13,7 @@ const restaurantRoutes = read("apps/api/src/routes/restaurant.js");
 const orderRoutes = read("apps/api/src/routes/orders.js");
 const server = read("apps/api/src/server.js");
 const app = read("apps/web/src/App.jsx");
+const workflowScreens = read("apps/web/src/apps/pos/PosWorkflowScreens.jsx");
 const schema = read("apps/api/prisma/schema.prisma");
 const migrationPath = join(root, "apps/api/prisma/migrations/20260801090000_realtime_kds_order_location/migration.sql");
 const migration = existsSync(migrationPath) ? readFileSync(migrationPath, "utf8") : "";
@@ -69,7 +70,7 @@ function testGuestCheck() {
   check(schema.includes("GUEST_CHECK") && migration.includes("ADD VALUE IF NOT EXISTS 'GUEST_CHECK'"), "Guest Check is persisted as a distinct receipt kind");
   check(includesAll(restaurantRoutes, ["print-guest-check", "guestCheckText", 'printOrder(req, res, next, "guest")']), "Restaurant printing API provides a dedicated Guest Check route");
   check(orderRoutes.includes('["guest", "guest_check"].includes(requested)') && orderRoutes.includes('return "guest"'), "Order receipt API accepts the Guest Check kind");
-  check(includesAll(app, ["openGuestCheck", "GUEST CHECK - UNPAID", "Print Guest Check"]), "POS exposes and labels the prepayment Guest Check separately");
+  check(includesAll(`${app}\n${workflowScreens}`, ["openGuestCheck", "GUEST CHECK - UNPAID", "Print Guest Check"]), "POS exposes and labels the prepayment Guest Check separately");
 }
 
 function testReceiptPaymentState() {

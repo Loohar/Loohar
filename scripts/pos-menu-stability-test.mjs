@@ -61,7 +61,7 @@ if (mode === "all" || mode === "refresh") {
     "POS_MENU_STATUS.STALE",
     "refreshError",
     "Showing the last synced POS menu",
-    "loading && !loadedOnceRef.current",
+    "hadSuccessfulMenu ? POS_MENU_STATUS.REFRESHING",
     "canKeepLastMenu"
   ]), "POS refresh preserves the visible menu during transient failures");
 }

@@ -3903,6 +3903,520 @@ textarea {
     @apply my-2 items-start;
   }
 
+  .pos-enterprise-register {
+    @apply min-w-0 gap-4 pb-6;
+  }
+
+  .pos-workflow-topline {
+    @apply flex min-h-14 flex-wrap items-center gap-3 rounded-md border border-line bg-white px-4 py-2 shadow-soft;
+  }
+
+  .pos-workflow-status {
+    @apply flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs font-black text-slate-500;
+  }
+
+  .pos-workflow-status span {
+    @apply rounded-full bg-slate-100 px-3 py-1.5;
+  }
+
+  .pos-workflow-status .online {
+    @apply bg-emerald-100 text-emerald-700;
+  }
+
+  .pos-workflow-status .offline {
+    @apply bg-amber-100 text-amber-800;
+  }
+
+  .pos-workflow-topline-actions,
+  .pos-workflow-header-actions,
+  .pos-workflow-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .pos-cashier-badge {
+    @apply inline-flex min-h-10 items-center gap-2 text-sm font-black text-ink;
+  }
+
+  .pos-workflow-header {
+    @apply flex flex-col justify-between gap-4 border-b border-line pb-4 sm:flex-row sm:items-start;
+  }
+
+  .pos-workflow-header h2 {
+    @apply text-2xl font-black text-ink md:text-3xl;
+  }
+
+  .pos-workflow-header > div:first-child > p:last-child {
+    @apply mt-1 max-w-3xl text-sm font-semibold text-slate-500;
+  }
+
+  .pos-workflow-screen,
+  .pos-home-screen {
+    @apply min-h-[520px] rounded-md border border-line bg-white p-4 shadow-soft md:p-6;
+  }
+
+  .pos-boot-screen,
+  .pos-centered-screen,
+  .pos-pin-screen {
+    @apply flex min-h-[520px] flex-col items-center justify-center gap-4 rounded-md border border-line bg-white p-6 text-center shadow-soft;
+  }
+
+  .pos-boot-screen h2,
+  .pos-centered-screen h2,
+  .pos-pin-screen h2 {
+    @apply text-2xl font-black text-ink md:text-3xl;
+  }
+
+  .pos-boot-screen p,
+  .pos-centered-screen > p,
+  .pos-pin-screen > p {
+    @apply max-w-xl text-sm font-semibold leading-6 text-slate-500;
+  }
+
+  .pos-boot-mark {
+    @apply grid h-16 w-16 place-items-center rounded-md bg-mint/10 text-mint;
+  }
+
+  .pos-boot-lines {
+    @apply mt-4 grid w-full max-w-md gap-2;
+  }
+
+  .pos-boot-lines span {
+    @apply h-3 animate-pulse rounded bg-slate-100;
+  }
+
+  .pos-boot-lines span:nth-child(2) {
+    @apply w-4/5;
+  }
+
+  .pos-boot-lines span:nth-child(3) {
+    @apply w-3/5;
+  }
+
+  .pos-centered-screen.success > svg {
+    @apply text-emerald-600;
+  }
+
+  .pos-centered-screen.failure > svg {
+    @apply text-rose-600;
+  }
+
+  .pos-lock-screen {
+    @apply flex min-h-[620px] w-full flex-col items-center justify-between gap-8 rounded-md border border-line bg-ink px-6 py-10 text-center text-white shadow-soft transition hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-mint/30;
+  }
+
+  .pos-lock-brand,
+  .pos-lock-details,
+  .pos-touch-unlock {
+    @apply flex flex-wrap items-center justify-center gap-3;
+  }
+
+  .pos-lock-brand {
+    @apply text-xl font-black;
+  }
+
+  .pos-lock-clock strong {
+    @apply block text-6xl font-black md:text-8xl;
+  }
+
+  .pos-lock-clock span {
+    @apply mt-2 block text-base font-bold text-slate-300;
+  }
+
+  .pos-lock-details span {
+    @apply inline-flex min-h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-bold;
+  }
+
+  .pos-lock-details .good {
+    @apply border-emerald-400/40 text-emerald-300;
+  }
+
+  .pos-lock-details .warn {
+    @apply border-amber-400/40 text-amber-300;
+  }
+
+  .pos-touch-unlock {
+    @apply min-h-12 rounded-md bg-white px-6 py-3 font-black text-ink;
+  }
+
+  .pos-pin-form {
+    @apply grid w-full max-w-sm gap-3;
+  }
+
+  .pos-pin-form label,
+  .pos-setup-fields label,
+  .pos-settings-grid label,
+  .pos-cash-input,
+  .pos-payment-method label {
+    @apply grid gap-1.5 text-left text-sm font-bold text-slate-600;
+  }
+
+  .pos-pin-form input {
+    @apply h-16 text-center text-3xl tracking-[0.5em];
+  }
+
+  .pos-home-grid {
+    @apply mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3;
+  }
+
+  .pos-home-action {
+    @apply grid min-h-40 content-center justify-items-start gap-2 rounded-md border border-line bg-slate-50 p-5 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+  }
+
+  .pos-home-action svg {
+    @apply text-mint;
+  }
+
+  .pos-home-action strong {
+    @apply text-lg font-black text-ink;
+  }
+
+  .pos-home-action span {
+    @apply text-sm font-semibold text-slate-500;
+  }
+
+  .pos-home-action.primary {
+    @apply border-mint bg-mint text-white;
+  }
+
+  .pos-home-action.primary svg,
+  .pos-home-action.primary strong,
+  .pos-home-action.primary span {
+    @apply text-white;
+  }
+
+  .pos-order-type-grid {
+    @apply mt-6 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7;
+  }
+
+  .pos-order-type-grid button,
+  .pos-entry-categories button {
+    @apply min-h-11 rounded-md border border-line bg-white px-4 py-2 text-sm font-black text-slate-600 transition hover:border-mint hover:text-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+  }
+
+  .pos-order-type-grid button.active,
+  .pos-entry-categories button.active {
+    @apply border-mint bg-mint text-white;
+  }
+
+  .pos-setup-fields,
+  .pos-settings-grid {
+    @apply mt-6 grid gap-4 md:grid-cols-2;
+  }
+
+  .pos-setup-fields .wide,
+  .pos-settings-grid .wide {
+    @apply md:col-span-2;
+  }
+
+  .pos-workflow-actions {
+    @apply mt-6 justify-end;
+  }
+
+  .pos-workflow-actions.split {
+    @apply justify-between;
+  }
+
+  .pos-entry-screen {
+    @apply relative min-w-0;
+  }
+
+  .pos-entry-layout {
+    @apply mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px];
+  }
+
+  .pos-entry-menu {
+    @apply min-w-0 rounded-md border border-line bg-white p-4 shadow-soft;
+  }
+
+  .pos-entry-toolbar {
+    @apply grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px];
+  }
+
+  .pos-entry-toolbar label {
+    @apply flex min-h-11 items-center gap-2 rounded-md border border-line bg-slate-50 px-3 text-slate-400;
+  }
+
+  .pos-entry-toolbar input {
+    @apply min-w-0 flex-1 border-0 bg-transparent p-0 outline-none focus:ring-0;
+  }
+
+  .pos-entry-categories {
+    @apply my-4 flex gap-2 overflow-x-auto pb-1;
+  }
+
+  .pos-entry-categories button {
+    @apply shrink-0;
+  }
+
+  .pos-entry-items {
+    @apply grid gap-3 sm:grid-cols-2 2xl:grid-cols-3;
+  }
+
+  .pos-entry-items > button {
+    @apply relative grid min-h-[112px] grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+  }
+
+  .pos-entry-items img,
+  .pos-entry-item-fallback {
+    @apply h-[72px] w-[72px] rounded-md object-cover;
+  }
+
+  .pos-entry-item-fallback {
+    @apply grid place-items-center bg-mint/10 text-mint;
+  }
+
+  .pos-entry-items strong,
+  .pos-entry-items small {
+    @apply block;
+  }
+
+  .pos-entry-items strong {
+    @apply font-black text-ink;
+  }
+
+  .pos-entry-items small {
+    @apply mt-1 text-xs font-bold text-slate-500;
+  }
+
+  .pos-entry-items b {
+    @apply absolute bottom-3 right-3 font-black text-mint;
+  }
+
+  .pos-entry-items em {
+    @apply absolute right-3 top-3 rounded-full bg-mint/10 px-2 py-1 text-[10px] font-black not-italic text-mint;
+  }
+
+  .pos-entry-cart {
+    @apply flex min-h-[560px] flex-col rounded-md border border-line bg-white p-4 shadow-soft;
+  }
+
+  .pos-entry-cart-head {
+    @apply flex items-start justify-between gap-3 border-b border-line pb-3;
+  }
+
+  .pos-entry-cart-head h3 {
+    @apply text-lg font-black text-ink;
+  }
+
+  .pos-entry-cart-head span {
+    @apply text-xs font-bold text-slate-500;
+  }
+
+  .pos-entry-cart-head > div:last-child {
+    @apply flex gap-2;
+  }
+
+  .pos-entry-cart-close,
+  .pos-entry-mobile-summary {
+    @apply lg:hidden;
+  }
+
+  .pos-entry-cart-lines {
+    @apply min-h-0 flex-1 space-y-2 overflow-y-auto py-3;
+  }
+
+  .pos-entry-cart-lines article {
+    @apply grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-line bg-slate-50 p-3;
+  }
+
+  .pos-entry-cart-lines article span,
+  .pos-entry-cart-lines article small {
+    @apply mt-1 block text-xs font-semibold text-slate-500;
+  }
+
+  .pos-entry-quantity {
+    @apply flex items-center gap-2;
+  }
+
+  .pos-entry-quantity button {
+    @apply grid h-11 w-11 place-items-center rounded-md border border-line bg-white text-ink;
+  }
+
+  .pos-entry-cart-footer {
+    @apply grid gap-2 border-t border-line pt-3;
+  }
+
+  .pos-entry-cart-footer > div {
+    @apply flex items-center justify-between text-sm font-bold text-slate-500;
+  }
+
+  .pos-entry-cart-footer > div strong {
+    @apply text-lg font-black text-ink;
+  }
+
+  .pos-entry-mobile-summary {
+    @apply fixed bottom-3 left-3 right-3 z-40 min-h-14 items-center justify-between rounded-md bg-ink px-4 py-3 text-sm font-bold text-white shadow-xl;
+  }
+
+  .pos-review-lines,
+  .pos-order-list {
+    @apply mt-6 grid gap-2;
+  }
+
+  .pos-review-lines > div,
+  .pos-order-list article {
+    @apply flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .pos-review-lines span,
+  .pos-order-list span {
+    @apply mt-1 block text-xs font-semibold text-slate-500;
+  }
+
+  .pos-review-note {
+    @apply mt-4 grid gap-1 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm;
+  }
+
+  .pos-review-totals {
+    @apply ml-auto mt-5 grid w-full max-w-md gap-2 rounded-md border border-line p-4;
+  }
+
+  .pos-review-totals > div {
+    @apply flex justify-between gap-4 text-sm font-bold text-slate-500;
+  }
+
+  .pos-review-totals .total {
+    @apply border-t border-line pt-3 text-lg font-black text-ink;
+  }
+
+  .pos-payment-grid,
+  .pos-settings-grid {
+    @apply grid gap-4 md:grid-cols-2;
+  }
+
+  .pos-payment-method,
+  .pos-shift-card {
+    @apply rounded-md border border-line bg-slate-50 p-5;
+  }
+
+  .pos-payment-method > svg {
+    @apply text-mint;
+  }
+
+  .pos-payment-method h3 {
+    @apply mt-3 text-xl font-black text-ink;
+  }
+
+  .pos-payment-method > p,
+  .pos-payment-method > small {
+    @apply my-3 block text-sm font-semibold leading-6 text-slate-500;
+  }
+
+  .pos-change-due,
+  .pos-change-callout {
+    @apply rounded-md border border-emerald-200 bg-emerald-50 p-4 font-black text-emerald-800;
+  }
+
+  .pos-change-callout strong {
+    @apply block text-3xl;
+  }
+
+  .pos-shift-card {
+    @apply mt-6 flex items-start gap-4;
+  }
+
+  .pos-shift-card > svg {
+    @apply shrink-0 text-mint;
+  }
+
+  .pos-shift-card dl {
+    @apply grid flex-1 gap-2;
+  }
+
+  .pos-shift-card dl > div {
+    @apply flex justify-between gap-4 text-sm;
+  }
+
+  .pos-shift-card dt {
+    @apply font-bold text-slate-500;
+  }
+
+  .pos-shift-card dd {
+    @apply font-black text-ink;
+  }
+
+  .pos-cash-input {
+    @apply mt-4 max-w-sm;
+  }
+
+  .pos-settings-grid {
+    @apply mt-6 rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .pos-pin-settings {
+    @apply my-4 grid items-end gap-3 rounded-md border border-line bg-slate-50 p-4 sm:grid-cols-[minmax(0,1fr)_180px_auto];
+  }
+
+  .pos-pin-settings strong,
+  .pos-pin-settings span {
+    @apply block;
+  }
+
+  .pos-pin-settings span {
+    @apply mt-1 text-sm font-semibold text-slate-500;
+  }
+
+  @media (min-width: 1024px) {
+    .pos-entry-cart {
+      max-height: calc(100vh - var(--restaurant-owner-header-height, 76px) - 7rem);
+      position: sticky;
+      top: calc(var(--restaurant-owner-header-height, 76px) + 1rem);
+    }
+  }
+
+  @media (max-width: 1023px) {
+    .pos-enterprise-register {
+      @apply pb-20;
+    }
+
+    .pos-entry-cart {
+      @apply fixed inset-0 z-50 hidden max-h-none min-h-0 rounded-none border-0 p-4;
+    }
+
+    .pos-entry-cart.open {
+      @apply flex;
+    }
+
+    .pos-entry-mobile-summary {
+      @apply flex;
+    }
+  }
+
+  @media (max-width: 639px) {
+    .pos-workflow-screen,
+    .pos-home-screen,
+    .pos-boot-screen,
+    .pos-centered-screen,
+    .pos-pin-screen {
+      @apply min-h-[480px] p-4;
+    }
+
+    .pos-workflow-actions,
+    .pos-workflow-actions.split,
+    .pos-workflow-actions > button,
+    .pos-order-list article > button {
+      @apply w-full;
+    }
+
+    .pos-entry-items {
+      @apply grid-cols-1;
+    }
+
+    .pos-entry-cart-lines article {
+      @apply grid-cols-[minmax(0,1fr)_auto];
+    }
+
+    .pos-entry-cart-lines article > .icon-button {
+      @apply col-start-2;
+    }
+
+    .pos-payment-grid,
+    .pos-settings-grid,
+    .pos-pin-settings {
+      @apply grid-cols-1;
+    }
+  }
+
   .receipt-line-name {
     @apply min-w-0 flex-1;
   }

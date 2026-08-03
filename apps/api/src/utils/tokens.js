@@ -38,3 +38,22 @@ export function verifyAccessToken(token) {
 export function verifyRefreshToken(token) {
   return jwt.verify(token, refreshSecret());
 }
+
+export function signPosSessionToken({ userId, restaurantId, staffId, deviceId, locationId }) {
+  return jwt.sign(
+    {
+      sub: userId,
+      purpose: "POS_SESSION",
+      restaurantId,
+      staffId,
+      deviceId,
+      locationId: locationId || null
+    },
+    accessSecret(),
+    { expiresIn: "8h" }
+  );
+}
+
+export function verifyPosSessionToken(token) {
+  return jwt.verify(token, accessSecret());
+}

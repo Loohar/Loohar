@@ -1,0 +1,278 @@
+export const POS_WORKFLOW = Object.freeze({
+  BOOTING: "BOOTING",
+  OFFLINE: "OFFLINE",
+  LOCKED: "LOCKED",
+  CASHIER_AUTHENTICATION: "CASHIER_AUTHENTICATION",
+  REGISTER_HOME: "REGISTER_HOME",
+  NEW_ORDER_SETUP: "NEW_ORDER_SETUP",
+  ORDER_ENTRY: "ORDER_ENTRY",
+  ITEM_CUSTOMIZATION: "ITEM_CUSTOMIZATION",
+  ORDER_REVIEW: "ORDER_REVIEW",
+  PAYMENT_SELECTION: "PAYMENT_SELECTION",
+  PAYMENT_PROCESSING: "PAYMENT_PROCESSING",
+  PAYMENT_SUCCESS: "PAYMENT_SUCCESS",
+  PAYMENT_FAILED: "PAYMENT_FAILED",
+  SEND_TO_KITCHEN: "SEND_TO_KITCHEN",
+  PRINTING: "PRINTING",
+  ORDER_COMPLETE: "ORDER_COMPLETE",
+  HELD_ORDERS: "HELD_ORDERS",
+  RECENT_ORDERS: "RECENT_ORDERS",
+  SHIFT_MANAGEMENT: "SHIFT_MANAGEMENT",
+  REGISTER_SETTINGS: "REGISTER_SETTINGS",
+  MANAGER_OVERRIDE: "MANAGER_OVERRIDE",
+  RECOVERY: "RECOVERY"
+});
+
+export const POS_EVENT = Object.freeze({
+  API_ONLINE: "API_ONLINE",
+  API_OFFLINE: "API_OFFLINE",
+  BOOTSTRAP_READY: "BOOTSTRAP_READY",
+  BOOTSTRAP_FAILED: "BOOTSTRAP_FAILED",
+  BEGIN_UNLOCK: "BEGIN_UNLOCK",
+  UNLOCK_SUCCESS: "UNLOCK_SUCCESS",
+  UNLOCK_FAILED: "UNLOCK_FAILED",
+  LOCK: "LOCK",
+  HOME: "HOME",
+  OPEN_NEW_ORDER: "OPEN_NEW_ORDER",
+  START_ORDER: "START_ORDER",
+  CUSTOMIZE_ITEM: "CUSTOMIZE_ITEM",
+  CLOSE_CUSTOMIZATION: "CLOSE_CUSTOMIZATION",
+  REVIEW_ORDER: "REVIEW_ORDER",
+  EDIT_ORDER: "EDIT_ORDER",
+  SELECT_PAYMENT: "SELECT_PAYMENT",
+  PROCESS_PAYMENT: "PROCESS_PAYMENT",
+  PAYMENT_SUCCEEDED: "PAYMENT_SUCCEEDED",
+  PAYMENT_FAILED: "PAYMENT_FAILED",
+  SEND_TO_KITCHEN: "SEND_TO_KITCHEN",
+  HOLD_ORDER: "HOLD_ORDER",
+  START_PRINTING: "START_PRINTING",
+  PRINTING_FINISHED: "PRINTING_FINISHED",
+  COMPLETE_ORDER: "COMPLETE_ORDER",
+  VIEW_HELD_ORDERS: "VIEW_HELD_ORDERS",
+  VIEW_RECENT_ORDERS: "VIEW_RECENT_ORDERS",
+  VIEW_SHIFT: "VIEW_SHIFT",
+  VIEW_SETTINGS: "VIEW_SETTINGS",
+  MANAGER_OVERRIDE: "MANAGER_OVERRIDE",
+  RECOVER: "RECOVER"
+});
+
+const transitions = Object.freeze({
+  [POS_WORKFLOW.BOOTING]: {
+    [POS_EVENT.BOOTSTRAP_READY]: ({ hasDevice, pinConfigured }) => hasDevice && pinConfigured ? POS_WORKFLOW.LOCKED : POS_WORKFLOW.REGISTER_SETTINGS,
+    [POS_EVENT.BOOTSTRAP_FAILED]: POS_WORKFLOW.RECOVERY,
+    [POS_EVENT.API_OFFLINE]: POS_WORKFLOW.OFFLINE
+  },
+  [POS_WORKFLOW.OFFLINE]: {
+    [POS_EVENT.API_ONLINE]: POS_WORKFLOW.BOOTING,
+    [POS_EVENT.RECOVER]: POS_WORKFLOW.BOOTING
+  },
+  [POS_WORKFLOW.LOCKED]: {
+    [POS_EVENT.BEGIN_UNLOCK]: POS_WORKFLOW.CASHIER_AUTHENTICATION,
+    [POS_EVENT.API_OFFLINE]: POS_WORKFLOW.OFFLINE
+  },
+  [POS_WORKFLOW.CASHIER_AUTHENTICATION]: {
+    [POS_EVENT.UNLOCK_SUCCESS]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.UNLOCK_FAILED]: POS_WORKFLOW.CASHIER_AUTHENTICATION,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED,
+    [POS_EVENT.API_OFFLINE]: POS_WORKFLOW.OFFLINE
+  },
+  [POS_WORKFLOW.REGISTER_HOME]: {
+    [POS_EVENT.OPEN_NEW_ORDER]: POS_WORKFLOW.NEW_ORDER_SETUP,
+    [POS_EVENT.VIEW_HELD_ORDERS]: POS_WORKFLOW.HELD_ORDERS,
+    [POS_EVENT.VIEW_RECENT_ORDERS]: POS_WORKFLOW.RECENT_ORDERS,
+    [POS_EVENT.VIEW_SHIFT]: POS_WORKFLOW.SHIFT_MANAGEMENT,
+    [POS_EVENT.VIEW_SETTINGS]: POS_WORKFLOW.REGISTER_SETTINGS,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED,
+    [POS_EVENT.API_OFFLINE]: POS_WORKFLOW.OFFLINE
+  },
+  [POS_WORKFLOW.NEW_ORDER_SETUP]: {
+    [POS_EVENT.START_ORDER]: POS_WORKFLOW.ORDER_ENTRY,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.ORDER_ENTRY]: {
+    [POS_EVENT.CUSTOMIZE_ITEM]: POS_WORKFLOW.ITEM_CUSTOMIZATION,
+    [POS_EVENT.REVIEW_ORDER]: POS_WORKFLOW.ORDER_REVIEW,
+    [POS_EVENT.SEND_TO_KITCHEN]: POS_WORKFLOW.SEND_TO_KITCHEN,
+    [POS_EVENT.VIEW_HELD_ORDERS]: POS_WORKFLOW.HELD_ORDERS,
+    [POS_EVENT.HOLD_ORDER]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED,
+    [POS_EVENT.API_OFFLINE]: POS_WORKFLOW.OFFLINE
+  },
+  [POS_WORKFLOW.ITEM_CUSTOMIZATION]: {
+    [POS_EVENT.CLOSE_CUSTOMIZATION]: POS_WORKFLOW.ORDER_ENTRY,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.ORDER_REVIEW]: {
+    [POS_EVENT.EDIT_ORDER]: POS_WORKFLOW.ORDER_ENTRY,
+    [POS_EVENT.SELECT_PAYMENT]: POS_WORKFLOW.PAYMENT_SELECTION,
+    [POS_EVENT.SEND_TO_KITCHEN]: POS_WORKFLOW.SEND_TO_KITCHEN,
+    [POS_EVENT.HOLD_ORDER]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.PAYMENT_SELECTION]: {
+    [POS_EVENT.PROCESS_PAYMENT]: POS_WORKFLOW.PAYMENT_PROCESSING,
+    [POS_EVENT.EDIT_ORDER]: POS_WORKFLOW.ORDER_REVIEW,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.PAYMENT_PROCESSING]: {
+    [POS_EVENT.PAYMENT_SUCCEEDED]: POS_WORKFLOW.PAYMENT_SUCCESS,
+    [POS_EVENT.PAYMENT_FAILED]: POS_WORKFLOW.PAYMENT_FAILED
+  },
+  [POS_WORKFLOW.PAYMENT_SUCCESS]: {
+    [POS_EVENT.SEND_TO_KITCHEN]: POS_WORKFLOW.SEND_TO_KITCHEN,
+    [POS_EVENT.START_PRINTING]: POS_WORKFLOW.PRINTING,
+    [POS_EVENT.COMPLETE_ORDER]: POS_WORKFLOW.ORDER_COMPLETE
+  },
+  [POS_WORKFLOW.PAYMENT_FAILED]: {
+    [POS_EVENT.SELECT_PAYMENT]: POS_WORKFLOW.PAYMENT_SELECTION,
+    [POS_EVENT.EDIT_ORDER]: POS_WORKFLOW.ORDER_REVIEW,
+    [POS_EVENT.MANAGER_OVERRIDE]: POS_WORKFLOW.MANAGER_OVERRIDE
+  },
+  [POS_WORKFLOW.SEND_TO_KITCHEN]: {
+    [POS_EVENT.START_PRINTING]: POS_WORKFLOW.PRINTING,
+    [POS_EVENT.COMPLETE_ORDER]: POS_WORKFLOW.ORDER_COMPLETE,
+    [POS_EVENT.PAYMENT_SUCCEEDED]: POS_WORKFLOW.PAYMENT_SUCCESS,
+    [POS_EVENT.PAYMENT_FAILED]: POS_WORKFLOW.PAYMENT_FAILED
+  },
+  [POS_WORKFLOW.PRINTING]: {
+    [POS_EVENT.PRINTING_FINISHED]: POS_WORKFLOW.ORDER_COMPLETE,
+    [POS_EVENT.RECOVER]: POS_WORKFLOW.RECOVERY
+  },
+  [POS_WORKFLOW.ORDER_COMPLETE]: {
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.OPEN_NEW_ORDER]: POS_WORKFLOW.NEW_ORDER_SETUP,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.HELD_ORDERS]: {
+    [POS_EVENT.START_ORDER]: POS_WORKFLOW.ORDER_ENTRY,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.RECENT_ORDERS]: {
+    [POS_EVENT.SELECT_PAYMENT]: POS_WORKFLOW.PAYMENT_SELECTION,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.SHIFT_MANAGEMENT]: {
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.REGISTER_SETTINGS]: {
+    [POS_EVENT.BOOTSTRAP_READY]: ({ hasDevice, pinConfigured }) => hasDevice && pinConfigured ? POS_WORKFLOW.LOCKED : POS_WORKFLOW.REGISTER_SETTINGS,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED
+  },
+  [POS_WORKFLOW.MANAGER_OVERRIDE]: {
+    [POS_EVENT.UNLOCK_SUCCESS]: POS_WORKFLOW.PAYMENT_SELECTION,
+    [POS_EVENT.UNLOCK_FAILED]: POS_WORKFLOW.MANAGER_OVERRIDE,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME
+  },
+  [POS_WORKFLOW.RECOVERY]: {
+    [POS_EVENT.RECOVER]: POS_WORKFLOW.BOOTING,
+    [POS_EVENT.LOCK]: POS_WORKFLOW.LOCKED,
+    [POS_EVENT.HOME]: POS_WORKFLOW.REGISTER_HOME
+  }
+});
+
+export const initialPosWorkflowState = Object.freeze({
+  value: POS_WORKFLOW.BOOTING,
+  previous: null,
+  context: {},
+  lastEvent: null,
+  invalidTransition: null,
+  transitionCount: 0
+});
+
+export function posWorkflowReducer(state, event) {
+  if (!event?.type) return state;
+  if (event.type === POS_EVENT.API_OFFLINE && state.value !== POS_WORKFLOW.OFFLINE) {
+    return transitionState(state, POS_WORKFLOW.OFFLINE, event);
+  }
+  if (event.type === POS_EVENT.LOCK && ![POS_WORKFLOW.BOOTING, POS_WORKFLOW.OFFLINE].includes(state.value)) {
+    return transitionState(state, POS_WORKFLOW.LOCKED, event, { unlockedBy: null });
+  }
+  const transition = transitions[state.value]?.[event.type];
+  if (!transition) {
+    return {
+      ...state,
+      lastEvent: event.type,
+      invalidTransition: { from: state.value, event: event.type, at: new Date().toISOString() }
+    };
+  }
+  const nextValue = typeof transition === "function" ? transition(event.payload || {}) : transition;
+  return transitionState(state, nextValue, event);
+}
+
+function transitionState(state, nextValue, event, contextOverride = {}) {
+  return {
+    value: nextValue,
+    previous: state.value,
+    context: { ...state.context, ...(event.payload || {}), ...contextOverride },
+    lastEvent: event.type,
+    invalidTransition: null,
+    transitionCount: state.transitionCount + 1
+  };
+}
+
+export function posDraftStorageKey(restaurantKey) {
+  return `loohar-pos-order-draft:${String(restaurantKey || "unknown")}`;
+}
+
+export function savePosOrderDraft(restaurantKey, draft) {
+  if (typeof window === "undefined") return;
+  const safeDraft = {
+    cart: Array.isArray(draft?.cart) ? draft.cart.map((line) => ({
+      cartLineId: line.cartLineId,
+      menuItemId: line.menuItemId,
+      name: String(line.name || "Menu item").slice(0, 160),
+      basePriceCents: Number(line.basePriceCents || 0),
+      priceCents: Number(line.priceCents || 0),
+      quantity: Math.max(1, Number(line.quantity || 1)),
+      optionIds: Array.isArray(line.optionIds) ? line.optionIds : [],
+      modifierOptionIds: Array.isArray(line.modifierOptionIds) ? line.modifierOptionIds : [],
+      modifiers: Array.isArray(line.modifiers) ? line.modifiers : [],
+      modifierSignature: String(line.modifierSignature || "").slice(0, 240),
+      specialInstructions: ""
+    })) : [],
+    customer: { name: "Walk-in guest" },
+    orderType: draft?.orderType || "WALK_IN",
+    notes: "",
+    locationId: draft?.locationId || null,
+    tableNumber: String(draft?.tableNumber || "").slice(0, 40),
+    savedAt: new Date().toISOString()
+  };
+  window.sessionStorage.setItem(posDraftStorageKey(restaurantKey), JSON.stringify(safeDraft));
+}
+
+export function loadPosOrderDraft(restaurantKey) {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(posDraftStorageKey(restaurantKey)) || "null");
+    return parsed && Array.isArray(parsed.cart) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPosOrderDraft(restaurantKey) {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(posDraftStorageKey(restaurantKey));
+}
+
+export function isPosOrderWorkflow(value) {
+  return [
+    POS_WORKFLOW.NEW_ORDER_SETUP,
+    POS_WORKFLOW.ORDER_ENTRY,
+    POS_WORKFLOW.ITEM_CUSTOMIZATION,
+    POS_WORKFLOW.ORDER_REVIEW,
+    POS_WORKFLOW.PAYMENT_SELECTION,
+    POS_WORKFLOW.PAYMENT_PROCESSING,
+    POS_WORKFLOW.PAYMENT_SUCCESS,
+    POS_WORKFLOW.PAYMENT_FAILED,
+    POS_WORKFLOW.SEND_TO_KITCHEN,
+    POS_WORKFLOW.PRINTING,
+    POS_WORKFLOW.ORDER_COMPLETE
+  ].includes(value);
+}

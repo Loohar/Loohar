@@ -4,6 +4,8 @@ import { join } from "node:path";
 const root = process.cwd();
 const mode = process.argv[2] || "all";
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
+const screens = readFileSync(join(root, "apps/web/src/apps/pos/PosWorkflowScreens.jsx"), "utf8");
+const stateMachine = readFileSync(join(root, "apps/web/src/apps/pos/stateMachine.js"), "utf8");
 const styles = readFileSync(join(root, "apps/web/src/styles/index.css"), "utf8");
 const server = readFileSync(join(root, "apps/api/src/server.js"), "utf8");
 const posRoutes = readFileSync(join(root, "apps/api/src/routes/pos.js"), "utf8");
@@ -44,14 +46,14 @@ assertCheck(polishScripts.every((scriptName) => packageJson.scripts?.[scriptName
 
 if (mode === "all" || mode === "layout") {
   assertCheck(includesAll(styles, [
-    ".pos-command-bar",
-    ".pos-status-strip",
-    "lg:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.85fr)]",
-    ".pos-cart",
+    ".pos-workflow-topline",
+    ".pos-workflow-status",
+    ".pos-entry-layout",
+    ".pos-entry-cart",
     "position: sticky",
-    ".pos-cart-body",
-    ".pos-cart-footer"
-  ]), "POS layout uses compact command bar, status strip, two-pane register, sticky desktop cart, and internal cart scrolling");
+    ".pos-entry-cart-lines",
+    ".pos-entry-cart-footer"
+  ]), "POS layout uses a compact status line, two-pane register, sticky desktop cart, and internal cart scrolling");
   assertCheck(!styles.includes("xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.42fr)]"), "POS layout no longer uses the old dashboard-like cart grid");
 }
 
@@ -59,63 +61,50 @@ if (mode === "all" || mode === "menu-search") {
   assertCheck(includesAll(app, [
     "searchQuery",
     "setSearchQuery",
-    "Search items...",
-    "Search POS menu items",
-    "event.key === \"Escape\"",
     "item.sku",
     "item.searchAliases"
-  ]), "POS menu has local search with clear and Escape behavior");
+  ]) && includesAll(screens, ["Search menu", "setSearchQuery", "pos-entry-toolbar"]), "POS menu has local search without requesting or remounting the page");
   assertCheck(includesAll(styles, [
-    ".pos-menu-toolbar",
-    "lg:grid-cols-[auto_minmax(220px,1fr)_220px]",
-    ".pos-menu-search",
-    ".pos-category-select"
+    ".pos-entry-toolbar",
+    ".pos-entry-toolbar label",
+    ".pos-entry-toolbar input",
+    ".pos-entry-categories"
   ]), "Menu heading, search, and category selector are aligned for desktop/tablet");
 }
 
 if (mode === "all" || mode === "categories") {
-  assertCheck(includesAll(app, [
-    "pos-category-pills",
-    "pos-category-pill",
-    "aria-pressed={selectedCategory === \"all\"}",
-    "aria-pressed={selectedCategory === category.id}"
+  assertCheck(includesAll(screens, [
+    "pos-entry-categories",
+    'className={selectedCategory === "all" ? "active" : ""}',
+    'className={selectedCategory === category.id ? "active" : ""}',
+    'aria-label="Menu category"'
   ]), "POS category pills expose active state accessibly");
   assertCheck(includesAll(styles, [
-    ".pos-category-pills",
+    ".pos-entry-categories",
     "flex-wrap",
-    ".pos-category-pill.active"
+    ".pos-entry-categories button.active"
   ]), "Category controls wrap naturally and visually distinguish the active category");
 }
 
 if (mode === "all" || mode === "status-strip") {
-  assertCheck(includesAll(app, [
-    "statusChips",
-    "pos-status-strip",
-    "Device",
-    "Shift",
-    "Cart",
-    "Kiosk"
-  ]), "POS status strip replaces oversized status cards");
+  assertCheck(includesAll(app, ["pos-workflow-topline", "pos-workflow-status", "apiOnline", "activeDevice", "activeShift"]), "POS status line replaces oversized status cards");
   assertCheck(includesAll(styles, [
-    ".pos-status-strip",
-    ".pos-status-chip",
-    ".pos-status-chip.good",
-    ".pos-status-chip.warn"
+    ".pos-workflow-status",
+    ".pos-workflow-status .online",
+    ".pos-workflow-status .offline"
   ]), "Status strip has concise readable state styles");
 }
 
 if (mode === "all" || mode === "mobile-cart") {
   assertCheck(includesAll(app, [
     "mobileCartOpen",
-    "setMobileCartOpen(true)",
-    "pos-mobile-cart-summary",
-    "pos-mobile-close"
-  ]), "Mobile POS cart opens from sticky summary and has a close action");
+    "setMobileCartOpen"
+  ]) && includesAll(screens, ["pos-entry-mobile-summary", "setMobileCartOpen(true)", "setMobileCartOpen(false)", "onClick={() => onAdd(item)}"]), "Mobile POS cart opens only from the summary, closes explicitly, and does not open on item tap");
   assertCheck(includesAll(styles, [
     "@media (max-width: 1023px)",
-    ".pos-cart.open",
+    ".pos-entry-cart.open",
     "translateY(110%)",
-    ".pos-mobile-cart-summary"
+    ".pos-entry-mobile-summary"
   ]), "Mobile cart renders as a bottom drawer without taking over desktop layout");
 }
 
@@ -140,12 +129,13 @@ if (mode === "all" || mode === "kiosk-shell") {
 if (mode === "all" || mode === "kiosk-lock") {
   assertCheck(includesAll(app, [
     "showKioskExit",
-    "Manager exit",
+    "Kiosk mode is active",
     "Manager PIN",
     "Exit kiosk mode",
     "Return to register",
     "setKiosk(false)"
   ]), "Kiosk exit requires explicit manager flow instead of blocking the register on load");
+  assertCheck(includesAll(screens, ["RegisterLockScreen", "CashierPinScreen", "Tap to unlock register", "POS PIN"]), "Staff register has a dedicated lock screen and masked cashier PIN flow");
   assertCheck(includesAll(posRoutes, [
     "kioskExitLimiter",
     "Too many kiosk exit attempts",
@@ -183,6 +173,7 @@ if (mode === "all" || mode === "empty-states") {
     "POS menu items are not available. Contact your manager.",
     "Add available menu items in Menu & Catalog"
   ]), "POS empty states are polished and role-aware, with stale live menu preservation");
+  assertCheck(includesAll(stateMachine, ["API_OFFLINE", "OFFLINE", "RECOVER", "savePosOrderDraft", "clearPosOrderDraft"]), "Offline and recovery behavior is explicit and preserves only a sanitized order draft");
   assertCheck(includesAll(app, [
     "is not included in the current plan.",
     "POS is not enabled for this restaurant.",

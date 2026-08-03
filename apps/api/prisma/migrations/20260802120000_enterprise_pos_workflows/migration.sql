@@ -1,0 +1,14 @@
+ALTER TYPE "OrderType" ADD VALUE IF NOT EXISTS 'DRIVE_THRU';
+ALTER TYPE "OrderType" ADD VALUE IF NOT EXISTS 'CURBSIDE';
+ALTER TYPE "OrderType" ADD VALUE IF NOT EXISTS 'CATERING';
+
+ALTER TABLE "RestaurantStaff"
+  ADD COLUMN IF NOT EXISTS "locationIdsJson" JSONB,
+  ADD COLUMN IF NOT EXISTS "posPinHash" TEXT,
+  ADD COLUMN IF NOT EXISTS "posPinFailedAttempts" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "posPinLockedUntil" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "posPinUpdatedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "posLastUnlockedAt" TIMESTAMP(3);
+
+CREATE INDEX IF NOT EXISTS "RestaurantStaff_restaurantId_active_idx"
+  ON "RestaurantStaff"("restaurantId", "active");

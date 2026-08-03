@@ -4,8 +4,10 @@ import { FEATURE } from "../config/entitlements.js";
 import { prisma } from "../config/prisma.js";
 import { requireAuth } from "../middleware/auth.js";
 import { featureGuard } from "../middleware/entitlements.js";
+import { requirePosSession } from "../middleware/posSession.js";
 import {
   cardPaymentIntent,
+  cashierPinStatus,
   cashPayment,
   closeShift,
   createPosQuote,
@@ -13,6 +15,7 @@ import {
   exitKioskMode,
   holdPosOrder,
   httpError,
+  listPosOrders,
   openShift,
   posConfig,
   posMenu,
@@ -20,7 +23,9 @@ import {
   registerPosDevice,
   resolveRestaurantForPos,
   setKioskMode,
+  setCashierPin,
   submitPosOrder,
+  unlockPosDevice,
   updatePosDevice
 } from "../services/posService.js";
 
@@ -43,6 +48,14 @@ const posReadLimiter = rateLimit({
     error: "POS is receiving too many requests. Please wait a moment and try again.",
     code: "RATE_LIMITED"
   }
+});
+
+const posPinLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many POS PIN attempts. Please wait before trying again.", code: "RATE_LIMITED" }
 });
 
 function deviceContext(req) {
@@ -108,9 +121,9 @@ async function buildPosMenuPayload(req, categories, requestId = req.get("x-looha
   };
 }
 
-async function findHeldOrders(restaurantId) {
+async function findHeldOrders(restaurantId, locationId = null) {
   return prisma.posOrderSession.findMany({
-    where: { restaurantId, status: "HELD" },
+    where: { restaurantId, status: "HELD", ...(locationId ? { locationId } : { locationId: null }) },
     orderBy: { updatedAt: "desc" },
     take: 50
   });
@@ -136,18 +149,16 @@ router.get("/:restaurantId/pos/bootstrap", posReadLimiter, async (req, res, next
   const startedAt = Date.now();
   const requestId = req.get("x-loohar-pos-request-id") || `pos:${Date.now()}`;
   try {
-    const [config, categories, heldOrders] = await Promise.all([
+    const [config, categories] = await Promise.all([
       posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) }),
-      posMenu(req.resolvedRestaurantId),
-      findHeldOrders(req.resolvedRestaurantId)
+      posMenu(req.resolvedRestaurantId)
     ]);
     res.json({
       requestId,
       generatedAt: new Date().toISOString(),
       performance: { serverDurationMs: Date.now() - startedAt },
       config,
-      menu: await buildPosMenuPayload(req, categories, requestId),
-      heldOrders
+      menu: await buildPosMenuPayload(req, categories, requestId)
     });
   } catch (error) {
     next(error);
@@ -163,6 +174,44 @@ router.get("/:restaurantId/pos/config", posReadLimiter, async (req, res, next) =
   }
 });
 
+router.get("/:restaurantId/pos/pin", posReadLimiter, async (req, res, next) => {
+  try {
+    const pinStatus = await cashierPinStatus({ restaurantId: req.resolvedRestaurantId, user: req.user });
+    res.json({ pinStatus });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch("/:restaurantId/pos/pin", posPinLimiter, async (req, res, next) => {
+  try {
+    const pinStatus = await setCashierPin({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      pin: req.body?.pin
+    });
+    res.json({ pinStatus });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/unlock", posPinLimiter, async (req, res, next) => {
+  try {
+    const result = await unlockPosDevice({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      pin: req.body?.pin,
+      ...deviceContext(req),
+      ipAddress: req.ip || null,
+      userAgent: req.get("user-agent") || null
+    });
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/:restaurantId/pos/menu", posReadLimiter, async (req, res, next) => {
   try {
     const categories = await posMenu(req.resolvedRestaurantId);
@@ -172,7 +221,7 @@ router.get("/:restaurantId/pos/menu", posReadLimiter, async (req, res, next) => 
   }
 });
 
-router.post("/:restaurantId/pos/quotes", async (req, res, next) => {
+router.post("/:restaurantId/pos/quotes", requirePosSession, async (req, res, next) => {
   try {
     const quote = await createPosQuote({
       restaurantId: req.resolvedRestaurantId,
@@ -187,7 +236,7 @@ router.post("/:restaurantId/pos/quotes", async (req, res, next) => {
   }
 });
 
-router.post("/:restaurantId/pos/orders", async (req, res, next) => {
+router.post("/:restaurantId/pos/orders", requirePosSession, async (req, res, next) => {
   try {
     const { quoteId, sessionId, customer, notes } = req.body || {};
     if (!quoteId) throw httpError("quoteId is required.", 400);
@@ -206,16 +255,43 @@ router.post("/:restaurantId/pos/orders", async (req, res, next) => {
   }
 });
 
-router.get("/:restaurantId/pos/held-orders", posReadLimiter, async (req, res, next) => {
+router.get("/:restaurantId/pos/held-orders", posReadLimiter, requirePosSession, async (req, res, next) => {
   try {
-    const heldOrders = await findHeldOrders(req.resolvedRestaurantId);
+    const config = await posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) });
+    const heldOrders = await findHeldOrders(req.resolvedRestaurantId, config.device?.locationId || config.locations?.[0]?.id || null);
     res.json({ heldOrders });
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/:restaurantId/pos/held-orders", async (req, res, next) => {
+router.get("/:restaurantId/pos/open-orders", posReadLimiter, requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await listPosOrders({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      ...deviceContext(req),
+      recent: false
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/pos/recent-orders", posReadLimiter, requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await listPosOrders({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      ...deviceContext(req),
+      recent: true
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/held-orders", requirePosSession, async (req, res, next) => {
   try {
     const session = await holdPosOrder({
       restaurantId: req.resolvedRestaurantId,
@@ -229,10 +305,17 @@ router.post("/:restaurantId/pos/held-orders", async (req, res, next) => {
   }
 });
 
-router.post("/:restaurantId/pos/held-orders/:sessionId/recall", async (req, res, next) => {
+router.post("/:restaurantId/pos/held-orders/:sessionId/recall", requirePosSession, async (req, res, next) => {
   try {
+    const config = await posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) });
+    const locationId = config.device?.locationId || config.locations?.[0]?.id || null;
     const session = await prisma.posOrderSession.findFirst({
-      where: { id: req.params.sessionId, restaurantId: req.resolvedRestaurantId, status: "HELD" }
+      where: {
+        id: req.params.sessionId,
+        restaurantId: req.resolvedRestaurantId,
+        status: "HELD",
+        ...(locationId ? { locationId } : { locationId: null })
+      }
     });
     if (!session) throw httpError("Held POS order not found.", 404);
     res.json({ session });
@@ -241,10 +324,17 @@ router.post("/:restaurantId/pos/held-orders/:sessionId/recall", async (req, res,
   }
 });
 
-router.post("/:restaurantId/pos/held-orders/:sessionId/submit", async (req, res, next) => {
+router.post("/:restaurantId/pos/held-orders/:sessionId/submit", requirePosSession, async (req, res, next) => {
   try {
+    const config = await posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) });
+    const locationId = config.device?.locationId || config.locations?.[0]?.id || null;
     const session = await prisma.posOrderSession.findFirst({
-      where: { id: req.params.sessionId, restaurantId: req.resolvedRestaurantId, status: "HELD" }
+      where: {
+        id: req.params.sessionId,
+        restaurantId: req.resolvedRestaurantId,
+        status: "HELD",
+        ...(locationId ? { locationId } : { locationId: null })
+      }
     });
     if (!session) throw httpError("Held POS order not found.", 404);
     const quote = await createPosQuote({
@@ -253,7 +343,8 @@ router.post("/:restaurantId/pos/held-orders/:sessionId/submit", async (req, res,
       body: {
         ...(session.cartJson || {}),
         orderType: session.orderType,
-        locationId: session.locationId
+        locationId: session.locationId,
+        deliveryZoneId: session.customerJson?.deliveryZoneId || null
       },
       deviceId: session.deviceId || deviceContext(req).deviceId || null,
       sessionId: session.id
@@ -273,7 +364,7 @@ router.post("/:restaurantId/pos/held-orders/:sessionId/submit", async (req, res,
   }
 });
 
-router.post("/:restaurantId/pos/payments/cash", async (req, res, next) => {
+router.post("/:restaurantId/pos/payments/cash", requirePosSession, async (req, res, next) => {
   try {
     const result = await cashPayment({
       restaurantId: req.resolvedRestaurantId,
@@ -288,7 +379,7 @@ router.post("/:restaurantId/pos/payments/cash", async (req, res, next) => {
   }
 });
 
-router.post("/:restaurantId/pos/payments/card", async (req, res, next) => {
+router.post("/:restaurantId/pos/payments/card", requirePosSession, async (req, res, next) => {
   try {
     const result = await cardPaymentIntent({
       restaurantId: req.resolvedRestaurantId,
@@ -342,7 +433,7 @@ router.patch("/:restaurantId/pos/devices/:deviceId", async (req, res, next) => {
   }
 });
 
-router.post("/:restaurantId/pos/devices/:deviceId/kiosk", async (req, res, next) => {
+router.post("/:restaurantId/pos/devices/:deviceId/kiosk", requirePosSession, async (req, res, next) => {
   try {
     const device = await setKioskMode({
       restaurantId: req.resolvedRestaurantId,
@@ -357,7 +448,7 @@ router.post("/:restaurantId/pos/devices/:deviceId/kiosk", async (req, res, next)
   }
 });
 
-router.post("/:restaurantId/pos/devices/:deviceId/kiosk/exit", kioskExitLimiter, async (req, res, next) => {
+router.post("/:restaurantId/pos/devices/:deviceId/kiosk/exit", kioskExitLimiter, requirePosSession, async (req, res, next) => {
   try {
     const device = await exitKioskMode({
       restaurantId: req.resolvedRestaurantId,
@@ -371,7 +462,7 @@ router.post("/:restaurantId/pos/devices/:deviceId/kiosk/exit", kioskExitLimiter,
   }
 });
 
-router.get("/:restaurantId/pos/shifts/current", posReadLimiter, async (req, res, next) => {
+router.get("/:restaurantId/pos/shifts/current", posReadLimiter, requirePosSession, async (req, res, next) => {
   try {
     const shift = await currentShift({
       restaurantId: req.resolvedRestaurantId,
@@ -384,7 +475,7 @@ router.get("/:restaurantId/pos/shifts/current", posReadLimiter, async (req, res,
   }
 });
 
-router.post("/:restaurantId/pos/shifts/clock-in", async (req, res, next) => {
+router.post("/:restaurantId/pos/shifts/clock-in", requirePosSession, async (req, res, next) => {
   try {
     const shift = await openShift({
       restaurantId: req.resolvedRestaurantId,
@@ -398,7 +489,7 @@ router.post("/:restaurantId/pos/shifts/clock-in", async (req, res, next) => {
   }
 });
 
-router.post("/:restaurantId/pos/shifts/:shiftId/clock-out", async (req, res, next) => {
+router.post("/:restaurantId/pos/shifts/:shiftId/clock-out", requirePosSession, async (req, res, next) => {
   try {
     const shift = await closeShift({
       restaurantId: req.resolvedRestaurantId,
@@ -412,7 +503,7 @@ router.post("/:restaurantId/pos/shifts/:shiftId/clock-out", async (req, res, nex
   }
 });
 
-router.get("/:restaurantId/pos/orders/:orderId/receipt", posReadLimiter, async (req, res, next) => {
+router.get("/:restaurantId/pos/orders/:orderId/receipt", posReadLimiter, requirePosSession, async (req, res, next) => {
   try {
     const receipt = await prisma.posReceipt.findFirst({
       where: { restaurantId: req.resolvedRestaurantId, orderId: req.params.orderId },

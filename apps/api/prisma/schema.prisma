@@ -65,6 +65,9 @@ enum OrderType {
   DELIVERY
   DINE_IN
   WALK_IN
+  DRIVE_THRU
+  CURBSIDE
+  CATERING
 }
 
 enum OrderStatus {
@@ -519,16 +522,24 @@ model TenantEntitlementSimulation {
 }
 
 model RestaurantStaff {
-  id           String     @id @default(cuid())
-  restaurantId String
-  userId       String     @unique
-  role         UserRole
-  active       Boolean    @default(true)
-  permissionsJson Json?
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
-  user         User       @relation(fields: [userId], references: [id])
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                   String     @id @default(cuid())
+  restaurantId         String
+  userId               String     @unique
+  role                 UserRole
+  active               Boolean    @default(true)
+  permissionsJson      Json?
+  locationIdsJson      Json?
+  posPinHash           String?
+  posPinFailedAttempts Int        @default(0)
+  posPinLockedUntil    DateTime?
+  posPinUpdatedAt      DateTime?
+  posLastUnlockedAt    DateTime?
+  restaurant           Restaurant @relation(fields: [restaurantId], references: [id])
+  user                 User       @relation(fields: [userId], references: [id])
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@index([restaurantId, active])
 }
 
 model Customer {

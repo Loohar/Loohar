@@ -7,6 +7,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const posService = readFileSync(join(root, "apps/api/src/services/posService.js"), "utf8");
 const restaurantRoutes = readFileSync(join(root, "apps/api/src/routes/restaurant.js"), "utf8");
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
+const workflowScreens = readFileSync(join(root, "apps/web/src/apps/pos/PosWorkflowScreens.jsx"), "utf8");
 const styles = readFileSync(join(root, "apps/web/src/styles/index.css"), "utf8");
 const failures = [];
 
@@ -120,8 +121,8 @@ if (mode === "all" || mode === "kiosk") {
     "addConfiguredItemToCart",
     "line.modifiers"
   ]), "Kiosk shell shares the same modifier-aware ordering workflow as the POS register");
-  assertCheck(includesAll(app, [
-    "pos-cart-modifiers",
+  assertCheck(includesAll(`${app}\n${workflowScreens}`, [
+    "line.modifiers",
     "receipt-modifier",
     "Manager PIN",
     "Exit kiosk mode"

@@ -5,6 +5,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
+import { signPosSessionToken } from "../utils/tokens.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -52,11 +53,45 @@ const ROLE_PERMISSIONS = {
   SUPER_ADMIN: []
 };
 
-const ORDER_TYPES = new Set(["PICKUP", "DELIVERY", "DINE_IN", "WALK_IN"]);
+const ORDER_TYPES = new Set(["PICKUP", "DELIVERY", "DINE_IN", "WALK_IN", "DRIVE_THRU", "CURBSIDE", "CATERING"]);
 const ACTIVE_RESTAURANT_STATUSES = new Set(["ACTIVE"]);
 const POS_ROLES = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER", "CASHIER"]);
+const PIN_MANAGEMENT_ROLES = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER"]);
+const POS_PIN_PATTERN = /^\d{4,8}$/;
+const POS_PIN_MAX_ATTEMPTS = 5;
+const POS_PIN_LOCKOUT_MS = 5 * 60 * 1000;
+const OPEN_ORDER_STATUSES = ["PENDING", "ACCEPTED", "PREPARING", "READY", "PICKED_UP", "ON_THE_WAY"];
+const POS_ORDER_FIELD_MODES = new Set(["REQUIRED", "OPTIONAL", "HIDDEN"]);
+const DEFAULT_POS_ORDER_FIELD_POLICY = Object.freeze({
+  WALK_IN: { name: "OPTIONAL", phone: "OPTIONAL" },
+  DINE_IN: { tableNumber: "REQUIRED", seat: "OPTIONAL", server: "REQUIRED", guestCount: "REQUIRED", name: "OPTIONAL" },
+  PICKUP: { name: "REQUIRED", phone: "REQUIRED", pickupTime: "REQUIRED" },
+  DELIVERY: { name: "REQUIRED", phone: "REQUIRED", deliveryAddress: "REQUIRED", deliveryInstructions: "OPTIONAL" },
+  DRIVE_THRU: { vehicle: "REQUIRED", name: "REQUIRED", phone: "OPTIONAL" },
+  CURBSIDE: { name: "REQUIRED", phone: "REQUIRED", vehicle: "REQUIRED", parkingSpot: "REQUIRED" },
+  CATERING: { eventName: "REQUIRED", name: "REQUIRED", phone: "REQUIRED", eventDateTime: "REQUIRED", headcount: "REQUIRED" }
+});
+const POS_CUSTOMER_FIELDS = new Set([
+  "name",
+  "phone",
+  "email",
+  "tableNumber",
+  "seat",
+  "server",
+  "guestCount",
+  "pickupTime",
+  "deliveryAddress",
+  "deliveryInstructions",
+  "deliveryZoneId",
+  "vehicle",
+  "parkingSpot",
+  "eventName",
+  "eventDateTime",
+  "headcount"
+]);
 const POS_RESTAURANT_INCLUDE = {
   locations: { where: { active: true }, orderBy: { createdAt: "asc" } },
+  deliveryZones: { where: { active: true }, orderBy: { createdAt: "asc" } },
   merchantAccounts: true
 };
 
@@ -74,6 +109,99 @@ function cents(value, fallback = 0) {
 
 function safeJson(value, fallback) {
   return value && typeof value === "object" ? value : fallback;
+}
+
+export function normalizePosOrderFieldPolicy(settingsJson = {}) {
+  const configured = safeJson(safeJson(settingsJson, {}).posOrderFields, {});
+  return Object.fromEntries(Object.entries(DEFAULT_POS_ORDER_FIELD_POLICY).map(([orderType, defaults]) => [
+    orderType,
+    Object.fromEntries(Object.entries(defaults).map(([field, defaultMode]) => {
+      const requestedMode = String(configured?.[orderType]?.[field] || defaultMode).toUpperCase();
+      return [field, POS_ORDER_FIELD_MODES.has(requestedMode) ? requestedMode : defaultMode];
+    }))
+  ]));
+}
+
+function normalizePosCustomer(customerJson = {}) {
+  const source = safeJson(customerJson, {});
+  return Object.fromEntries([...POS_CUSTOMER_FIELDS].map((field) => [
+    field,
+    String(source[field] ?? "").trim().slice(0, field === "deliveryAddress" || field === "deliveryInstructions" ? 500 : 160)
+  ]));
+}
+
+async function loadPosOrderConfiguration(restaurantId) {
+  const restaurant = await prisma.restaurant.findUnique({
+    where: { id: restaurantId },
+    select: {
+      settingsJson: true,
+      deliveryFeeCents: true,
+      deliveryZones: {
+        where: { active: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, name: true, deliveryFeeCents: true, minimumOrderCents: true, radiusMiles: true }
+      }
+    }
+  });
+  if (!restaurant) throw httpError("Restaurant not found.", 404, { code: "POS_RESTAURANT_NOT_FOUND" });
+  return {
+    orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
+    deliveryFeeCents: cents(restaurant.deliveryFeeCents),
+    deliveryZones: restaurant.deliveryZones
+  };
+}
+
+function resolvePosDeliveryPricing(config, orderType, body, subtotalCents) {
+  if (orderType !== "DELIVERY") return { deliveryFeeCents: 0, deliveryZone: null };
+  if (!config.deliveryZones.length) {
+    return { deliveryFeeCents: config.deliveryFeeCents, deliveryZone: null };
+  }
+  const deliveryZoneId = String(body?.deliveryZoneId || "").trim();
+  if (!deliveryZoneId) {
+    throw httpError("Select a delivery zone before continuing.", 400, { code: "POS_DELIVERY_ZONE_REQUIRED" });
+  }
+  const deliveryZone = config.deliveryZones.find((zone) => zone.id === deliveryZoneId);
+  if (!deliveryZone) {
+    throw httpError("Delivery zone is not active for this restaurant.", 400, { code: "POS_DELIVERY_ZONE_INVALID" });
+  }
+  if (subtotalCents < deliveryZone.minimumOrderCents) {
+    throw httpError("Order does not meet the delivery zone minimum.", 400, {
+      code: "POS_DELIVERY_MINIMUM_NOT_MET",
+      minimumOrderCents: deliveryZone.minimumOrderCents
+    });
+  }
+  return { deliveryFeeCents: deliveryZone.deliveryFeeCents, deliveryZone };
+}
+
+async function validatePosOrderSetup({ restaurantId, orderType, customerJson, quote }) {
+  const config = await loadPosOrderConfiguration(restaurantId);
+  const customer = normalizePosCustomer(customerJson);
+  const policy = config.orderFieldPolicy[orderType] || {};
+  const missingFields = Object.entries(policy)
+    .filter(([, mode]) => mode === "REQUIRED")
+    .map(([field]) => field)
+    .filter((field) => !customer[field]);
+  if (missingFields.length) {
+    throw httpError("Required order setup details are missing.", 400, { code: "POS_ORDER_SETUP_REQUIRED", fields: missingFields });
+  }
+  for (const field of ["guestCount", "headcount"]) {
+    if (customer[field] && (!Number.isInteger(Number(customer[field])) || Number(customer[field]) < 1)) {
+      throw httpError(`${field === "guestCount" ? "Guest count" : "Headcount"} must be at least 1.`, 400, {
+        code: "POS_ORDER_SETUP_INVALID",
+        field
+      });
+    }
+  }
+  if (orderType === "DELIVERY") {
+    const pricing = resolvePosDeliveryPricing(config, orderType, { deliveryZoneId: customer.deliveryZoneId }, quote.subtotalCents);
+    if (pricing.deliveryFeeCents !== quote.deliveryFeeCents) {
+      throw httpError("Delivery pricing changed. Recalculate the order.", 409, { code: "POS_DELIVERY_PRICING_CHANGED" });
+    }
+  }
+  for (const [field, mode] of Object.entries(policy)) {
+    if (mode === "HIDDEN") customer[field] = "";
+  }
+  return customer;
 }
 
 export const ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE =
@@ -249,6 +377,172 @@ export async function assertPosPermission(user, restaurantId, permission) {
   return permissions;
 }
 
+async function activeStaffProfile(restaurantId, userId) {
+  return prisma.restaurantStaff.findFirst({
+    where: { restaurantId, userId, active: true }
+  });
+}
+
+function staffLocationIds(staff) {
+  return Array.isArray(staff?.locationIdsJson)
+    ? staff.locationIdsJson.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+}
+
+function assertStaffLocationAccess(staff, locationId) {
+  const locationIds = staffLocationIds(staff);
+  if (locationIds.length && (!locationId || !locationIds.includes(locationId))) {
+    throw httpError("This employee cannot operate the selected location.", 403, {
+      code: "POS_EMPLOYEE_LOCATION_DENIED"
+    });
+  }
+}
+
+async function ensurePinStaffProfile(restaurantId, user) {
+  const existing = await activeStaffProfile(restaurantId, user.id);
+  if (existing) return existing;
+  if (!PIN_MANAGEMENT_ROLES.has(user.role)) {
+    throw httpError("An active restaurant employee profile is required.", 403, {
+      code: "POS_STAFF_PROFILE_REQUIRED"
+    });
+  }
+  return prisma.restaurantStaff.upsert({
+    where: { userId: user.id },
+    update: { restaurantId, role: user.role, active: true },
+    create: { restaurantId, userId: user.id, role: user.role, active: true }
+  });
+}
+
+export async function cashierPinStatus({ restaurantId, user }) {
+  await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
+  const staff = await activeStaffProfile(restaurantId, user.id);
+  return {
+    configured: Boolean(staff?.posPinHash),
+    lockedUntil: staff?.posPinLockedUntil || null,
+    failedAttempts: staff?.posPinFailedAttempts || 0
+  };
+}
+
+export async function setCashierPin({ restaurantId, user, pin }) {
+  await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
+  if (!POS_PIN_PATTERN.test(String(pin || ""))) {
+    throw httpError("POS PIN must contain 4 to 8 digits.", 400, { code: "POS_PIN_INVALID" });
+  }
+  const staff = await ensurePinStaffProfile(restaurantId, user);
+  const posPinHash = await bcrypt.hash(String(pin), 12);
+  const updated = await prisma.restaurantStaff.update({
+    where: { id: staff.id },
+    data: {
+      posPinHash,
+      posPinFailedAttempts: 0,
+      posPinLockedUntil: null,
+      posPinUpdatedAt: new Date()
+    }
+  });
+  await recordAudit({
+    actorUserId: user.id,
+    restaurantId,
+    action: "pos.pin.updated",
+    entityType: "RestaurantStaff",
+    entityId: updated.id,
+    metadata: { role: updated.role }
+  });
+  return { configured: true, lockedUntil: null, failedAttempts: 0 };
+}
+
+export async function unlockPosDevice({ restaurantId, user, pin, deviceId, fingerprint, ipAddress = null, userAgent = null }) {
+  await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
+  const device = await requireActiveDevice({ restaurantId, deviceId, fingerprint });
+  const staff = await activeStaffProfile(restaurantId, user.id);
+  if (!staff?.posPinHash) {
+    throw httpError("A cashier PIN must be configured before this register can be unlocked.", 409, {
+      code: "POS_PIN_NOT_CONFIGURED"
+    });
+  }
+  const locationId = await resolvePosLocationId(restaurantId, device.locationId);
+  assertStaffLocationAccess(staff, locationId);
+  const now = new Date();
+  if (staff.posPinLockedUntil && staff.posPinLockedUntil > now) {
+    throw httpError("Too many incorrect PIN attempts. Try again later.", 423, {
+      code: "POS_PIN_LOCKED",
+      lockedUntil: staff.posPinLockedUntil
+    });
+  }
+  const valid = POS_PIN_PATTERN.test(String(pin || "")) && await bcrypt.compare(String(pin), staff.posPinHash);
+  if (!valid) {
+    const failedAttempts = (staff.posPinFailedAttempts || 0) + 1;
+    const lockedUntil = failedAttempts >= POS_PIN_MAX_ATTEMPTS
+      ? new Date(Date.now() + POS_PIN_LOCKOUT_MS)
+      : null;
+    await prisma.restaurantStaff.update({
+      where: { id: staff.id },
+      data: {
+        posPinFailedAttempts: lockedUntil ? 0 : failedAttempts,
+        posPinLockedUntil: lockedUntil
+      }
+    });
+    await recordAudit({
+      actorUserId: user.id,
+      restaurantId,
+      action: "pos.pin.failed",
+      entityType: "RestaurantStaff",
+      entityId: staff.id,
+      metadata: { deviceId: device.id, failedAttempts, locked: Boolean(lockedUntil), ipAddress, userAgent }
+    });
+    throw httpError(lockedUntil ? "Too many incorrect PIN attempts. Try again later." : "Incorrect POS PIN.", lockedUntil ? 423 : 401, {
+      code: lockedUntil ? "POS_PIN_LOCKED" : "POS_PIN_INCORRECT",
+      lockedUntil,
+      attemptsRemaining: Math.max(0, POS_PIN_MAX_ATTEMPTS - failedAttempts)
+    });
+  }
+  await prisma.restaurantStaff.update({
+    where: { id: staff.id },
+    data: { posPinFailedAttempts: 0, posPinLockedUntil: null, posLastUnlockedAt: now }
+  });
+  await recordAudit({
+    actorUserId: user.id,
+    restaurantId,
+    action: "pos.register.unlocked",
+    entityType: "PosDevice",
+    entityId: device.id,
+    metadata: { employeeUserId: user.id, locationId, ipAddress, userAgent }
+  });
+  return {
+    unlocked: true,
+    unlockedAt: now,
+    posSessionToken: signPosSessionToken({
+      userId: user.id,
+      restaurantId,
+      staffId: staff.id,
+      deviceId: device.id,
+      locationId
+    }),
+    device: { id: device.id, name: device.name, locationId },
+    employee: { id: user.id, name: user.name, email: user.email, role: user.role }
+  };
+}
+
+export async function listPosOrders({ restaurantId, user, deviceId, fingerprint, recent = false }) {
+  await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
+  const device = await requireActiveDevice({ restaurantId, deviceId, fingerprint });
+  const staff = await activeStaffProfile(restaurantId, user.id);
+  const locationId = await resolvePosLocationId(restaurantId, device.locationId);
+  if (staff) assertStaffLocationAccess(staff, locationId);
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  const orders = await prisma.order.findMany({
+    where: {
+      restaurantId,
+      ...(locationId ? { locationId } : { locationId: null }),
+      ...(recent ? { createdAt: { gte: since } } : { status: { in: OPEN_ORDER_STATUSES } })
+    },
+    include: { customer: true, items: true, payment: true, restaurantOrderPayment: true, location: true },
+    orderBy: { createdAt: "desc" },
+    take: 50
+  });
+  return { orders, locationId, scope: recent ? "TODAY" : "OPEN" };
+}
+
 export async function touchDevice({ restaurantId, deviceId, fingerprint }) {
   const fingerprintHash = hashDeviceFingerprint(restaurantId, fingerprint);
   if (!deviceId && !fingerprintHash) return null;
@@ -333,10 +627,11 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
     device = await activeInternalDevelopmentDevice(restaurant.id);
   }
   const shift = await currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null });
-  const [cashDrawers, registers, devices] = await Promise.all([
+  const [cashDrawers, registers, devices, pinStatus] = await Promise.all([
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posRegister.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
-    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 })
+    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 }),
+    cashierPinStatus({ restaurantId: restaurant.id, user })
   ]);
   return {
     restaurant: {
@@ -346,12 +641,15 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
       timezone: restaurant.timezone
     },
     locations: restaurant.locations,
+    deliveryZones: restaurant.deliveryZones,
+    orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
     permissions,
     device,
     shift,
     cashDrawers,
     registers,
-    devices
+    devices,
+    pinStatus
   };
 }
 
@@ -487,8 +785,9 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
 
   const subtotalCents = normalizedItems.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const discountCents = cents(body?.discountCents);
-  const deliveryFeeCents = orderType === "DELIVERY" ? cents(body?.deliveryFeeCents) : 0;
-  const tipCents = cents(body?.tipCents);
+  const orderConfiguration = await loadPosOrderConfiguration(restaurantId);
+  const { deliveryFeeCents } = resolvePosDeliveryPricing(orderConfiguration, orderType, body, subtotalCents);
+  const tipCents = 0;
   const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
   const taxCents = Math.round((taxableAmountCents * await taxRateBps(restaurantId)) / 10_000);
   const totalCents = Math.max(0, taxableAmountCents + deliveryFeeCents + taxCents + tipCents);
@@ -580,6 +879,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
   if (!quote || quote.voidedAt) throw httpError("POS quote not found.", 404);
   if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409);
   if (quote.acceptedAt) throw httpError("POS quote has already been submitted.", 409);
+  const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
 
   const result = await prisma.$transaction(async (tx) => {
     const claimed = await tx.orderQuote.updateMany({
@@ -594,7 +894,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
     });
     if (claimed.count !== 1) throw httpError("POS quote has already been submitted or expired.", 409);
 
-    const customer = await ensurePosCustomer(tx, restaurantId, quote.id, customerJson);
+    const customer = await ensurePosCustomer(tx, restaurantId, quote.id, normalizedCustomer);
     const orderNumber = await nextOrderNumber(tx, restaurantId);
     const order = await tx.order.create({
       data: {
@@ -611,8 +911,8 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
         tipCents: quote.tipCents,
         restaurantTipCents: quote.tipCents,
         totalCents: quote.totalCents,
-        deliveryAddress: customerJson?.deliveryAddress || null,
-        notes: String(notes || customerJson?.notes || "").slice(0, 1000),
+        deliveryAddress: normalizedCustomer.deliveryAddress || null,
+        notes: String(notes || "").slice(0, 1000),
         items: {
           create: quote.lineItemsJson.map((line) => ({
             menuItemId: line.menuItemId,
@@ -810,7 +1110,11 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
     entityId: result.payment.id,
     metadata: { orderId: order.id, deviceId: device.id, cashDrawerId: cashDrawer.id }
   });
-  return result;
+  return {
+    ...result,
+    amountReceivedCents: paidAmount,
+    changeDueCents: Math.max(0, paidAmount - order.totalCents)
+  };
 }
 
 export async function cardPaymentIntent({ restaurantId, user, orderId, deviceId, fingerprint }) {

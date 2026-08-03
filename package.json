@@ -24,6 +24,7 @@
     "smoke:production": "node scripts/production-smoke-test.mjs",
     "test:introductory-program": "node scripts/introductory-program-test.mjs",
     "test:pos-all-plans": "node scripts/pos-all-plans-test.mjs",
+    "test:pos-enterprise": "node scripts/pos-enterprise-workflow-test.mjs",
     "test:trial-pos-entitlements": "node scripts/trial-pos-entitlements-test.mjs",
     "test:pos-payment-separation": "node scripts/pos-payment-separation-test.mjs",
     "test:media": "node scripts/media-test.mjs",
