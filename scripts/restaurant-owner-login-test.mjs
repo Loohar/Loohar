@@ -25,7 +25,7 @@ function sliceBetween(content, startNeedle, endNeedle) {
 }
 
 const bootstrapMain = sliceBetween(bootstrap, "async function main()", "\nmain()");
-const authResponseBlock = sliceBetween(auth, "async function authResponse(user)", "\nconst credentialsSchema");
+const authResponseBlock = sliceBetween(auth, "async function authResponse(user, req", "\nconst credentialsSchema");
 const demoLoginEmailForRequest = sliceBetween(auth, "function demoLoginEmailForRequest(", "\nfunction userEmailWhere");
 const demoLoginRoute = sliceBetween(auth, 'router.post("/demo-login"', '\nrouter.post("/change-password"');
 const normalizeSessionUser = sliceBetween(app, "function normalizeSessionUser(", "\nfunction safeReturnTo");
@@ -42,6 +42,7 @@ assertCheck(bootstrapMain.includes('role: "TENANT_OWNER"') && !bootstrapMain.inc
 assertCheck(bootstrapMain.includes("forcePasswordChange: true") && bootstrapMain.includes("temporaryPassword: true"), "Fixture forces first-login password change without exposing the password");
 assertCheck(bootstrapOutput.includes("maskEmail(user.email)") && !bootstrapOutput.includes("password:"), "Fixture output masks email and does not print password");
 assertCheck(authResponseBlock.includes("membershipsForUser(user)") && authResponseBlock.includes("memberships,"), "Login response includes verified memberships");
+assertCheck(authResponseBlock.includes("createAuthSession({ user, req })") && authResponseBlock.includes("signAccessToken(user, issuedSession.session)"), "Login response is bound to a persisted device session");
 assertCheck(normalizeSessionUser.includes("memberships") && normalizeSessionUser.includes("membership?.tenantSlug"), "Frontend stores backend memberships in the normalized session user");
 assertCheck(app.includes("dashboardPathFor(user)") && app.includes("primaryRestaurantSlugFor(user)"), "Post-login redirect uses normalized backend user and membership slug");
 assertCheck(app.includes('restaurant: "TENANT_OWNER"') && app.includes("mode !== \"platform\""), "Seeded restaurant login requests a tenant owner and is hidden from the generic platform login");

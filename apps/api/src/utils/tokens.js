@@ -19,9 +19,15 @@ const refreshSecret = () => {
   return "dev-refresh-secret";
 };
 
-export function signAccessToken(user) {
+export function signAccessToken(user, session = null) {
   return jwt.sign(
-    { sub: user.id, role: user.role, restaurantId: user.restaurantId || null, sessionVersion: user.sessionVersion || 0 },
+    {
+      sub: user.id,
+      sid: session?.id || user.sessionId || null,
+      role: user.role,
+      restaurantId: user.restaurantId || null,
+      sessionVersion: session?.sessionVersion ?? user.sessionVersion ?? 0
+    },
     accessSecret(),
     { expiresIn: "15m" }
   );

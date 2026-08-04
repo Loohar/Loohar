@@ -4153,7 +4153,7 @@ textarea {
   }
 
   .pos-entry-items > button {
-    @apply relative grid min-h-[112px] grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+    @apply relative grid min-h-[124px] grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
   }
 
   .pos-entry-items img,
@@ -4165,13 +4165,17 @@ textarea {
     @apply grid place-items-center bg-mint/10 text-mint;
   }
 
+  .pos-entry-item-copy {
+    @apply min-w-0 pr-24;
+  }
+
   .pos-entry-items strong,
   .pos-entry-items small {
     @apply block;
   }
 
   .pos-entry-items strong {
-    @apply font-black text-ink;
+    @apply line-clamp-2 font-black leading-tight text-ink;
   }
 
   .pos-entry-items small {
@@ -4182,8 +4186,20 @@ textarea {
     @apply absolute bottom-3 right-3 font-black text-mint;
   }
 
-  .pos-entry-items em {
+  .pos-entry-customize-badge {
     @apply absolute right-3 top-3 rounded-full bg-mint/10 px-2 py-1 text-[10px] font-black not-italic text-mint;
+  }
+
+  .pos-entry-empty-cart {
+    @apply flex min-h-[280px] flex-col items-center justify-center gap-3 text-slate-500;
+  }
+
+  .pos-entry-empty-cart strong {
+    @apply text-base font-black text-ink;
+  }
+
+  .pos-entry-empty-cart span {
+    @apply text-sm font-semibold;
   }
 
   .pos-entry-cart {

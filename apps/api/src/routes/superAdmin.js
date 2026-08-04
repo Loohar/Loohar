@@ -8,11 +8,12 @@ import { validate } from "../middleware/validate.js";
 import { provisionRestaurantTenant } from "../modules/platformBilling/platformBillingService.js";
 import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
+import { createAuthSession, revokeAllUserSessions, revokeRestaurantSessions } from "../services/authSessionService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
 import { maskEmail, normalizeEmail } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
-import { signAccessToken, signRefreshToken } from "../utils/tokens.js";
+import { signAccessToken } from "../utils/tokens.js";
 import { validatePublicSlug } from "../../../shared/reservedSlugs.js";
 
 const router = Router();
@@ -321,6 +322,7 @@ router.patch("/tenants/:businessId", updateBusiness);
 async function suspendBusiness(req, res, next) {
   try {
     const restaurant = await prisma.restaurant.update({ where: { id: req.params.restaurantId || req.params.businessId }, data: { status: "SUSPENDED" } });
+    await revokeRestaurantSessions({ restaurantId: restaurant.id, reason: "business_suspended" });
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "business.suspended", entityType: "Business", entityId: restaurant.id });
     res.json({ restaurant, business: restaurant });
   } catch (error) {
@@ -347,6 +349,9 @@ async function updateBusinessStatus(req, res, next) {
     const status = req.body.status;
     if (!["ACTIVE", "SUSPENDED", "PENDING", "DELETED"].includes(status)) return res.status(400).json({ error: "Status must be ACTIVE, SUSPENDED, PENDING, or DELETED." });
     const restaurant = await prisma.restaurant.update({ where: { id: req.params.restaurantId || req.params.businessId }, data: { status }, include: tenantInclude });
+    if (["SUSPENDED", "DELETED"].includes(status)) {
+      await revokeRestaurantSessions({ restaurantId: restaurant.id, reason: `business_${status.toLowerCase()}` });
+    }
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "business.status.updated", entityType: "Business", entityId: restaurant.id, metadata: { status: req.body.status } });
     res.json({ restaurant, business: restaurant });
   } catch (error) {
@@ -380,10 +385,11 @@ router.post("/restaurants/:restaurantId/impersonate", async (req, res, next) => 
       include: { restaurant: { select: { slug: true, name: true, businessName: true } } }
     });
     if (!user) return res.status(404).json({ error: "No restaurant admin found" });
+    const { session, refreshToken } = await createAuthSession({ user, req });
     await recordAudit({ actorUserId: req.user.id, restaurantId: req.params.restaurantId, action: "impersonation.started", entityType: "User", entityId: user.id });
     res.json({
-      accessToken: signAccessToken(user),
-      refreshToken: signRefreshToken(user),
+      accessToken: signAccessToken(user, session),
+      refreshToken,
       impersonatedUser: sanitizeUser(user)
     });
   } catch (error) {
@@ -413,6 +419,7 @@ router.post("/users/:userId/reset-password", async (req, res, next) => {
       },
       select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true, sessionVersion: true }
     });
+    await revokeAllUserSessions({ userId: updatedUser.id, reason: "admin_password_reset" });
     await sendAccountSetupEmail({ user: updatedUser }).catch(() => {});
     await recordAudit({ actorUserId: req.user.id, restaurantId: user.restaurantId, action: "user.password_reset_by_admin", entityType: "User", entityId: user.id });
     res.json({ user: updatedUser, passwordReset: { status: "generated", delivery: "set_password_email" } });
@@ -432,11 +439,15 @@ router.patch("/users/:userId/status", async (req, res, next) => {
     if (existing.role === "SUPER_ADMIN" && status !== "ACTIVE" && existing.id === req.user.id) {
       return res.status(400).json({ error: "You cannot disable your own Super Admin account." });
     }
+    const revokesSessions = ["DISABLED", "PASSWORD_RESET_REQUIRED", "SUSPENDED", "DELETED"].includes(status);
     const user = await prisma.user.update({
       where: { id: existing.id },
-      data: { status },
-      select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true }
+      data: { status, ...(revokesSessions ? { sessionVersion: { increment: 1 } } : {}) },
+      select: { id: true, email: true, name: true, role: true, status: true, restaurantId: true, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: true, lastLoginAt: true, sessionVersion: true }
     });
+    if (revokesSessions) {
+      await revokeAllUserSessions({ userId: user.id, reason: `user_status_${status.toLowerCase()}` });
+    }
     const action = status === "ACTIVE" ? "user.enabled" : status === "DISABLED" || status === "SUSPENDED" ? "user.disabled" : "user.status.updated";
     await recordAudit({ actorUserId: req.user.id, restaurantId: existing.restaurantId, action, entityType: "User", entityId: existing.id, metadata: { status } });
     res.json({ user });

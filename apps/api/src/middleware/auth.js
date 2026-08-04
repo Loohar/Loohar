@@ -1,4 +1,4 @@
-import { prisma } from "../config/prisma.js";
+import { isSessionExpired, loadSessionForAccessToken, revokeAuthSession, touchAuthSession } from "../services/authSessionService.js";
 import { verifyAccessToken } from "../utils/tokens.js";
 
 export function authError(res, status, code, error) {
@@ -16,9 +16,9 @@ export async function authenticateAccessToken(token) {
   if (!token) throw accessError("Missing bearer token", 401, "AUTH_ACCESS_TOKEN_MISSING");
 
   const payload = verifyAccessToken(token);
-  const user = await prisma.user.findUnique({
-    where: { id: payload.sub },
-    select: {
+  const session = await loadSessionForAccessToken({
+    payload,
+    userSelect: {
       id: true,
       email: true,
       name: true,
@@ -33,17 +33,30 @@ export async function authenticateAccessToken(token) {
       mfaEnabled: true,
       mfaSetupStatus: true,
       mfaVerifiedAt: true,
-      restaurant: { select: { id: true, name: true, businessName: true, slug: true } }
+      restaurant: { select: { id: true, name: true, businessName: true, slug: true, status: true } }
     }
   });
+  const user = session.user;
 
   if (!user) throw accessError("Invalid bearer token", 401, "AUTH_ACCESS_TOKEN_INVALID");
-  if ((payload.sessionVersion ?? 0) !== (user.sessionVersion || 0)) {
+  if (session.revokedAt) {
+    throw accessError("Session is no longer valid", 401, "AUTH_SESSION_REVOKED");
+  }
+  if (isSessionExpired(session)) {
+    await revokeAuthSession({ sessionId: session.id, reason: "expired" }).catch(() => {});
+    throw accessError("Access token session has expired", 401, "AUTH_SESSION_EXPIRED");
+  }
+  if ((payload.sessionVersion ?? 0) !== (session.sessionVersion || 0) || (session.sessionVersion || 0) !== (user.sessionVersion || 0)) {
     throw accessError("Session is no longer valid", 401, "AUTH_SESSION_REVOKED");
   }
   if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) {
     throw accessError("Account is not active", 403, "AUTH_USER_INACTIVE");
   }
+  if (user.role !== "SUPER_ADMIN" && ["SUSPENDED", "DELETED"].includes(user.restaurant?.status || "")) {
+    throw accessError("Tenant access denied", 403, "AUTH_TENANT_FORBIDDEN");
+  }
+
+  await touchAuthSession(session);
 
   return {
     id: user.id,
@@ -61,7 +74,9 @@ export async function authenticateAccessToken(token) {
     sessionVersion: user.sessionVersion,
     mfaEnabled: user.mfaEnabled,
     mfaSetupStatus: user.mfaSetupStatus,
-    mfaVerifiedAt: user.mfaVerifiedAt
+    mfaVerifiedAt: user.mfaVerifiedAt,
+    sessionId: session.id,
+    sessionExpiresAt: session.expiresAt
   };
 }
 

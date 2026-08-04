@@ -27,28 +27,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { io } from "socket.io-client";
-import QRCode from "qrcode";
-import DriverPwaApp from "./apps/driver/DriverApp.jsx";
-import {
-  CashierBadge,
-  CashierPinScreen,
-  NewOrderSetupScreen,
-  OrderCompleteScreen,
-  OrderEntryScreen,
-  OrderReviewScreen,
-  PaymentResultScreen,
-  PaymentSelectionScreen,
-  PosBootScreen,
-  PosOfflineScreen,
-  PosOrdersScreen,
-  RecoveryScreen,
-  RegisterHomeScreen,
-  RegisterLockScreen,
-  RegisterSettingsScreen,
-  ShiftManagementScreen
-} from "./apps/pos/PosWorkflowScreens.jsx";
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   POS_EVENT,
   POS_WORKFLOW,
@@ -69,6 +48,41 @@ const platformNavItems = [
   { id: "customer", label: "Customer", icon: Store },
   { id: "driver", label: "Driver", icon: Bike }
 ];
+
+let qrCodeLoader;
+let socketIoLoader;
+
+function lazyPosScreen(exportName) {
+  return lazy(() => import("./apps/pos/PosWorkflowScreens.jsx").then((module) => ({ default: module[exportName] })));
+}
+
+const DriverPwaApp = lazy(() => import("./apps/driver/DriverApp.jsx"));
+const CashierBadge = lazyPosScreen("CashierBadge");
+const CashierPinScreen = lazyPosScreen("CashierPinScreen");
+const NewOrderSetupScreen = lazyPosScreen("NewOrderSetupScreen");
+const OrderCompleteScreen = lazyPosScreen("OrderCompleteScreen");
+const OrderEntryScreen = lazyPosScreen("OrderEntryScreen");
+const OrderReviewScreen = lazyPosScreen("OrderReviewScreen");
+const PaymentResultScreen = lazyPosScreen("PaymentResultScreen");
+const PaymentSelectionScreen = lazyPosScreen("PaymentSelectionScreen");
+const PosBootScreen = lazyPosScreen("PosBootScreen");
+const PosOfflineScreen = lazyPosScreen("PosOfflineScreen");
+const PosOrdersScreen = lazyPosScreen("PosOrdersScreen");
+const RecoveryScreen = lazyPosScreen("RecoveryScreen");
+const RegisterHomeScreen = lazyPosScreen("RegisterHomeScreen");
+const RegisterLockScreen = lazyPosScreen("RegisterLockScreen");
+const RegisterSettingsScreen = lazyPosScreen("RegisterSettingsScreen");
+const ShiftManagementScreen = lazyPosScreen("ShiftManagementScreen");
+
+function loadQrCode() {
+  qrCodeLoader ||= import("qrcode");
+  return qrCodeLoader;
+}
+
+function loadSocketIoClient() {
+  socketIoLoader ||= import("socket.io-client");
+  return socketIoLoader;
+}
 
 const appName = import.meta.env.VITE_APP_NAME || "Loohar";
 const tenantRootDomain = import.meta.env.VITE_TENANT_ROOT_DOMAIN || import.meta.env.VITE_PLATFORM_DOMAIN || "loohar.com";
@@ -717,6 +731,7 @@ function paymentFeeDisclosureText(source = {}) {
 
 async function qrImageData(url) {
   if (!url) return "";
+  const { default: QRCode } = await loadQrCode();
   return QRCode.toDataURL(url, { width: 192, margin: 3, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#ffffff" } });
 }
 
@@ -3167,6 +3182,17 @@ function AppLoadingState({ title = "Loading Loohar", detail = "Checking live API
       <h2 className="mt-5 text-xl font-black text-ink">{title}</h2>
       <p className="mt-2 text-sm text-slate-500">{detail}</p>
     </div>
+  );
+}
+
+function PosChunkFallback({ restaurantName = "Restaurant" }) {
+  return (
+    <section className="pos-boot-screen" aria-live="polite" aria-busy="true">
+      <div className="pos-boot-mark"><Store size={30} /></div>
+      <h2>Preparing {restaurantName} POS</h2>
+      <p>Loading register screens.</p>
+      <div className="pos-boot-lines" aria-hidden="true"><span /><span /><span /></div>
+    </section>
   );
 }
 
@@ -8062,7 +8088,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       return await api(`${posBasePath}${path}`, {
         ...options,
         token,
-        authRetry: false,
         clearOnUnauthorized: false,
         skipDedupe: true,
         headers: {
@@ -9077,7 +9102,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   return (
-    <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""}`}>
+    <Suspense fallback={<PosChunkFallback restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />}>
+      <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""}`}>
       <div className="pos-workflow-topline">
         <CashierBadge user={workflow.context.unlockedBy || user} />
         <div className="pos-workflow-status">
@@ -9161,7 +9187,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+    </Suspense>
   );
 }
 function RestaurantPosPage({ children }) {
@@ -9944,20 +9971,28 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
 
   useEffect(() => {
     if (!apiOnline || !token || !restaurantId) return undefined;
-    const socket = io(API_ORIGIN, {
-      transports: ["websocket", "polling"],
-      auth: { token, scope: "restaurant", restaurantId }
-    });
+    let socket;
+    let disposed = false;
     const refresh = () => {
       window.clearTimeout(realtimeRefreshTimerRef.current);
       realtimeRefreshTimerRef.current = window.setTimeout(() => loadRestaurant({ force: true }), 500);
     };
-    socket.on("order:update", refresh);
-    socket.on("delivery:update", refresh);
-    socket.on("kitchen:update", refresh);
+    loadSocketIoClient().then(({ io }) => {
+      if (disposed) return;
+      socket = io(API_ORIGIN, {
+        transports: ["websocket", "polling"],
+        auth: { token, scope: "restaurant", restaurantId }
+      });
+      socket.on("order:update", refresh);
+      socket.on("delivery:update", refresh);
+      socket.on("kitchen:update", refresh);
+    }).catch(() => {
+      if (!disposed) setError("Realtime updates could not start. Manual refresh remains available.");
+    });
     return () => {
+      disposed = true;
       window.clearTimeout(realtimeRefreshTimerRef.current);
-      socket.disconnect();
+      socket?.disconnect();
     };
   }, [apiOnline, restaurantId, token]);
 
@@ -12149,43 +12184,55 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
 
   useEffect(() => {
     if (!apiOnline || !token || !restaurant?.id || !realtimePrerequisitesReady || !reconciliationCursorRef.current) return undefined;
-    const socket = io(API_ORIGIN, {
-      transports: ["websocket", "polling"],
-      auth: {
-        token,
-        scope: "kitchen",
-        restaurantId: restaurant.id,
-        locationId: selectedLocationId || undefined
+    let socket;
+    let reconciliationTimer;
+    let disposed = false;
+    let sessionEnded = false;
+    loadSocketIoClient().then(({ io }) => {
+      if (disposed) return;
+      socket = io(API_ORIGIN, {
+        transports: ["websocket", "polling"],
+        auth: {
+          token,
+          scope: "kitchen",
+          restaurantId: restaurant.id,
+          locationId: selectedLocationId || undefined
+        }
+      });
+      socket.on("connect", () => {
+        sessionEnded = false;
+        setRealtimeState("reconciling");
+        loadKitchen({ reconcile: true, silent: true }).then((reconciled) => {
+          setRealtimeState(reconciled ? "live" : "error");
+        });
+      });
+      socket.on("connect_error", (socketError) => {
+        setRealtimeState("error");
+        setError(socketError.message || "Kitchen realtime connection failed.");
+      });
+      socket.on("realtime:session-ended", () => {
+        sessionEnded = true;
+        setRealtimeState("error");
+        setError("Your session expired or was revoked. Sign in again to resume Kitchen realtime updates.");
+      });
+      socket.on("disconnect", () => {
+        if (!sessionEnded) setRealtimeState("reconnecting");
+      });
+      socket.on("kitchen.ticket.created.v1", applyKitchenEvent);
+      socket.on("kitchen.ticket.updated.v1", applyKitchenEvent);
+      socket.on("kitchen.ticket.cancelled.v1", applyKitchenEvent);
+      socket.on("order.status.updated.v1", applyKitchenEvent);
+      reconciliationTimer = window.setInterval(() => loadKitchen({ reconcile: true, silent: true }), 30_000);
+    }).catch(() => {
+      if (!disposed) {
+        setRealtimeState("error");
+        setError("Kitchen realtime connection failed to load. Manual refresh remains available.");
       }
     });
-    let sessionEnded = false;
-    socket.on("connect", () => {
-      sessionEnded = false;
-      setRealtimeState("reconciling");
-      loadKitchen({ reconcile: true, silent: true }).then((reconciled) => {
-        setRealtimeState(reconciled ? "live" : "error");
-      });
-    });
-    socket.on("connect_error", (socketError) => {
-      setRealtimeState("error");
-      setError(socketError.message || "Kitchen realtime connection failed.");
-    });
-    socket.on("realtime:session-ended", () => {
-      sessionEnded = true;
-      setRealtimeState("error");
-      setError("Your session expired or was revoked. Sign in again to resume Kitchen realtime updates.");
-    });
-    socket.on("disconnect", () => {
-      if (!sessionEnded) setRealtimeState("reconnecting");
-    });
-    socket.on("kitchen.ticket.created.v1", applyKitchenEvent);
-    socket.on("kitchen.ticket.updated.v1", applyKitchenEvent);
-    socket.on("kitchen.ticket.cancelled.v1", applyKitchenEvent);
-    socket.on("order.status.updated.v1", applyKitchenEvent);
-    const reconciliationTimer = window.setInterval(() => loadKitchen({ reconcile: true, silent: true }), 30_000);
     return () => {
-      window.clearInterval(reconciliationTimer);
-      socket.disconnect();
+      disposed = true;
+      if (reconciliationTimer) window.clearInterval(reconciliationTimer);
+      socket?.disconnect();
     };
   }, [apiOnline, restaurant?.id, selectedLocationId, token, routeSlug, realtimePrerequisitesReady]);
 
@@ -13520,7 +13567,11 @@ export default function App() {
     if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <div className="min-h-screen bg-[#f7f8fb] px-4 py-6 text-slate-700"><AppLoadingState /></div>;
     if (apiOnline && !user) return <AccessDenied title="Please sign in to continue." loginHref={loginHrefWithReturnTo("/login")} detail="Driver login is required for this route." />;
     if (apiOnline && user?.role !== "DRIVER") return <AccessDenied loginHref="/login" detail="The Driver app is available only to driver accounts." />;
-    return <DriverPwaApp apiOnline={apiOnline} token={token} />;
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-[#f7f8fb] px-4 py-6 text-slate-700"><AppLoadingState title="Loading driver app" detail="Preparing assigned deliveries." /></div>}>
+        <DriverPwaApp apiOnline={apiOnline} token={token} />
+      </Suspense>
+    );
   }
 
   if (isKitchenRoute) {

@@ -391,9 +391,39 @@ model User {
   customerProfile Customer?
   driverProfile   Driver?
   passwordResetTokens PasswordResetToken[]
+  authSessions    AuthSession[]
   auditLogs       AuditLog[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+}
+
+model AuthSession {
+  id                       String      @id @default(cuid())
+  userId                   String
+  restaurantId             String?
+  sessionFamilyId          String
+  refreshTokenHash         String      @unique
+  previousRefreshTokenHash String?
+  deviceId                 String?
+  deviceName               String?
+  deviceType               String?
+  userAgentHash            String?
+  ipAddress                String?
+  sessionVersion           Int         @default(0)
+  metadata                 Json?
+  createdAt                DateTime    @default(now())
+  lastSeenAt               DateTime    @default(now())
+  expiresAt                DateTime
+  revokedAt                DateTime?
+  revokedReason            String?
+  rotatedAt                DateTime?
+  user                     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant               Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@index([sessionFamilyId])
+  @@index([restaurantId])
 }
 
 model PasswordResetToken {
@@ -494,6 +524,7 @@ model Restaurant {
   posOrderSessions    PosOrderSession[]
   orderQuotes         OrderQuote[]
   posReceipts         PosReceipt[]
+  authSessions        AuthSession[]
   printerSettings     RestaurantPrinterSettings?
   notificationSettings RestaurantNotificationSettings?
   deliveryZones       DeliveryZone[]

@@ -6,12 +6,20 @@ import { prisma } from "../config/prisma.js";
 import { authError, requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
+import {
+  createAuthSession,
+  isSessionExpired,
+  loadSessionForAccessToken,
+  revokeAllUserSessions,
+  revokeAuthSession,
+  rotateAuthSessionRefreshToken
+} from "../services/authSessionService.js";
 import { notifyPasswordReset } from "../services/notificationService.js";
 import { createPasswordResetLink, hashPasswordResetToken } from "../services/passwordResetService.js";
 import { updateSupabaseAuthPassword } from "../services/supabaseAuthService.js";
 import { authDiagnostic, maskEmail, normalizeEmail, strongPasswordSchema } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/tokens.js";
+import { signAccessToken, verifyAccessToken } from "../utils/tokens.js";
 
 const router = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
@@ -83,7 +91,11 @@ async function membershipsForUser(user) {
 
   const staffMemberships = await prisma.restaurantStaff.findMany({
     where: { userId: user.id },
-    include: { restaurant: { select: { id: true, name: true, businessName: true, slug: true, status: true } } }
+    select: {
+      role: true,
+      active: true,
+      restaurant: { select: { id: true, name: true, businessName: true, slug: true, status: true } }
+    }
   });
 
   for (const staff of staffMemberships) {
@@ -98,14 +110,15 @@ async function membershipsForUser(user) {
   return [...memberships.values()];
 }
 
-async function authResponse(user) {
+async function authResponse(user, req, sessionContext = null) {
   const safeUser = publicUser(user);
   const memberships = await membershipsForUser(user);
+  const issuedSession = sessionContext || await createAuthSession({ user, req });
   return {
     user: safeUser,
     memberships,
-    accessToken: signAccessToken(user),
-    refreshToken: signRefreshToken(user)
+    accessToken: signAccessToken(user, issuedSession.session),
+    refreshToken: issuedSession.refreshToken
   };
 }
 
@@ -146,22 +159,26 @@ function isProductionDefaultAdmin(email) {
 }
 
 function demoLoginEnabled() {
-  return process.env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_LOGIN === "true";
+  if (process.env.NODE_ENV !== "production") return true;
+  const environmentName = String(process.env.LOOHAR_ENV || process.env.APP_ENV || process.env.DEPLOY_ENV || process.env.VERCEL_ENV || "").toLowerCase();
+  return process.env.ENABLE_DEMO_LOGIN === "true" && ["staging", "preview", "development", "test"].includes(environmentName);
 }
 
 function demoEmailForMode(mode = "platform") {
+  const superAdminFixtureEmail = normalizeEmail(process.env.SMOKE_SUPER_ADMIN_EMAIL || process.env.DEMO_SUPER_ADMIN_EMAIL || "");
   return {
-    platform: "admin@platform.local",
-    admin: "admin@platform.local",
+    platform: superAdminFixtureEmail || (process.env.NODE_ENV !== "production" ? "admin@platform.local" : null),
+    admin: superAdminFixtureEmail || (process.env.NODE_ENV !== "production" ? "admin@platform.local" : null),
     restaurant: "owner@demobistro.local",
     driver: "driver@demobistro.local",
     customer: "customer@demo.local"
-  }[mode] || "admin@platform.local";
+  }[mode] || superAdminFixtureEmail || (process.env.NODE_ENV !== "production" ? "admin@platform.local" : null);
 }
 
 function demoEmailForRole(role) {
+  const superAdminFixtureEmail = normalizeEmail(process.env.SMOKE_SUPER_ADMIN_EMAIL || process.env.DEMO_SUPER_ADMIN_EMAIL || "");
   return {
-    SUPER_ADMIN: "admin@platform.local",
+    SUPER_ADMIN: superAdminFixtureEmail || (process.env.NODE_ENV !== "production" ? "admin@platform.local" : null),
     TENANT_OWNER: "owner@demobistro.local",
     RESTAURANT_ADMIN: "owner@demobistro.local",
     RESTAURANT_OWNER: "owner@demobistro.local",
@@ -213,7 +230,18 @@ function demoUserAvailable(user) {
 async function findDemoUser({ email, role }) {
   const preferred = email ? await findUserByEmail(email, authUserSelect()) : null;
   if (demoUserAvailable(preferred)) return preferred;
-  if (!role || role === "SUPER_ADMIN") return null;
+  if (role === "SUPER_ADMIN") {
+    return prisma.user.findFirst({
+      where: {
+        role: "SUPER_ADMIN",
+        status: { in: ["ACTIVE", "PASSWORD_RESET_REQUIRED"] },
+        ...(process.env.NODE_ENV === "production" ? { NOT: userEmailWhere("admin@platform.local") } : {})
+      },
+      orderBy: [{ lastLoginAt: "desc" }, { createdAt: "asc" }],
+      select: authUserSelect()
+    });
+  }
+  if (!role) return null;
   for (const fallbackEmail of demoFallbackEmailsForRole(role)) {
     const fallback = await findUserByEmail(fallbackEmail, authUserSelect());
     if (demoUserAvailable(fallback)) return fallback;
@@ -240,7 +268,7 @@ router.post("/register", validate(credentialsSchema), async (req, res, next) => 
       data: { email: normalizedEmail, passwordHash, name: name || normalizedEmail, role, restaurantId, temporaryPassword: false, forcePasswordChange: false, passwordChangedAt: new Date() },
       select: authUserSelect()
     });
-    res.status(201).json(await authResponse(user));
+    res.status(201).json(await authResponse(user, req));
   } catch (error) {
     next(error);
   }
@@ -274,7 +302,7 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
     await recordAudit({ action: "login.success", entityType: "User", entityId: updatedUser.id, actorUserId: updatedUser.id, restaurantId: updatedUser.restaurantId, metadata: { role: updatedUser.role } }).catch(() => {});
     authDiagnostic("auth.login.success", { email: updatedUser.email, userId: updatedUser.id, role: updatedUser.role });
     authDiagnostic("auth.session.created", { userId: updatedUser.id, role: updatedUser.role });
-    res.json(await authResponse(updatedUser));
+    res.json(await authResponse(updatedUser, req));
   } catch (error) {
     next(error);
   }
@@ -292,7 +320,7 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
       select: authUserSelect()
     });
     await recordAudit({ action: "login.demo", entityType: "User", entityId: updatedUser.id, actorUserId: updatedUser.id, restaurantId: updatedUser.restaurantId, metadata: { role: updatedUser.role } }).catch(() => {});
-    res.json(await authResponse(updatedUser));
+    res.json(await authResponse(updatedUser, req));
   } catch (error) {
     next(error);
   }
@@ -316,8 +344,9 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
       },
       select: authUserSelect()
     });
+    await revokeAllUserSessions({ userId: user.id, reason: "password_changed" });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.changed", entityType: "User", entityId: user.id });
-    res.json({ ...(await authResponse(user)), passwordSync });
+    res.json({ ...(await authResponse(user, req)), passwordSync });
   } catch (error) {
     next(error);
   }
@@ -326,24 +355,30 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
 async function refreshToken(req, res, next) {
   try {
     if (!req.body?.refreshToken) return authError(res, 401, "AUTH_REFRESH_TOKEN_MISSING", "Refresh token is required");
-    const payload = verifyRefreshToken(req.body.refreshToken);
-    const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: authUserSelect() });
-    const tokenSessionVersion = payload.sessionVersion ?? 0;
+    const { user, session, refreshToken: nextRefreshToken } = await rotateAuthSessionRefreshToken({
+      refreshToken: req.body.refreshToken,
+      req,
+      userSelect: authUserSelect()
+    });
     if (!user || isProductionDefaultAdmin(user.email)) {
       await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user" } }).catch(() => {});
       return authError(res, 401, "AUTH_REFRESH_TOKEN_INVALID", "Invalid refresh token");
     }
-    if (tokenSessionVersion !== (user.sessionVersion || 0)) {
-      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: "session_revoked" } }).catch(() => {});
-      return authError(res, 401, "AUTH_SESSION_REVOKED", "Session is no longer valid");
-    }
     if (!canLoginWithStatus(user.status)) {
+      await revokeAuthSession({ sessionId: session.id, reason: "inactive_user" }).catch(() => {});
       await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: "inactive_status", status: user.status } }).catch(() => {});
       return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
     }
-    res.json(await authResponse(user));
+    if (user.role !== "SUPER_ADMIN" && ["SUSPENDED", "DELETED"].includes(user.restaurant?.status || "")) {
+      await revokeAuthSession({ sessionId: session.id, reason: "tenant_access_revoked" }).catch(() => {});
+      await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: "tenant_inactive", status: user.restaurant?.status } }).catch(() => {});
+      return authError(res, 403, "AUTH_TENANT_FORBIDDEN", "Tenant access denied");
+    }
+    res.json(await authResponse(user, req, { session, refreshToken: nextRefreshToken }));
   } catch (error) {
     await recordAudit({ action: "token.refresh.failed", entityType: "RefreshToken", metadata: { reason: error.name || "invalid_token" } }).catch(() => {});
+    if (error.code === "AUTH_SESSION_REVOKED") return authError(res, 401, "AUTH_SESSION_REVOKED", error.message || "Session is no longer valid");
+    if (error.status && error.code) return authError(res, error.status, error.code, error.message);
     if (error.name === "TokenExpiredError") return authError(res, 401, "AUTH_REFRESH_TOKEN_EXPIRED", "Refresh token has expired");
     if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) return authError(res, 401, "AUTH_REFRESH_TOKEN_INVALID", "Invalid refresh token");
     next(error);
@@ -352,6 +387,44 @@ async function refreshToken(req, res, next) {
 
 router.post("/refresh-token", refreshLimiter, refreshToken);
 router.post("/refresh", refreshLimiter, refreshToken);
+
+async function authenticateLogoutRequest(req, res) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) {
+    authError(res, 401, "AUTH_ACCESS_TOKEN_MISSING", "Missing bearer token");
+    return null;
+  }
+
+  try {
+    const payload = verifyAccessToken(token);
+    const session = await loadSessionForAccessToken({ payload, userSelect: authUserSelect() });
+    const user = session.user;
+    return {
+      payload,
+      user,
+      session,
+      alreadyRevoked: Boolean(session.revokedAt)
+        || isSessionExpired(session)
+        || (payload.sessionVersion ?? 0) !== (session.sessionVersion || 0)
+        || (session.sessionVersion || 0) !== (user.sessionVersion || 0)
+    };
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      authError(res, 401, "AUTH_ACCESS_TOKEN_EXPIRED", "Access token has expired");
+      return null;
+    }
+    if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) {
+      authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
+      return null;
+    }
+    if (error.status && error.code) {
+      authError(res, error.status, error.code, error.message);
+      return null;
+    }
+    throw error;
+  }
+}
 
 router.post("/forgot-password", passwordLimiter, validate(forgotPasswordSchema), async (req, res, next) => {
   try {
@@ -394,16 +467,52 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
         select: authUserSelect()
       });
     });
+    await revokeAllUserSessions({ userId: user.id, reason: "password_reset_completed" });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.reset.completed", entityType: "User", entityId: user.id });
-    res.json({ ...(await authResponse(user)), passwordSync });
+    res.json({ ...(await authResponse(user, req)), passwordSync });
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/logout", requireAuth, async (req, res, next) => {
+router.post("/logout", async (req, res, next) => {
   try {
-    await recordAudit({ actorUserId: req.user.id, restaurantId: req.user.restaurantId, action: "logout", entityType: "User", entityId: req.user.id });
+    const context = await authenticateLogoutRequest(req, res);
+    if (!context) return;
+    const user = context.user;
+    if (!context.alreadyRevoked) {
+      await revokeAuthSession({ sessionId: context.session.id, reason: "logout" });
+    }
+    await recordAudit({
+      actorUserId: user.id,
+      restaurantId: user.restaurantId,
+      action: "logout",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { alreadyRevoked: context.alreadyRevoked, revocation: "authSession.current_device", sessionId: context.session.id }
+    });
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/logout-all-devices", requireAuth, async (req, res, next) => {
+  try {
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { sessionVersion: { increment: 1 } },
+      select: authUserSelect()
+    });
+    await revokeAllUserSessions({ userId: user.id, reason: "logout_all_devices" });
+    await recordAudit({
+      actorUserId: user.id,
+      restaurantId: user.restaurantId,
+      action: "logout.all_devices",
+      entityType: "User",
+      entityId: user.id,
+      metadata: { revocation: "authSession.all_devices" }
+    });
     res.status(204).send();
   } catch (error) {
     next(error);

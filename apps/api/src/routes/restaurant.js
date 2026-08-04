@@ -9,6 +9,7 @@ import { assertUsageLimitForRestaurant, featureGuard, loadRestaurantEntitlements
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
+import { revokeAllUserSessions } from "../services/authSessionService.js";
 import { notifyDriverAssignment, notifyOrderStatusUpdate } from "../services/notificationService.js";
 import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } from "../services/orderWorkflowService.js";
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
@@ -1767,16 +1768,22 @@ router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
     const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
     if (!existing) return res.status(404).json({ error: "Employee not found" });
     const role = req.body.role ? sanitizeEmployeeRole(req.body.role) : existing.role;
+    const normalizedStatus = req.body.status ? req.body.status.toString().toUpperCase() : null;
+    const revokeSessions = role !== existing.role || (normalizedStatus && normalizedStatus !== "ACTIVE");
     const user = await prisma.user.update({
       where: { id: existing.id },
       data: {
         ...(req.body.name ? { name: req.body.name } : {}),
         ...(req.body.email ? { email: normalizeEmail(req.body.email) } : {}),
         ...(req.body.phone !== undefined ? { phone: req.body.phone } : {}),
-        ...(req.body.status ? { status: req.body.status } : {}),
-        role
+        ...(normalizedStatus ? { status: normalizedStatus } : {}),
+        role,
+        ...(revokeSessions ? { sessionVersion: { increment: 1 } } : {})
       }
     });
+    if (revokeSessions) {
+      await revokeAllUserSessions({ userId: user.id, reason: role !== existing.role ? "employee_role_changed" : `employee_status_${normalizedStatus.toLowerCase()}` });
+    }
     if (role === "DRIVER") {
       if (existing.staffProfile) await prisma.restaurantStaff.delete({ where: { id: existing.staffProfile.id } });
       await prisma.driver.upsert({
@@ -1804,7 +1811,8 @@ router.patch("/:restaurantId/employees/:employeeId/disable", async (req, res, ne
     const restaurantId = restaurantIdFor(req);
     const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
     if (!existing) return res.status(404).json({ error: "Employee not found" });
-    const user = await prisma.user.update({ where: { id: existing.id }, data: { status: "SUSPENDED" }, include: { staffProfile: true, driverProfile: true } });
+    const user = await prisma.user.update({ where: { id: existing.id }, data: { status: "SUSPENDED", sessionVersion: { increment: 1 } }, include: { staffProfile: true, driverProfile: true } });
+    await revokeAllUserSessions({ userId: user.id, reason: "employee_disabled" });
     if (user.staffProfile) await prisma.restaurantStaff.update({ where: { id: user.staffProfile.id }, data: { active: false } });
     if (user.driverProfile) await prisma.driver.update({ where: { id: user.driverProfile.id }, data: { available: false } });
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.disabled", entityType: "User", entityId: user.id });
