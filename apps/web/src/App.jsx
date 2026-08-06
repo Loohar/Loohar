@@ -6581,7 +6581,13 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     customer: "CUSTOMER"
   };
   const demoLoginRole = demoRoleByMode[mode] || "SUPER_ADMIN";
-  const showDemoLogin = import.meta.env.DEV && mode !== "platform";
+  const previewHostAllowsDemoLogin = typeof window !== "undefined"
+    && window.location.hostname.endsWith(".vercel.app")
+    && window.location.hostname.includes("-git-feature-");
+  const clientAllowsDemoLogin = import.meta.env.DEV
+    || import.meta.env.VITE_ENABLE_DEMO_LOGIN === "true"
+    || previewHostAllowsDemoLogin;
+  const showDemoLogin = clientAllowsDemoLogin && mode !== "platform";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
