@@ -75,7 +75,7 @@ const prisma = new PrismaClient({
 
 try {
   const dbRows = await prisma.$queryRaw`SELECT current_database() AS database_name`;
-  const authSessionRows = await prisma.$queryRaw`SELECT to_regclass('public."AuthSession"') AS table_name`;
+  const authSessionRows = await prisma.$queryRaw`SELECT to_regclass('public."AuthSession"')::text AS table_name`;
   const migrationRows = await prisma.$queryRaw`
     SELECT migration_name, finished_at
     FROM "_prisma_migrations"

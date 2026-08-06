@@ -48,6 +48,11 @@ assertCheck(
 );
 
 assertCheck(
+  identityScript.includes("to_regclass('public.\"AuthSession\"')::text"),
+  "Staging identity probe casts AuthSession table metadata to text for Prisma compatibility"
+);
+
+assertCheck(
   packageJson.includes("\"staging:db:identity\"") &&
     apiPackageJson.includes("\"staging:db:identity\"") &&
     apiPackageJson.includes("\"staging:db:identity:current\""),
