@@ -1,6 +1,11 @@
 import { prisma } from "../config/prisma.js";
 
-const REQUIRED_MIGRATION = "20260724090000_development_entitlement_simulation";
+const REQUIRED_MIGRATIONS = [
+  "20260724090000_development_entitlement_simulation",
+  "20260802120000_enterprise_pos_workflows",
+  "20260804090000_auth_device_sessions"
+];
+const REQUIRED_MIGRATION = REQUIRED_MIGRATIONS[REQUIRED_MIGRATIONS.length - 1];
 const CHECK_TTL_MS = 15_000;
 
 const state = {
@@ -21,6 +26,7 @@ export function schemaCompatibilitySnapshot() {
     ok: state.ok,
     checkedAt: state.checkedAt,
     requiredMigration: REQUIRED_MIGRATION,
+    requiredMigrations: REQUIRED_MIGRATIONS,
     issues: state.issues.map(publicIssue)
   };
 }
@@ -62,6 +68,61 @@ export async function refreshSchemaCompatibility({ force = false } = {}) {
       });
     }
 
+    const authSessionRows = await prisma.$queryRaw`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = 'AuthSession'
+      LIMIT 1
+    `;
+    if (!authSessionRows.length) {
+      issues.push({
+        code: "MISSING_AUTH_SESSION_TABLE",
+        message: "Database is missing AuthSession. Run the committed auth device sessions migration before starting this API build."
+      });
+    }
+
+    const staffColumnRows = await prisma.$queryRaw`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'RestaurantStaff'
+        AND column_name IN (
+          'locationIdsJson',
+          'posPinHash',
+          'posPinFailedAttempts',
+          'posPinLockedUntil',
+          'posPinUpdatedAt',
+          'posLastUnlockedAt'
+        )
+    `;
+    const staffColumnNames = new Set(staffColumnRows.map((row) => row.column_name));
+    for (const columnName of ["locationIdsJson", "posPinHash", "posPinFailedAttempts", "posPinLockedUntil", "posPinUpdatedAt", "posLastUnlockedAt"]) {
+      if (!staffColumnNames.has(columnName)) {
+        issues.push({
+          code: `MISSING_RESTAURANT_STAFF_${columnName.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_COLUMN`,
+          message: `Database is missing RestaurantStaff.${columnName}. Run the committed enterprise POS workflow migration before starting this API build.`
+        });
+      }
+    }
+
+    const orderTypeRows = await prisma.$queryRaw`
+      SELECT enumlabel
+      FROM pg_enum
+      JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+      WHERE pg_type.typname = 'OrderType'
+        AND enumlabel IN ('DRIVE_THRU', 'CURBSIDE', 'CATERING')
+    `;
+    const orderTypeLabels = new Set(orderTypeRows.map((row) => row.enumlabel));
+    for (const enumLabel of ["DRIVE_THRU", "CURBSIDE", "CATERING"]) {
+      if (!orderTypeLabels.has(enumLabel)) {
+        issues.push({
+          code: `MISSING_ORDER_TYPE_${enumLabel}`,
+          message: `Database is missing OrderType.${enumLabel}. Run the committed enterprise POS workflow migration before starting this API build.`
+        });
+      }
+    }
+
     const enumRows = await prisma.$queryRaw`
       SELECT typname
       FROM pg_type
@@ -77,18 +138,20 @@ export async function refreshSchemaCompatibility({ force = false } = {}) {
       }
     }
 
-    const migrationRows = await prisma.$queryRaw`
-      SELECT migration_name
-      FROM "_prisma_migrations"
-      WHERE migration_name = ${REQUIRED_MIGRATION}
-        AND finished_at IS NOT NULL
-      LIMIT 1
-    `;
-    if (!migrationRows.length) {
-      issues.push({
-        code: "MISSING_REQUIRED_PRISMA_MIGRATION",
-        message: `Prisma migration ${REQUIRED_MIGRATION} has not been applied to this database.`
-      });
+    for (const migrationName of REQUIRED_MIGRATIONS) {
+      const migrationRows = await prisma.$queryRaw`
+        SELECT migration_name
+        FROM "_prisma_migrations"
+        WHERE migration_name = ${migrationName}
+          AND finished_at IS NOT NULL
+        LIMIT 1
+      `;
+      if (!migrationRows.length) {
+        issues.push({
+          code: "MISSING_REQUIRED_PRISMA_MIGRATION",
+          message: `Prisma migration ${migrationName} has not been applied to this database.`
+        });
+      }
     }
   } catch (error) {
     issues.push({
@@ -107,6 +170,7 @@ export async function refreshSchemaCompatibility({ force = false } = {}) {
   if (!state.ok) {
     console.error("Database schema is not compatible with this API build.", {
       requiredMigration: REQUIRED_MIGRATION,
+      requiredMigrations: REQUIRED_MIGRATIONS,
       issues: state.issues.map(publicIssue)
     });
   }
