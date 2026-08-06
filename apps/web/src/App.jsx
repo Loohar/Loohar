@@ -18,6 +18,7 @@ import {
   ReceiptText,
   RefreshCw,
   Search,
+  Settings2,
   Shield,
   Store,
   TicketPercent,
@@ -8865,6 +8866,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const effectiveWorkflow = !apiOnline ? POS_WORKFLOW.OFFLINE : workflow.value;
   const restaurantForPos = config?.restaurant || profile;
   const savingAction = Boolean(saving);
+  const registerControlOpensSettings = ownerOperator && effectiveWorkflow === POS_WORKFLOW.LOCKED;
+  const showRegisterControl = effectiveWorkflow !== POS_WORKFLOW.BOOTING
+    && effectiveWorkflow !== POS_WORKFLOW.OFFLINE
+    && (effectiveWorkflow !== POS_WORKFLOW.LOCKED || registerControlOpensSettings);
+  const returnFromRegisterSettings = () => {
+    if ([POS_WORKFLOW.LOCKED, POS_WORKFLOW.CASHIER_AUTHENTICATION].includes(workflow.previous)) {
+      lockRegister();
+      return;
+    }
+    returnHome();
+  };
   let workflowScreen;
 
   switch (effectiveWorkflow) {
@@ -9091,7 +9103,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           onSavePin={saveCashierPin}
           onRegister={registerDevice}
           onKiosk={() => activeDevice?.kioskModeEnabled ? setShowKioskExit(true) : setKiosk(true)}
-          onBack={returnHome}
+          onBack={returnFromRegisterSettings}
         />
       );
       break;
@@ -9118,8 +9130,15 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           <span>{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
         </div>
         <div className="pos-workflow-topline-actions">
-          {effectiveWorkflow !== POS_WORKFLOW.BOOTING && effectiveWorkflow !== POS_WORKFLOW.OFFLINE ? (
-            <button className="icon-button" type="button" onClick={lockRegister} aria-label="Lock register"><Shield size={18} /></button>
+          {showRegisterControl ? (
+            <button
+              className="icon-button"
+              type="button"
+              onClick={registerControlOpensSettings ? () => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS }) : lockRegister}
+              aria-label={registerControlOpensSettings ? "Open register settings" : "Lock register"}
+            >
+              {registerControlOpensSettings ? <Settings2 size={18} /> : <Shield size={18} />}
+            </button>
           ) : null}
           <button className="icon-button" type="button" onClick={() => loadPos()} disabled={loading} aria-label="Refresh register"><RefreshCw size={18} /></button>
         </div>
