@@ -24,6 +24,7 @@ import {
   Wifi,
   WifiOff
 } from "lucide-react";
+import { shouldOpenCustomization } from "./customization.js";
 
 function money(cents = 0) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
@@ -295,7 +296,7 @@ export function OrderEntryScreen({
             <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)} aria-label="Menu category"><option value="all">All categories</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select>
           </div>
           <div className="pos-entry-categories" aria-label="Menu categories"><button type="button" className={selectedCategory === "all" ? "active" : ""} onClick={() => setSelectedCategory("all")}>All</button>{categories.map((category) => <button type="button" className={selectedCategory === category.id ? "active" : ""} onClick={() => setSelectedCategory(category.id)} key={category.id}>{category.name}</button>)}</div>
-          {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{item.modifierGroups?.length || item.optionGroups?.length ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
+          {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{shouldOpenCustomization(item) ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
         </div>
         <aside className={`pos-entry-cart ${mobileCartOpen ? "open" : ""}`} aria-label="Current order">
           <div className="pos-entry-cart-head"><div><h3>Current order</h3><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span></div><div><button className="button-muted pos-entry-cart-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button><button className="button-muted" type="button" onClick={onClear} disabled={!cart.length}><Trash2 size={17} />Clear</button></div></div>

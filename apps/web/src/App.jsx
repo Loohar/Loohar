@@ -38,6 +38,7 @@ import {
   posWorkflowReducer,
   savePosOrderDraft
 } from "./apps/pos/stateMachine.js";
+import { normalizePosModifierGroups, posModifierConfigurationError, shouldOpenCustomization } from "./apps/pos/customization.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
@@ -7874,36 +7875,6 @@ function posCartLineId() {
   return `cart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizePosModifierGroups(item = {}) {
-  const groups = (item.optionGroups || [])
-    .map((group) => ({
-      ...group,
-      id: group.id || `group-${group.name}`,
-      minSelect: Number(group.minSelect || 0),
-      maxSelect: Math.max(1, Number(group.maxSelect || 1)),
-      options: [...(group.options || [])]
-        .filter((option) => option.available !== false)
-        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")))
-    }))
-    .filter((group) => group.options.length > 0)
-    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
-  const groupedOptionIds = new Set(groups.flatMap((group) => group.options.map((option) => option.id)));
-  const looseOptions = (item.options || [])
-    .filter((option) => option.available !== false && !groupedOptionIds.has(option.id))
-    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
-  if (looseOptions.length) {
-    groups.push({
-      id: `__ungrouped:${item.id}`,
-      name: "Options",
-      required: false,
-      minSelect: 0,
-      maxSelect: looseOptions.length,
-      options: looseOptions
-    });
-  }
-  return groups;
-}
-
 function selectedPosModifierRows(item = {}, selections = {}) {
   return normalizePosModifierGroups(item).flatMap((group) => {
     const selectedIds = new Set(selections[group.id] || []);
@@ -8396,7 +8367,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager.";
 
   function addToCart(item) {
-    if (normalizePosModifierGroups(item).length) {
+    const configurationError = posModifierConfigurationError(item);
+    if (configurationError) {
+      setError(configurationError);
+      return;
+    }
+    if (shouldOpenCustomization(item)) {
       openModifierDialog(item);
       return;
     }
