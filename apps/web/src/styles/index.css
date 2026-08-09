@@ -4232,20 +4232,44 @@ textarea {
   }
 
   .pos-entry-cart-lines article {
-    @apply grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-line bg-slate-50 p-3;
+    @apply flex flex-col gap-3 rounded-md border border-line bg-slate-50 p-3;
   }
 
-  .pos-entry-cart-lines article span,
-  .pos-entry-cart-lines article small {
+  .pos-entry-cart-line-copy {
+    @apply min-w-0;
+  }
+
+  .pos-entry-cart-line-copy > strong {
+    @apply block font-black text-ink;
+  }
+
+  .pos-entry-cart-line-copy span,
+  .pos-entry-cart-line-copy small {
     @apply mt-1 block text-xs font-semibold text-slate-500;
   }
 
+  .pos-entry-cart-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .pos-entry-line-action {
+    @apply inline-flex min-h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line bg-white px-2.5 text-xs font-black text-ink;
+  }
+
+  .pos-entry-line-action.remove {
+    @apply ml-auto border-rose-200 text-rose-700;
+  }
+
   .pos-entry-quantity {
-    @apply flex items-center gap-2;
+    @apply flex items-center gap-1;
   }
 
   .pos-entry-quantity button {
     @apply grid h-11 w-11 place-items-center rounded-md border border-line bg-white text-ink;
+  }
+
+  .pos-entry-quantity strong {
+    @apply min-w-8 text-center font-black text-ink;
   }
 
   .pos-entry-cart-footer {
@@ -4418,12 +4442,16 @@ textarea {
       @apply grid-cols-1;
     }
 
-    .pos-entry-cart-lines article {
-      @apply grid-cols-[minmax(0,1fr)_auto];
+    .pos-entry-cart-actions {
+      @apply grid grid-cols-[minmax(0,1fr)_auto];
     }
 
-    .pos-entry-cart-lines article > .icon-button {
-      @apply col-start-2;
+    .pos-entry-line-action {
+      @apply w-full;
+    }
+
+    .pos-entry-line-action.remove {
+      @apply ml-0;
     }
 
     .pos-payment-grid,

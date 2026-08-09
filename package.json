@@ -47,6 +47,7 @@
     "test:pos-routing": "node scripts/pos-release-test.mjs routing",
     "test:pos-register": "node scripts/pos-release-test.mjs register",
     "test:pos-cart": "node scripts/pos-release-test.mjs cart",
+    "test:pos-cart-actions": "node scripts/pos-cart-line-actions-test.mjs",
     "test:pos-simple-items": "node scripts/pos-simple-items-test.mjs",
     "test:pos-quotes": "node scripts/pos-release-test.mjs quotes",
     "test:pos-orders": "node scripts/pos-release-test.mjs orders",

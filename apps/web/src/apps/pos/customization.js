@@ -112,3 +112,33 @@ export function shouldOpenCustomization(item = {}) {
   if (posModifierConfigurationError(item)) return false;
   return explicitCustomizationRequired(item) || normalizePosModifierGroups(item).length > 0;
 }
+
+export function posSelectionsFromOptionIds(item = {}, optionIds = []) {
+  const selected = new Set(optionIds || []);
+  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+    group.id,
+    group.options.filter((option) => selected.has(option.id)).map((option) => option.id)
+  ]));
+}
+
+export function posModifierValidationErrors(item = {}, selections = {}) {
+  return normalizePosModifierGroups(item).flatMap((group) => {
+    const count = (selections[group.id] || []).length;
+    const minimum = group.required ? Math.max(1, numeric(group.minSelect, 0)) : numeric(group.minSelect, 0);
+    const maximum = Math.max(1, numeric(group.maxSelect, 1));
+    if (count < minimum) return [`Choose at least ${minimum} ${minimum === 1 ? "option" : "options"} for ${group.name}.`];
+    if (count > maximum) return [`Choose no more than ${maximum} ${maximum === 1 ? "option" : "options"} for ${group.name}.`];
+    return [];
+  });
+}
+
+export function togglePosModifierSelection(selections = {}, group = {}, optionId) {
+  const currentIds = selections[group.id] || [];
+  const selected = currentIds.includes(optionId);
+  const maximum = Math.max(1, numeric(group.maxSelect, 1));
+  if (maximum === 1) {
+    return { ...selections, [group.id]: selected ? [] : [optionId] };
+  }
+  const nextIds = selected ? currentIds.filter((id) => id !== optionId) : [...currentIds, optionId].slice(0, maximum);
+  return { ...selections, [group.id]: nextIds };
+}

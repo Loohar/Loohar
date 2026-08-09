@@ -38,7 +38,20 @@ import {
   posWorkflowReducer,
   savePosOrderDraft
 } from "./apps/pos/stateMachine.js";
-import { normalizePosModifierGroups, posModifierConfigurationError, shouldOpenCustomization } from "./apps/pos/customization.js";
+import {
+  normalizePosModifierGroups,
+  posModifierConfigurationError,
+  posModifierValidationErrors,
+  posSelectionsFromOptionIds,
+  shouldOpenCustomization,
+  togglePosModifierSelection
+} from "./apps/pos/customization.js";
+import {
+  adjustPosCartLineQuantity,
+  removePosCartLine,
+  repeatPosCartLine,
+  replacePosCartLineConfiguration
+} from "./apps/pos/cart.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
@@ -7949,27 +7962,8 @@ function canonicalizePosCartLine(line = {}) {
   return canonicalLine;
 }
 
-function posModifierValidationErrors(item = {}, selections = {}) {
-  return normalizePosModifierGroups(item).flatMap((group) => {
-    const count = (selections[group.id] || []).length;
-    const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
-    const maximum = Math.max(1, Number(group.maxSelect || 1));
-    if (count < minimum) return [`Choose at least ${minimum} ${minimum === 1 ? "option" : "options"} for ${group.name}.`];
-    if (count > maximum) return [`Choose no more than ${maximum} ${maximum === 1 ? "option" : "options"} for ${group.name}.`];
-    return [];
-  });
-}
-
 function posModifierSignature(optionIds = [], instructions = "") {
   return `${[...new Set(optionIds)].sort().join("|")}::${String(instructions || "").trim()}`;
-}
-
-function posSelectionsFromOptionIds(item = {}, optionIds = []) {
-  const selected = new Set(optionIds || []);
-  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
-    group.id,
-    group.options.filter((option) => selected.has(option.id)).map((option) => option.id)
-  ]));
 }
 
 function emptyPosCustomer() {
@@ -8081,6 +8075,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [showKioskExit, setShowKioskExit] = useState(false);
   const [customizingItem, setCustomizingItem] = useState(null);
+  const [editingCartLineId, setEditingCartLineId] = useState("");
   const [modifierSelections, setModifierSelections] = useState({});
   const [modifierInstructions, setModifierInstructions] = useState("");
   const [modifierError, setModifierError] = useState("");
@@ -8379,20 +8374,31 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     addConfiguredItemToCart(item);
   }
 
-  function openModifierDialog(item) {
-    const defaults = Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
-      group.id,
-      group.options.filter((option) => option.isDefault).slice(0, Math.max(1, Number(group.maxSelect || 1))).map((option) => option.id)
-    ]));
+  function openModifierDialog(item, cartLine = null) {
+    const defaults = cartLine
+      ? posSelectionsFromOptionIds(item, posLineModifierOptionIds(cartLine))
+      : Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+        group.id,
+        group.options.filter((option) => option.isDefault).slice(0, Math.max(1, Number(group.maxSelect || 1))).map((option) => option.id)
+      ]));
     setCustomizingItem(item);
+    setEditingCartLineId(cartLine?.cartLineId || "");
     setModifierSelections(defaults);
-    setModifierInstructions("");
+    setModifierInstructions(cartLine?.specialInstructions || "");
     setModifierError("");
     dispatchWorkflow({ type: POS_EVENT.CUSTOMIZE_ITEM, payload: { menuItemId: item.id } });
   }
 
+  function modifyCartLine(cartLineId) {
+    const line = cart.find((candidate) => candidate.cartLineId === cartLineId);
+    const item = itemsForRegister.find((candidate) => candidate.id === line?.menuItemId);
+    if (!line || !item || !shouldOpenCustomization(item)) return;
+    openModifierDialog(item, line);
+  }
+
   function closeModifierDialog() {
     setCustomizingItem(null);
+    setEditingCartLineId("");
     setModifierSelections({});
     setModifierInstructions("");
     setModifierError("");
@@ -8401,16 +8407,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function toggleModifierSelection(group, option) {
     setModifierError("");
-    setModifierSelections((current) => {
-      const currentIds = current[group.id] || [];
-      const selected = currentIds.includes(option.id);
-      const maximum = Math.max(1, Number(group.maxSelect || 1));
-      if (maximum === 1) {
-        return { ...current, [group.id]: selected ? [] : [option.id] };
-      }
-      const nextIds = selected ? currentIds.filter((id) => id !== option.id) : [...currentIds, option.id].slice(0, maximum);
-      return { ...current, [group.id]: nextIds };
-    });
+    setModifierSelections((current) => togglePosModifierSelection(current, group, option.id));
   }
 
   function addConfiguredItemToCart(item = customizingItem, options = {}) {
@@ -8428,9 +8425,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
     const unitPriceCents = Number(item.priceCents || 0) + modifierPriceCents;
     const signature = posModifierSignature(optionIds, specialInstructions);
+    const configuration = {
+      priceCents: unitPriceCents,
+      modifierSelections: modifierSelectionsPayload,
+      modifiers,
+      modifierSignature: signature,
+      specialInstructions
+    };
     setQuote(null);
     setLastOrder(null);
     setCart((current) => {
+      if (editingCartLineId) {
+        return replacePosCartLineConfiguration(current, editingCartLineId, configuration);
+      }
       const existing = current.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
       if (existing) {
         return current.map((line) => line.cartLineId === existing.cartLineId ? { ...line, quantity: line.quantity + 1 } : line);
@@ -8440,12 +8447,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         menuItemId: item.id,
         name: item.name,
         basePriceCents: item.priceCents || 0,
-        priceCents: unitPriceCents,
         quantity: 1,
-        modifierSelections: modifierSelectionsPayload,
-        modifiers,
-        modifierSignature: signature,
-        specialInstructions
+        ...configuration
       }];
     });
     if (customizingItem) closeModifierDialog();
@@ -8453,14 +8456,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function adjustQuantity(cartLineId, delta) {
     setQuote(null);
-    setCart((current) => current
-      .map((line) => line.cartLineId === cartLineId ? { ...line, quantity: Math.max(1, line.quantity + delta) } : line)
-      .filter((line) => line.quantity > 0));
+    setCart((current) => adjustPosCartLineQuantity(current, cartLineId, delta));
+  }
+
+  function repeatCartLine(cartLineId) {
+    setQuote(null);
+    setCart((current) => repeatPosCartLine(current, cartLineId));
   }
 
   function removeCartLine(cartLineId) {
     setQuote(null);
-    setCart((current) => current.filter((line) => line.cartLineId !== cartLineId));
+    setCart((current) => removePosCartLine(current, cartLineId));
   }
 
   async function registerDevice(event) {
@@ -8986,6 +8992,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       workflowScreen = (
         <OrderEntryScreen
           items={visibleItems}
+          menuItems={itemsForRegister}
           categories={categoriesForRegister}
           selectedCategory={selectedCategory}
           setSelectedCategory={setSelectedCategory}
@@ -8997,8 +9004,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           mobileCartOpen={mobileCartOpen}
           setMobileCartOpen={setMobileCartOpen}
           onAdd={addToCart}
+          onRepeat={repeatCartLine}
           onIncrease={(cartLineId) => adjustQuantity(cartLineId, 1)}
           onDecrease={(cartLineId) => adjustQuantity(cartLineId, -1)}
+          onModify={modifyCartLine}
           onRemove={removeCartLine}
           onClear={() => { setCart([]); setQuote(null); }}
           onReview={reviewCurrentOrder}
@@ -9182,11 +9191,11 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       {workflowScreen}
 
       {customizingItem ? (
-        <div className="pos-modifier-dialog" role="dialog" aria-modal="true" aria-label={`Customize ${customizingItem.name}`}>
+        <div className="pos-modifier-dialog" role="dialog" aria-modal="true" aria-label={`${editingCartLineId ? "Modify" : "Customize"} ${customizingItem.name}`}>
           <div className="pos-modifier-card">
             <div className="pos-modifier-head">
               <div>
-                <p className="restaurant-shell-breadcrumb">Customize item</p>
+                <p className="restaurant-shell-breadcrumb">{editingCartLineId ? "Modify item" : "Customize item"}</p>
                 <h3>{customizingItem.name}</h3>
                 <span>{money(customizingItem.priceCents)} base price</span>
               </div>
@@ -9221,7 +9230,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             {modifierError ? <div className="field-error">{modifierError}</div> : null}
             <div className="pos-modifier-actions">
               <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
-              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>Add to order</button>
+              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>{editingCartLineId ? "Update item" : "Add to order"}</button>
             </div>
           </div>
         </div>
