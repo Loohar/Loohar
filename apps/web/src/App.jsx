@@ -7874,90 +7874,23 @@ function posCartLineId() {
   return `cart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function posNormalizeId(value) {
-  return String(value ?? "").trim();
-}
-
-function posUniqueIds(values = []) {
-  return [...new Set((values || []).map(posNormalizeId).filter(Boolean))];
-}
-
-function posSortBySortOrder(left = {}, right = {}) {
-  return Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
-    || String(left.name || "").localeCompare(String(right.name || ""));
-}
-
-const SIMPLE_POS_ITEM_CATEGORY_TERMS = ["drink", "beverage", "dessert", "coffee", "tea", "bakery"];
-const SIMPLE_POS_ITEM_NAME_TERMS = ["water", "lemonade", "soda", "juice", "tea", "coffee", "cake", "tiramisu", "cheesecake", "cookie", "brownie", "pastry"];
-const GENERIC_POS_MODIFIER_GROUP_TERMS = ["protein", "side", "sauce", "spice", "temperature", "doneness"];
-
-function posTextMatches(text = "", terms = []) {
-  const words = String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  return terms.some((term) => words.some((word) => word === term || word === `${term}s`));
-}
-
-function posLooksLikeSimpleItem(item = {}) {
-  return posTextMatches(item.categoryName, SIMPLE_POS_ITEM_CATEGORY_TERMS)
-    || posTextMatches(item.name, SIMPLE_POS_ITEM_NAME_TERMS);
-}
-
-function posLooksLikeGenericGroup(group = {}) {
-  return posTextMatches(group.name, GENERIC_POS_MODIFIER_GROUP_TERMS);
-}
-
-function posGroupMinimum(group = {}) {
-  return group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
-}
-
-function posGroupMaximum(group = {}) {
-  return Math.max(1, Number(group.maxSelect || 1));
-}
-
 function normalizePosModifierGroups(item = {}) {
-  const simpleItem = posLooksLikeSimpleItem(item);
-  const groupedOptionIds = new Set();
-  const groupMap = new Map();
-
-  for (const sourceGroup of [...(item.optionGroups || []), ...(item.modifierGroups || [])]) {
-    const id = posNormalizeId(sourceGroup.id || `group-${sourceGroup.name}`);
-    if (!id) continue;
-    const existing = groupMap.get(id);
-    const optionMap = new Map();
-    for (const option of [...(existing?.options || []), ...(sourceGroup.options || [])]) {
-      const optionId = posNormalizeId(option.id || option.optionId);
-      if (!optionId || option.available === false) continue;
-      optionMap.set(optionId, { ...option, id: optionId, optionId: posNormalizeId(option.optionId || option.id) });
-    }
-    groupMap.set(id, {
-      ...existing,
-      ...sourceGroup,
-      id,
-      minSelect: Number(sourceGroup.minSelect ?? existing?.minSelect ?? 0),
-      maxSelect: Math.max(1, Number(sourceGroup.maxSelect ?? existing?.maxSelect ?? 1)),
-      required: sourceGroup.required ?? existing?.required ?? false,
-      options: [...optionMap.values()].sort(posSortBySortOrder)
-    });
-  }
-
-  const groups = [...groupMap.values()]
-    .filter((group) => group.options.length > 0)
-    .filter((group) => !(simpleItem && posLooksLikeGenericGroup(group)))
-    .sort(posSortBySortOrder);
-
-  for (const group of groups) {
-    for (const option of group.options) groupedOptionIds.add(option.id);
-  }
-
-  const looseOptions = simpleItem ? [] : (item.options || [])
-    .filter((option) => option.available !== false)
-    .map((option) => ({
-      ...option,
-      id: posNormalizeId(option.id || option.optionId),
-      optionId: posNormalizeId(option.optionId || option.id)
+  const groups = (item.optionGroups || [])
+    .map((group) => ({
+      ...group,
+      id: group.id || `group-${group.name}`,
+      minSelect: Number(group.minSelect || 0),
+      maxSelect: Math.max(1, Number(group.maxSelect || 1)),
+      options: [...(group.options || [])]
+        .filter((option) => option.available !== false)
+        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")))
     }))
-    .filter((option) => option.id && !groupedOptionIds.has(option.id))
-    .sort(posSortBySortOrder);
-
+    .filter((group) => group.options.length > 0)
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
+  const groupedOptionIds = new Set(groups.flatMap((group) => group.options.map((option) => option.id)));
+  const looseOptions = (item.options || [])
+    .filter((option) => option.available !== false && !groupedOptionIds.has(option.id))
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")));
   if (looseOptions.length) {
     groups.push({
       id: `__ungrouped:${item.id}`,
@@ -7971,52 +7904,31 @@ function normalizePosModifierGroups(item = {}) {
   return groups;
 }
 
-function posDefaultModifierSelections(item = {}) {
-  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => {
-    const groupId = posNormalizeId(group.id);
-    const minimum = posGroupMinimum(group);
-    const maximum = posGroupMaximum(group);
-    const defaults = group.options.filter((option) => option.isDefault || option.default).map((option) => posNormalizeId(option.id));
-    const selected = defaults.length ? defaults.slice(0, maximum) : group.options.slice(0, minimum).map((option) => posNormalizeId(option.id));
-    return [groupId, posUniqueIds(selected).slice(0, maximum)];
-  }));
-}
-
-function posItemCanCustomize(item = {}) {
-  return normalizePosModifierGroups(item).length > 0;
-}
-
-function posItemRequiresCustomization(item = {}) {
-  return normalizePosModifierGroups(item).some((group) => posGroupMinimum(group) > 0);
-}
-
 function selectedPosModifierRows(item = {}, selections = {}) {
   return normalizePosModifierGroups(item).flatMap((group) => {
-    const groupId = posNormalizeId(group.id);
-    const selectedIds = new Set(posUniqueIds(selections[groupId] || selections[group.id] || []).map(posNormalizeId));
+    const selectedIds = new Set(selections[group.id] || []);
     return group.options
-      .filter((option) => selectedIds.has(posNormalizeId(option.id)))
+      .filter((option) => selectedIds.has(option.id))
       .map((option) => ({
-        id: posNormalizeId(option.id),
-        optionId: posNormalizeId(option.id),
+        id: option.id,
+        optionId: option.id,
         name: option.name,
         priceCents: Number(option.priceCents || 0),
-        groupId,
+        groupId: group.id,
         groupName: group.name
       }));
   });
 }
 
 function posModifierOptionIds(selections = {}) {
-  return posUniqueIds(Object.values(selections || {}).flat()).map(posNormalizeId);
+  return Object.values(selections).flat().filter(Boolean);
 }
 
 function posModifierValidationErrors(item = {}, selections = {}) {
   return normalizePosModifierGroups(item).flatMap((group) => {
-    const groupId = posNormalizeId(group.id);
-    const count = posUniqueIds(selections[groupId] || selections[group.id] || []).length;
-    const minimum = posGroupMinimum(group);
-    const maximum = posGroupMaximum(group);
+    const count = (selections[group.id] || []).length;
+    const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+    const maximum = Math.max(1, Number(group.maxSelect || 1));
     if (count < minimum) return [`Choose at least ${minimum} ${minimum === 1 ? "option" : "options"} for ${group.name}.`];
     if (count > maximum) return [`Choose no more than ${maximum} ${maximum === 1 ? "option" : "options"} for ${group.name}.`];
     return [];
@@ -8024,69 +7936,15 @@ function posModifierValidationErrors(item = {}, selections = {}) {
 }
 
 function posModifierSignature(optionIds = [], instructions = "") {
-  return `${posUniqueIds(optionIds).map(posNormalizeId).sort().join("|")}::${String(instructions || "").trim()}`;
+  return `${[...new Set(optionIds)].sort().join("|")}::${String(instructions || "").trim()}`;
 }
 
 function posSelectionsFromOptionIds(item = {}, optionIds = []) {
-  const selected = new Set(posUniqueIds(optionIds).map(posNormalizeId));
+  const selected = new Set(optionIds || []);
   return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
-    posNormalizeId(group.id),
-    group.options.filter((option) => selected.has(posNormalizeId(option.id))).map((option) => posNormalizeId(option.id))
+    group.id,
+    group.options.filter((option) => selected.has(option.id)).map((option) => option.id)
   ]));
-}
-
-function posModifierSelectionsPayload(item = {}, selections = {}) {
-  return normalizePosModifierGroups(item)
-    .map((group) => {
-      const groupId = posNormalizeId(group.id);
-      return {
-        groupId,
-        groupName: group.name,
-        optionIds: posUniqueIds(selections[groupId] || selections[group.id] || []).map(posNormalizeId)
-      };
-    })
-    .filter((selection) => selection.optionIds.length > 0);
-}
-
-function posSelectionsFromModifierSelections(item = {}, source = []) {
-  if (Array.isArray(source)) {
-    const grouped = {};
-    const legacyIds = [];
-    for (const selection of source) {
-      if (selection && typeof selection === "object" && (selection.groupId || selection.optionIds || selection.optionId)) {
-        if (selection.groupId) {
-          grouped[posNormalizeId(selection.groupId)] = posUniqueIds([...(selection.optionIds || []), selection.optionId].filter(Boolean)).map(posNormalizeId);
-        } else {
-          legacyIds.push(...posUniqueIds([...(selection.optionIds || []), selection.optionId].filter(Boolean)));
-        }
-      } else if (selection) {
-        legacyIds.push(selection);
-      }
-    }
-    const normalized = posSelectionsFromOptionIds(item, legacyIds);
-    for (const [groupId, optionIds] of Object.entries(grouped)) normalized[groupId] = optionIds;
-    return normalized;
-  }
-  if (source && typeof source === "object") {
-    return Object.fromEntries(normalizePosModifierGroups(item).map((group) => {
-      const groupId = posNormalizeId(group.id);
-      return [groupId, posUniqueIds(source[groupId] || source[group.id] || []).map(posNormalizeId)];
-    }));
-  }
-  return posSelectionsFromOptionIds(item, source);
-}
-
-function posCartLinePayload(line = {}) {
-  const optionIds = posUniqueIds([...(line.optionIds || []), ...(line.modifierOptionIds || [])]).map(posNormalizeId);
-  return {
-    menuItemId: line.menuItemId,
-    quantity: line.quantity,
-    optionIds,
-    modifierOptionIds: optionIds,
-    modifierSelections: line.modifierSelections || [],
-    modifiers: line.modifiers || [],
-    specialInstructions: line.specialInstructions || ""
-  };
 }
 
 function emptyPosCustomer() {
@@ -8201,7 +8059,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [modifierSelections, setModifierSelections] = useState({});
   const [modifierInstructions, setModifierInstructions] = useState("");
   const [modifierError, setModifierError] = useState("");
-  const [editingCartLineId, setEditingCartLineId] = useState("");
   const inflightLoadRef = useRef(null);
   const posMenuSequenceRef = useRef(0);
   const acceptedPosMenuSequenceRef = useRef(0);
@@ -8485,35 +8342,27 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager.";
 
   function addToCart(item) {
-    if (posItemRequiresCustomization(item)) {
+    if (normalizePosModifierGroups(item).length) {
       openModifierDialog(item);
       return;
     }
-    addConfiguredItemToCart(item, { selections: posDefaultModifierSelections(item), specialInstructions: "" });
+    addConfiguredItemToCart(item);
   }
 
-  function openModifierDialog(item, line = null) {
-    const selectionSource = line
-      ? line.modifierSelections?.length
-        ? line.modifierSelections
-        : line.optionIds?.length
-          ? line.optionIds
-          : line.modifierOptionIds || []
-      : null;
-    const selections = line
-      ? posSelectionsFromModifierSelections(item, selectionSource)
-      : posDefaultModifierSelections(item);
+  function openModifierDialog(item) {
+    const defaults = Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+      group.id,
+      group.options.filter((option) => option.isDefault).slice(0, Math.max(1, Number(group.maxSelect || 1))).map((option) => option.id)
+    ]));
     setCustomizingItem(item);
-    setEditingCartLineId(line?.cartLineId || "");
-    setModifierSelections(selections);
-    setModifierInstructions(line?.specialInstructions || "");
+    setModifierSelections(defaults);
+    setModifierInstructions("");
     setModifierError("");
-    dispatchWorkflow({ type: POS_EVENT.CUSTOMIZE_ITEM, payload: { menuItemId: item.id, cartLineId: line?.cartLineId || null } });
+    dispatchWorkflow({ type: POS_EVENT.CUSTOMIZE_ITEM, payload: { menuItemId: item.id } });
   }
 
   function closeModifierDialog() {
     setCustomizingItem(null);
-    setEditingCartLineId("");
     setModifierSelections({});
     setModifierInstructions("");
     setModifierError("");
@@ -8521,18 +8370,16 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   function toggleModifierSelection(group, option) {
-    const groupId = posNormalizeId(group.id);
-    const optionId = posNormalizeId(option.id);
     setModifierError("");
     setModifierSelections((current) => {
-      const currentIds = posUniqueIds(current[groupId] || current[group.id] || []).map(posNormalizeId);
-      const selected = currentIds.includes(optionId);
-      const maximum = posGroupMaximum(group);
+      const currentIds = current[group.id] || [];
+      const selected = currentIds.includes(option.id);
+      const maximum = Math.max(1, Number(group.maxSelect || 1));
       if (maximum === 1) {
-        return { ...current, [groupId]: selected ? [] : [optionId] };
+        return { ...current, [group.id]: selected ? [] : [option.id] };
       }
-      const nextIds = selected ? currentIds.filter((id) => id !== optionId) : [...currentIds, optionId].slice(0, maximum);
-      return { ...current, [groupId]: nextIds };
+      const nextIds = selected ? currentIds.filter((id) => id !== option.id) : [...currentIds, option.id].slice(0, maximum);
+      return { ...current, [group.id]: nextIds };
     });
   }
 
@@ -8547,36 +8394,28 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
     const modifiers = selectedPosModifierRows(item, selections);
     const optionIds = posModifierOptionIds(selections);
-    const modifierSelectionsForPayload = posModifierSelectionsPayload(item, selections);
     const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
     const unitPriceCents = Number(item.priceCents || 0) + modifierPriceCents;
     const signature = posModifierSignature(optionIds, specialInstructions);
-    const editingLineId = options.cartLineId || editingCartLineId;
     setQuote(null);
     setLastOrder(null);
-    setPaymentResult(null);
     setCart((current) => {
-      const editingLine = editingLineId ? current.find((line) => line.cartLineId === editingLineId) : null;
-      const nextQuantity = Number(options.quantity || editingLine?.quantity || 1);
-      const candidates = editingLineId ? current.filter((line) => line.cartLineId !== editingLineId) : current;
-      const existing = candidates.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
+      const existing = current.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
       if (existing) {
-        return candidates.map((line) => line.cartLineId === existing.cartLineId ? { ...line, quantity: line.quantity + nextQuantity } : line);
+        return current.map((line) => line.cartLineId === existing.cartLineId ? { ...line, quantity: line.quantity + 1 } : line);
       }
-      return [...candidates, {
-        cartLineId: editingLineId || posCartLineId(),
+      return [...current, {
+        cartLineId: posCartLineId(),
         menuItemId: item.id,
         name: item.name,
         basePriceCents: item.priceCents || 0,
         priceCents: unitPriceCents,
-        quantity: nextQuantity,
+        quantity: 1,
         optionIds,
         modifierOptionIds: optionIds,
-        modifierSelections: modifierSelectionsForPayload,
         modifiers,
         modifierSignature: signature,
-        specialInstructions,
-        canCustomize: posItemCanCustomize(item)
+        specialInstructions
       }];
     });
     if (customizingItem) closeModifierDialog();
@@ -8584,8 +8423,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function adjustQuantity(cartLineId, delta) {
     setQuote(null);
-    setLastOrder(null);
-    setPaymentResult(null);
     setCart((current) => current
       .map((line) => line.cartLineId === cartLineId ? { ...line, quantity: Math.max(1, line.quantity + delta) } : line)
       .filter((line) => line.quantity > 0));
@@ -8593,18 +8430,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function removeCartLine(cartLineId) {
     setQuote(null);
-    setLastOrder(null);
-    setPaymentResult(null);
     setCart((current) => current.filter((line) => line.cartLineId !== cartLineId));
-  }
-
-  function openCartLineEditor(line) {
-    const item = itemsForRegister.find((entry) => entry.id === line.menuItemId);
-    if (!item) {
-      setError("This item is no longer available on the POS menu.");
-      return;
-    }
-    openModifierDialog(item, line);
   }
 
   async function registerDevice(event) {
@@ -8693,7 +8519,13 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           orderType,
           deliveryZoneId: customer.deliveryZoneId || null,
           locationId: locationId || activeDevice?.locationId || null,
-          lineItems: cart.map(posCartLinePayload)
+          lineItems: cart.map((line) => ({
+            menuItemId: line.menuItemId,
+            quantity: line.quantity,
+            optionIds: line.optionIds || [],
+            modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
+            specialInstructions: line.specialInstructions || ""
+          }))
         }
       });
       setQuote(payload.quote);
@@ -8720,13 +8552,20 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           orderType,
           locationId: locationId || activeDevice?.locationId || null,
           customer: { ...customer, tableNumber },
-          cart: { lineItems: cart.map(posCartLinePayload) }
+          cart: {
+            lineItems: cart.map((line) => ({
+              menuItemId: line.menuItemId,
+              quantity: line.quantity,
+              optionIds: line.optionIds || [],
+              modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
+              modifiers: line.modifiers || [],
+              specialInstructions: line.specialInstructions || ""
+            }))
+          }
         }
       });
       setCart([]);
       setQuote(null);
-      setLastOrder(null);
-      setPaymentResult(null);
       setNotice("Order held for later.");
       await loadPos();
       dispatchWorkflow({ type: POS_EVENT.HOLD_ORDER });
@@ -8868,13 +8707,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setTableNumber(String(session.customerJson?.tableNumber || ""));
     setCart(lines.map((line) => {
       const item = itemById.get(line.menuItemId) || {};
-      const selectionSource = line.modifierSelections?.length
-        ? line.modifierSelections
-        : line.modifierOptionIds?.length
-          ? line.modifierOptionIds
-          : line.optionIds || [];
-      const selections = posSelectionsFromModifierSelections(item, selectionSource);
-      const optionIds = posModifierOptionIds(selections);
+      const optionIds = line.modifierOptionIds || line.optionIds || [];
+      const selections = posSelectionsFromOptionIds(item, optionIds);
       const modifiers = line.modifiers || selectedPosModifierRows(item, selections);
       const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
       return {
@@ -8886,16 +8720,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         quantity: Number(line.quantity) || 1,
         optionIds,
         modifierOptionIds: optionIds,
-        modifierSelections: posModifierSelectionsPayload(item, selections),
         modifiers,
-        canCustomize: posItemCanCustomize(item),
         modifierSignature: posModifierSignature(optionIds, line.specialInstructions || ""),
         specialInstructions: line.specialInstructions || ""
       };
     }));
     setQuote(null);
-    setLastOrder(null);
-    setPaymentResult(null);
     setNotice("Held order loaded into the register.");
   }
 
@@ -9036,7 +8866,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const effectiveWorkflow = !apiOnline ? POS_WORKFLOW.OFFLINE : workflow.value;
   const restaurantForPos = config?.restaurant || profile;
   const savingAction = Boolean(saving);
-  const registerControlOpensSettings = ownerOperator;
+  const registerControlOpensSettings = ownerOperator && effectiveWorkflow === POS_WORKFLOW.LOCKED;
   const showRegisterControl = effectiveWorkflow !== POS_WORKFLOW.BOOTING
     && effectiveWorkflow !== POS_WORKFLOW.OFFLINE
     && (effectiveWorkflow !== POS_WORKFLOW.LOCKED || registerControlOpensSettings);
@@ -9140,12 +8970,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           mobileCartOpen={mobileCartOpen}
           setMobileCartOpen={setMobileCartOpen}
           onAdd={addToCart}
-          onCustomize={openModifierDialog}
-          onEditLine={openCartLineEditor}
           onIncrease={(cartLineId) => adjustQuantity(cartLineId, 1)}
           onDecrease={(cartLineId) => adjustQuantity(cartLineId, -1)}
           onRemove={removeCartLine}
-          onClear={() => { setCart([]); setQuote(null); setLastOrder(null); setPaymentResult(null); }}
+          onClear={() => { setCart([]); setQuote(null); }}
           onReview={reviewCurrentOrder}
           onHold={holdOrder}
           onHome={returnHome}
@@ -9337,40 +9165,36 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
               </div>
               <button className="icon-button" type="button" onClick={closeModifierDialog} aria-label="Close modifier selection"><X size={18} /></button>
             </div>
-            <div className="pos-modifier-scroll">
-              <div className="pos-modifier-groups">
-                {normalizePosModifierGroups(customizingItem).map((group) => {
-                  const groupId = posNormalizeId(group.id);
-                  const selectedIds = modifierSelections[groupId] || modifierSelections[group.id] || [];
-                  const maximum = posGroupMaximum(group);
-                  const minimum = posGroupMinimum(group);
-                  return (
-                    <fieldset className="pos-modifier-group" key={groupId}>
-                      <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
-                      <div className="pos-modifier-options">
-                        {group.options.map((option) => {
-                          const optionId = posNormalizeId(option.id);
-                          const selected = selectedIds.includes(optionId);
-                          return (
-                            <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={optionId} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
-                              <span>{option.name}</span>
-                              <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </fieldset>
-                  );
-                })}
-              </div>
-              <label className="pos-modifier-instructions text-sm font-semibold text-slate-600">Special instructions
-                <textarea className="input mt-1 min-h-20 py-2" value={modifierInstructions} onChange={(event) => setModifierInstructions(event.target.value)} placeholder="No onions, sauce on the side..." />
-              </label>
+            <div className="pos-modifier-groups">
+              {normalizePosModifierGroups(customizingItem).map((group) => {
+                const selectedIds = modifierSelections[group.id] || [];
+                const maximum = Math.max(1, Number(group.maxSelect || 1));
+                const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+                return (
+                  <fieldset className="pos-modifier-group" key={group.id}>
+                    <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
+                    <div className="pos-modifier-options">
+                      {group.options.map((option) => {
+                        const selected = selectedIds.includes(option.id);
+                        return (
+                          <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
+                            <span>{option.name}</span>
+                            <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                );
+              })}
             </div>
-            {modifierError ? <div className="field-error px-4 pb-4">{modifierError}</div> : null}
+            <label className="text-sm font-semibold text-slate-600">Special instructions
+              <textarea className="input mt-1 min-h-20 py-2" value={modifierInstructions} onChange={(event) => setModifierInstructions(event.target.value)} placeholder="No onions, sauce on the side..." />
+            </label>
+            {modifierError ? <div className="field-error">{modifierError}</div> : null}
             <div className="pos-modifier-actions">
               <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
-              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>{editingCartLineId ? "Save changes" : "Add to order"}</button>
+              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>Add to order</button>
             </div>
           </div>
         </div>

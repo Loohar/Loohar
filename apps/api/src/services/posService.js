@@ -219,33 +219,23 @@ function zeroPlatformFeeQuoteJson(extra = {}) {
   return { ...ZERO_PLATFORM_FEE_QUOTE, ...extra };
 }
 
-function flattenLineOptionIds(source = []) {
+function rawLineOptionIds(line = {}) {
   const selections = [];
-  if (Array.isArray(source)) {
-    for (const selection of source) {
-      if (selection && typeof selection === "object") {
-        if (Array.isArray(selection?.optionIds)) selections.push(...selection.optionIds);
-        if (selection?.optionId) selections.push(selection.optionId);
-      } else if (selection) {
-        selections.push(selection);
-      }
+  if (Array.isArray(line.optionIds)) selections.push(...line.optionIds);
+  if (Array.isArray(line.modifierOptionIds)) selections.push(...line.modifierOptionIds);
+  if (Array.isArray(line.modifierSelections)) {
+    for (const selection of line.modifierSelections) {
+      if (Array.isArray(selection?.optionIds)) selections.push(...selection.optionIds);
+      if (selection?.optionId) selections.push(selection.optionId);
     }
-  } else if (source && typeof source === "object") {
-    for (const value of Object.values(source)) {
+  }
+  if (line.modifierSelections && typeof line.modifierSelections === "object" && !Array.isArray(line.modifierSelections)) {
+    for (const value of Object.values(line.modifierSelections)) {
       if (Array.isArray(value)) selections.push(...value);
       else if (value) selections.push(value);
     }
   }
   return selections.map((optionId) => String(optionId || "").trim()).filter(Boolean);
-}
-
-function rawLineOptionIds(line = {}) {
-  if (Array.isArray(line.modifierSelections) || (line.modifierSelections && typeof line.modifierSelections === "object")) {
-    return flattenLineOptionIds(line.modifierSelections);
-  }
-  if (Array.isArray(line.optionIds)) return flattenLineOptionIds(line.optionIds);
-  if (Array.isArray(line.modifierOptionIds)) return flattenLineOptionIds(line.modifierOptionIds);
-  return [];
 }
 
 function normalizeLineOptionIds(line = {}) {
