@@ -232,8 +232,7 @@ export function savePosOrderDraft(restaurantKey, draft) {
       basePriceCents: Number(line.basePriceCents || 0),
       priceCents: Number(line.priceCents || 0),
       quantity: Math.max(1, Number(line.quantity || 1)),
-      optionIds: Array.isArray(line.optionIds) ? line.optionIds : [],
-      modifierOptionIds: Array.isArray(line.modifierOptionIds) ? line.modifierOptionIds : [],
+      modifierSelections: Array.isArray(line.modifierSelections) ? line.modifierSelections : [],
       modifiers: Array.isArray(line.modifiers) ? line.modifiers : [],
       modifierSignature: String(line.modifierSignature || "").slice(0, 240),
       specialInstructions: ""

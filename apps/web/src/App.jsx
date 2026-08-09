@@ -7920,8 +7920,62 @@ function selectedPosModifierRows(item = {}, selections = {}) {
   });
 }
 
-function posModifierOptionIds(selections = {}) {
-  return Object.values(selections).flat().filter(Boolean);
+function canonicalPosModifierSelections(selections = {}) {
+  return Object.entries(selections).flatMap(([modifierGroupId, optionIds]) => (
+    (Array.isArray(optionIds) ? optionIds : [])
+      .filter(Boolean)
+      .map((modifierOptionId) => ({ modifierGroupId, modifierOptionId }))
+  ));
+}
+
+function canonicalPosLineModifierSelections(line = {}) {
+  if (Array.isArray(line.modifierSelections)) {
+    return line.modifierSelections.flatMap((selection) => {
+      const modifierGroupId = selection?.modifierGroupId ?? selection?.groupId;
+      if (Array.isArray(selection?.optionIds)) {
+        return selection.optionIds
+          .filter(Boolean)
+          .map((modifierOptionId) => ({ modifierGroupId, modifierOptionId }));
+      }
+      const modifierOptionId = selection?.modifierOptionId ?? selection?.optionId;
+      return modifierGroupId && modifierOptionId ? [{ modifierGroupId, modifierOptionId }] : [];
+    });
+  }
+  if (line.modifierSelections && typeof line.modifierSelections === "object") {
+    return Object.entries(line.modifierSelections).flatMap(([modifierGroupId, value]) => (
+      (Array.isArray(value) ? value : [value])
+        .filter(Boolean)
+        .map((modifierOptionId) => ({ modifierGroupId, modifierOptionId }))
+    ));
+  }
+  const modifierGroupByOptionId = new Map((line.modifiers || []).map((modifier) => [
+    modifier.optionId || modifier.id,
+    modifier.groupId
+  ]));
+  const legacyOptionIds = Array.isArray(line.modifierOptionIds)
+    ? line.modifierOptionIds
+    : (Array.isArray(line.optionIds) ? line.optionIds : []);
+  return legacyOptionIds
+    .filter(Boolean)
+    .map((modifierOptionId) => ({
+      modifierGroupId: modifierGroupByOptionId.get(modifierOptionId),
+      modifierOptionId
+    }))
+    .filter((selection) => selection.modifierGroupId);
+}
+
+function posLineModifierOptionIds(line = {}) {
+  return canonicalPosLineModifierSelections(line).map((selection) => selection.modifierOptionId);
+}
+
+function canonicalizePosCartLine(line = {}) {
+  const canonicalLine = {
+    ...line,
+    modifierSelections: canonicalPosLineModifierSelections(line)
+  };
+  delete canonicalLine.optionIds;
+  delete canonicalLine.modifierOptionIds;
+  return canonicalLine;
 }
 
 function posModifierValidationErrors(item = {}, selections = {}) {
@@ -8256,7 +8310,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   useEffect(() => {
     const draft = loadPosOrderDraft(restaurantKey);
     if (!draft) return;
-    setCart(draft.cart || []);
+    setCart((draft.cart || []).map(canonicalizePosCartLine));
     setCustomer(normalizePosCustomer(draft.customer));
     setOrderType(draft.orderType || "WALK_IN");
     setNotes(draft.notes || "");
@@ -8393,7 +8447,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       return;
     }
     const modifiers = selectedPosModifierRows(item, selections);
-    const optionIds = posModifierOptionIds(selections);
+    const modifierSelectionsPayload = canonicalPosModifierSelections(selections);
+    const optionIds = modifierSelectionsPayload.map((selection) => selection.modifierOptionId);
     const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
     const unitPriceCents = Number(item.priceCents || 0) + modifierPriceCents;
     const signature = posModifierSignature(optionIds, specialInstructions);
@@ -8411,8 +8466,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         basePriceCents: item.priceCents || 0,
         priceCents: unitPriceCents,
         quantity: 1,
-        optionIds,
-        modifierOptionIds: optionIds,
+        modifierSelections: modifierSelectionsPayload,
         modifiers,
         modifierSignature: signature,
         specialInstructions
@@ -8522,8 +8576,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           lineItems: cart.map((line) => ({
             menuItemId: line.menuItemId,
             quantity: line.quantity,
-            optionIds: line.optionIds || [],
-            modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
+            modifierSelections: canonicalPosLineModifierSelections(line),
             specialInstructions: line.specialInstructions || ""
           }))
         }
@@ -8556,8 +8609,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             lineItems: cart.map((line) => ({
               menuItemId: line.menuItemId,
               quantity: line.quantity,
-              optionIds: line.optionIds || [],
-              modifierOptionIds: line.modifierOptionIds || line.optionIds || [],
+              modifierSelections: canonicalPosLineModifierSelections(line),
               modifiers: line.modifiers || [],
               specialInstructions: line.specialInstructions || ""
             }))
@@ -8707,7 +8759,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setTableNumber(String(session.customerJson?.tableNumber || ""));
     setCart(lines.map((line) => {
       const item = itemById.get(line.menuItemId) || {};
-      const optionIds = line.modifierOptionIds || line.optionIds || [];
+      const optionIds = posLineModifierOptionIds(line);
       const selections = posSelectionsFromOptionIds(item, optionIds);
       const modifiers = line.modifiers || selectedPosModifierRows(item, selections);
       const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
@@ -8718,8 +8770,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         basePriceCents: item.priceCents || line.basePriceCents || line.unitPriceCents || 0,
         priceCents: line.priceCents || line.unitPriceCents || (Number(item.priceCents || 0) + modifierPriceCents),
         quantity: Number(line.quantity) || 1,
-        optionIds,
-        modifierOptionIds: optionIds,
+        modifierSelections: canonicalPosModifierSelections(selections),
         modifiers,
         modifierSignature: posModifierSignature(optionIds, line.specialInstructions || ""),
         specialInstructions: line.specialInstructions || ""

@@ -91,6 +91,7 @@
     "test:menu-modifiers": "node scripts/pos-modifiers-test.mjs menu-admin",
     "test:modifier-admin": "node scripts/pos-modifiers-test.mjs menu-admin",
     "test:modifier-quotes": "node scripts/pos-modifiers-test.mjs quote-validation",
+    "test:pos-modifier-payload": "node scripts/pos-modifier-payload-test.mjs",
     "test:kiosk-modifiers": "node scripts/pos-modifiers-test.mjs kiosk",
     "test:development-menu-seed": "node scripts/development-pos-menu-seed-test.mjs",
     "test:zero-platform-fee": "node scripts/pos-zero-platform-fee-test.mjs zero-fee",

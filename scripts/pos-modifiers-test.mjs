@@ -105,11 +105,12 @@ if (mode === "all" || mode === "quote-validation") {
     "specialInstructions"
   ]), "Submitted POS orders persist modifiers, option ids, and special instructions for kitchen/receipts");
   assertCheck(includesAll(app, [
-    "modifierOptionIds: line.modifierOptionIds || line.optionIds || []",
+    "modifierSelections: canonicalPosLineModifierSelections(line)",
+    "modifierSelections: modifierSelectionsPayload",
     "modifiers: line.modifiers || []",
     "No onions, sauce on the side",
     "modifierError"
-  ]), "Frontend sends modifier ids and instructions to server quotes with visible validation feedback");
+  ]), "Frontend sends canonical modifier selections and instructions to server quotes with visible validation feedback");
 }
 
 if (mode === "all" || mode === "kiosk") {

@@ -219,23 +219,59 @@ function zeroPlatformFeeQuoteJson(extra = {}) {
   return { ...ZERO_PLATFORM_FEE_QUOTE, ...extra };
 }
 
+function invalidModifierSelection(details = {}) {
+  return httpError("Menu item modifier selection is malformed.", 400, {
+    code: "POS_MODIFIER_INVALID",
+    ...details
+  });
+}
+
+function normalizedModifierSelection(modifierGroupId, modifierOptionId, details = {}) {
+  const groupId = modifierGroupId == null ? null : String(modifierGroupId || "").trim();
+  const optionId = String(modifierOptionId || "").trim();
+  if (!optionId || (modifierGroupId != null && !groupId)) throw invalidModifierSelection(details);
+  return { modifierGroupId: groupId, modifierOptionId: optionId };
+}
+
+function resolveLineModifierSelections(line = {}) {
+  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(line, key);
+
+  // Aliases are alternatives. Prefer the canonical representation when supplied.
+  if (hasOwn("modifierSelections")) {
+    const source = line.modifierSelections;
+    if (Array.isArray(source)) {
+      return source.flatMap((selection, selectionIndex) => {
+        if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+          throw invalidModifierSelection({ selectionIndex });
+        }
+        const groupId = selection.modifierGroupId ?? selection.groupId ?? null;
+        if (Array.isArray(selection.optionIds)) {
+          return selection.optionIds.map((optionId) => normalizedModifierSelection(groupId, optionId, { selectionIndex }));
+        }
+        const optionId = selection.modifierOptionId ?? selection.optionId;
+        if (optionId == null) throw invalidModifierSelection({ selectionIndex });
+        return [normalizedModifierSelection(groupId, optionId, { selectionIndex })];
+      });
+    }
+    if (source && typeof source === "object") {
+      return Object.entries(source).flatMap(([groupId, value]) => {
+        const optionIds = Array.isArray(value) ? value : [value];
+        return optionIds.map((optionId) => normalizedModifierSelection(groupId, optionId, { groupId }));
+      });
+    }
+    throw invalidModifierSelection();
+  }
+
+  const legacyKey = hasOwn("modifierOptionIds") ? "modifierOptionIds" : hasOwn("optionIds") ? "optionIds" : null;
+  if (!legacyKey) return [];
+  if (!Array.isArray(line[legacyKey])) throw invalidModifierSelection({ field: legacyKey });
+  return line[legacyKey].map((optionId, selectionIndex) => (
+    normalizedModifierSelection(null, optionId, { field: legacyKey, selectionIndex })
+  ));
+}
+
 function rawLineOptionIds(line = {}) {
-  const selections = [];
-  if (Array.isArray(line.optionIds)) selections.push(...line.optionIds);
-  if (Array.isArray(line.modifierOptionIds)) selections.push(...line.modifierOptionIds);
-  if (Array.isArray(line.modifierSelections)) {
-    for (const selection of line.modifierSelections) {
-      if (Array.isArray(selection?.optionIds)) selections.push(...selection.optionIds);
-      if (selection?.optionId) selections.push(selection.optionId);
-    }
-  }
-  if (line.modifierSelections && typeof line.modifierSelections === "object" && !Array.isArray(line.modifierSelections)) {
-    for (const value of Object.values(line.modifierSelections)) {
-      if (Array.isArray(value)) selections.push(...value);
-      else if (value) selections.push(value);
-    }
-  }
-  return selections.map((optionId) => String(optionId || "").trim()).filter(Boolean);
+  return resolveLineModifierSelections(line).map((selection) => selection.modifierOptionId);
 }
 
 function normalizeLineOptionIds(line = {}) {
@@ -271,8 +307,9 @@ function normalizeMenuItemModifierGroups(menuItem = {}) {
   return groups;
 }
 
-function validateSelectedModifiers(menuItem, line = {}) {
-  const rawOptionIds = rawLineOptionIds(line);
+export function validateSelectedModifiers(menuItem, line = {}) {
+  const selections = resolveLineModifierSelections(line);
+  const rawOptionIds = selections.map((selection) => selection.modifierOptionId);
   const optionIds = normalizeLineOptionIds(line);
   if (rawOptionIds.length !== optionIds.length) {
     throw httpError("Duplicate menu item modifier selected.", 400, { code: "POS_MODIFIER_DUPLICATE" });
@@ -287,9 +324,17 @@ function validateSelectedModifiers(menuItem, line = {}) {
   }
 
   const selectedByGroup = new Map(groups.map((group) => [group.id, []]));
-  for (const optionId of optionIds) {
+  for (const selection of selections) {
+    const optionId = selection.modifierOptionId;
     const match = optionToGroup.get(optionId);
     if (!match) throw httpError("Menu item modifier is invalid for this item.", 400, { code: "POS_MODIFIER_INVALID", optionId });
+    if (selection.modifierGroupId && selection.modifierGroupId !== match.group.id) {
+      throw httpError("Menu item modifier group does not match this option.", 400, {
+        code: "POS_MODIFIER_INVALID",
+        groupId: selection.modifierGroupId,
+        optionId
+      });
+    }
     selectedByGroup.get(match.group.id).push(match.option);
   }
 
