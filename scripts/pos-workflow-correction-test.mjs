@@ -74,12 +74,15 @@ assert.equal(state.value, POS_WORKFLOW.PAYMENT_FAILED, "failed payment should re
 state = posWorkflowReducer(state, { type: POS_EVENT.SELECT_PAYMENT });
 assert.equal(state.value, POS_WORKFLOW.PAYMENT_SELECTION, "failed payment should retry without abandoning the order");
 
-const cashBlock = app.slice(app.indexOf("async function acceptCashPayment"), app.indexOf("async function requestCardPayment"));
+const cashBlock = app.slice(app.indexOf("async function acceptCashPayment"), app.indexOf("function openGuestCheck"));
 const successBlock = app.slice(app.indexOf("async function completeSuccessfulTransaction"), app.indexOf("async function sendCurrentOrderToKitchen"));
+const finishBlock = app.slice(app.indexOf("function finishPaidOrder"), app.indexOf("function beginNewOrder"));
 assert.equal(cashBlock.includes("lastOrder ||"), true, "payment retry should reuse the committed order and avoid duplicate Kitchen tickets");
 assert.equal(cashBlock.match(/submitOrder\(/g)?.length, 1, "cash flow should commit/send the order only once");
-assert.equal(successBlock.includes("resetCurrentOrder()"), true, "successful payment should clear the active cart");
-assert.equal(successBlock.includes("POS_EVENT.HOME"), true, "successful payment should return automatically to Register Home");
+assert.equal(successBlock.includes("setPaymentResult({ success: true"), true, "successful payment should preserve the active order while change is visible");
+assert.equal(successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), true, "successful payment should enter the confirmation state");
+assert.equal(finishBlock.includes("resetCurrentOrder()"), true, "Done should clear the active cart");
+assert.equal(finishBlock.includes("POS_EVENT.HOME"), true, "Done should return to Register Home");
 assert.equal(successBlock.includes("submitOrder("), false, "payment completion should not submit a duplicate Kitchen ticket");
 
 for (const value of ["overflow-y-auto", "overscroll-contain", "shrink-0", ".pos-entry-cart-footer-actions", "@media (max-width: 1023px)"]) {

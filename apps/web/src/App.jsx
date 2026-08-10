@@ -8350,7 +8350,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const firstCashDrawer = config?.cashDrawers?.[0];
   const currentCashDrawer = config?.cashDrawers?.find((drawer) => drawer.id === activeShift?.cashDrawerId) || firstCashDrawer;
   const canAcceptCash = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.deviceType === "MAIN_TERMINAL" && activeShift?.status === "OPEN" && currentCashDrawer?.status === "OPEN" && (config?.permissions || []).includes("POS_ACCEPT_CASH"));
-  const canAcceptCard = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.cardPaymentsEnabled && (config?.permissions || []).includes("POS_ACCEPT_CARD"));
   const cartTotalCents = cart.reduce((sum, line) => sum + (line.priceCents || 0) * line.quantity, 0);
   const cartItemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const cashDisabledReason = !activeDevice
@@ -8410,10 +8409,15 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     dispatchWorkflow({ type: POS_EVENT.CUSTOMIZE_ITEM, payload: { menuItemId: item.id } });
   }
 
-  function modifyCartLine(cartLineId) {
-    const line = cart.find((candidate) => candidate.cartLineId === cartLineId);
-    const item = itemsForRegister.find((candidate) => candidate.id === line?.menuItemId);
-    if (!line || !item || !canModifyPosItem(item)) return;
+  function modifyCartLine(cartLineOrId, menuItem = null) {
+    const line = typeof cartLineOrId === "object"
+      ? cartLineOrId
+      : cart.find((candidate) => candidate.cartLineId === cartLineOrId);
+    const item = menuItem || itemsForRegister.find((candidate) => candidate.id === line?.menuItemId);
+    if (!line || !item || !canModifyPosItem(item)) {
+      setError("This item has no customizable options.");
+      return;
+    }
     openModifierDialog(item, line);
   }
 
@@ -8685,36 +8689,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         }
       });
       setLastOrderReceiptKind("final");
-      await completeSuccessfulTransaction(order, payload.changeDueCents || 0);
+      await completeSuccessfulTransaction(order, payload.changeDueCents || 0, payload.drawerRequest);
     } catch (posError) {
       setError(posError);
       setPaymentResult({ success: false, message: posError?.message || "Cash payment was not recorded." });
-      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
-    } finally {
-      setSaving("");
-    }
-  }
-
-  async function requestCardPayment() {
-    setSaving("card");
-    setError("");
-    setNotice("");
-    dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
-    try {
-      const paymentQuote = await calculateQuote();
-      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote }) : null);
-      if (!order?.id) throw new Error("The order could not be committed before payment.");
-      const payload = await posApi("/payments/card", {
-        method: "POST",
-        body: { orderId: order.id }
-      });
-      const message = payload.message || "Continue on the approved payment terminal.";
-      setNotice(message);
-      setPaymentResult({ success: false, message });
-      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message, requiresHostedPayment: true } });
-    } catch (posError) {
-      setError(posError);
-      setPaymentResult({ success: false, message: posError?.message || "Card payment could not be started." });
       dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
     } finally {
       setSaving("");
@@ -8867,21 +8845,29 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setNotes("");
     setTableNumber("");
     setMobileCartOpen(false);
+    setCustomizingItem(null);
+    setEditingCartLineId("");
+    setModifierSelections({});
+    setModifierInstructions("");
+    setModifierError("");
     clearPosOrderDraft(restaurantKey);
   }
 
   async function payCurrentOrder() {
     const activeQuote = await calculateQuote();
-    if (activeQuote) dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT });
+    if (activeQuote) {
+      setAmountReceived("");
+      setPaymentResult(null);
+      dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT });
+    }
   }
 
-  async function completeSuccessfulTransaction(order, changeDueCents = 0) {
-    resetCurrentOrder();
+  async function completeSuccessfulTransaction(order, changeDueCents = 0, drawerRequest = null) {
     const changeMessage = changeDueCents > 0 ? ` Change due ${money(changeDueCents)}.` : "";
-    setNotice(`Payment complete. ${order?.orderNumber || "Order"} was sent to the Kitchen.${changeMessage}`);
+    const message = `Payment complete.${changeMessage}`;
+    setPaymentResult({ success: true, changeDueCents, message, drawerRequest });
+    setNotice(`${order?.orderNumber || "Order"} was paid and sent to the Kitchen.`);
     dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order?.id } });
-    dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
-    dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
     await Promise.all([loadPos({ silent: true }), loadOrderLists()]);
   }
 
@@ -9076,7 +9062,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         <PaymentSelectionScreen
           quote={quote}
           canAcceptCash={canAcceptCash}
-          canAcceptCard={canAcceptCard}
           cashDisabledReason={cashDisabledReason}
           amountReceived={amountReceived}
           setAmountReceived={setAmountReceived}
@@ -9084,7 +9069,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           error={error?.message || (typeof error === "string" ? error : "")}
           onBack={() => dispatchWorkflow({ type: POS_EVENT.EDIT_ORDER })}
           onCash={acceptCashPayment}
-          onCard={requestCardPayment}
         />
       );
       break;
@@ -9487,6 +9471,9 @@ function ReceiptPrintDocument({ receipt }) {
             <div className="receipt-meta"><span>Payment</span><strong>{readable(payment.status || "PENDING")}</strong></div>
             {payment.provider ? <div className="receipt-meta"><span>Provider</span><strong>{payment.provider}</strong></div> : null}
             {payment.reference ? <div className="receipt-meta"><span>Reference</span><strong>{payment.reference}</strong></div> : null}
+            {payment.cashTenderedCents != null ? <div className="receipt-meta"><span>Cash tendered</span><strong>{money(payment.cashTenderedCents)}</strong></div> : null}
+            {payment.cashAppliedCents != null ? <div className="receipt-meta"><span>Cash applied</span><strong>{money(payment.cashAppliedCents)}</strong></div> : null}
+            {payment.changeDueCents != null ? <div className="receipt-meta"><span>Change</span><strong>{money(payment.changeDueCents)}</strong></div> : null}
           </section>
         </>
       ) : null}

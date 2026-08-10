@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Clock,
   CreditCard,
+  Delete,
   History,
   LockKeyhole,
   MonitorCog,
@@ -22,10 +23,18 @@ import {
   Trash2,
   UnlockKeyhole,
   UserRound,
-  WalletCards,
   Wifi,
-  WifiOff
+  WifiOff,
+  X
 } from "lucide-react";
+import {
+  applyCashKey,
+  cashTenderCentsToInput,
+  cashTenderInputToCents,
+  cashTenderSummary,
+  normalizeCashTenderInput,
+  quickCashTenderAmounts
+} from "./cashTender.js";
 import { canModifyPosItem, shouldOpenCustomization } from "./customization.js";
 
 function money(cents = 0) {
@@ -316,7 +325,7 @@ export function OrderEntryScreen({
           </div>
           {selectedLine ? (
             <div className="pos-entry-action-dock" aria-label={`Actions for ${selectedLine.name}`}>
-              <button type="button" onClick={() => onModify(selectedLine.cartLineId)} disabled={!selectedLineCanModify} title={selectedLineCanModify ? `Modify ${selectedLine.name}` : "This item has no customizable options"}><SlidersHorizontal size={17} />Modify</button>
+              <button type="button" onClick={() => onModify(selectedLine, selectedItem)} disabled={!selectedLineCanModify} title={selectedLineCanModify ? `Modify ${selectedLine.name}` : "This item has no customizable options"}><SlidersHorizontal size={17} />Modify</button>
               <button type="button" onClick={() => onRepeat(selectedLine.cartLineId)}><Repeat2 size={17} />Repeat</button>
               <div className="pos-entry-dock-quantity" aria-label={`${selectedLine.name} quantity controls`}>
                 <button type="button" onClick={() => onDecrease(selectedLine.cartLineId)} aria-label={`Decrease ${selectedLine.name}`}><Minus size={17} /></button>
@@ -331,7 +340,8 @@ export function OrderEntryScreen({
           <div className="pos-entry-cart-head"><div><h3>Current order</h3><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span></div><div><button className="button-muted pos-entry-cart-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button><button className="button-muted" type="button" onClick={onClear} disabled={!cart.length}><Trash2 size={17} />Clear</button></div></div>
           <div className="pos-entry-cart-lines" role="listbox" aria-label="Cart items">
             {cart.length ? cart.map((line) => {
-              const canModify = canModifyPosItem(menuItemById.get(line.menuItemId));
+              const menuItem = menuItemById.get(line.menuItemId);
+              const canModify = canModifyPosItem(menuItem);
               return (
                 <article className={selectedCartLineId === line.cartLineId ? "selected" : ""} key={line.cartLineId} role="option" tabIndex="0" aria-selected={selectedCartLineId === line.cartLineId} onClick={() => setSelectedCartLineId(line.cartLineId)} onKeyDown={(event) => {
                   if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
@@ -345,7 +355,7 @@ export function OrderEntryScreen({
                     {line.specialInstructions ? <small>{line.specialInstructions}</small> : null}
                   </div>
                   <div className="pos-entry-cart-actions">
-                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={(event) => runLineAction(event, () => onModify(line.cartLineId))} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
+                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={(event) => runLineAction(event, () => onModify(line, menuItem))} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
                     <button className="pos-entry-line-action" type="button" onClick={(event) => runLineAction(event, () => onRepeat(line.cartLineId))} aria-label={`Repeat ${line.name}`}><Repeat2 size={16} /><span>Repeat</span></button>
                     <div className="pos-entry-quantity">
                       <button type="button" onClick={(event) => runLineAction(event, () => onDecrease(line.cartLineId))} aria-label={`Decrease ${line.name}`}><Minus size={16} /></button>
@@ -381,29 +391,46 @@ export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onE
   );
 }
 
-export function PaymentSelectionScreen({ quote, canAcceptCash, canAcceptCard, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash, onCard }) {
+export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash }) {
   const total = Number(quote?.totalCents || 0);
-  const amount = Math.round(Number(amountReceived || 0) * 100);
-  const change = Math.max(0, amount - total);
+  const tenderedCents = cashTenderInputToCents(amountReceived) ?? 0;
+  const tender = cashTenderSummary(total, tenderedCents);
+  const quickAmounts = quickCashTenderAmounts(total);
+  const keypadRows = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["00", "0", "."]];
+  const enterKey = (key) => setAmountReceived((current) => applyCashKey(current, key));
+  const updateAmount = (value) => {
+    const normalized = normalizeCashTenderInput(value);
+    if (normalized !== null) setAmountReceived(normalized);
+  };
   return (
     <section className="pos-workflow-screen">
-      <PosScreenHeader eyebrow="Checkout" title="Select payment" detail={`Amount due ${money(total)}`} onBack={onBack} />
+      <PosScreenHeader eyebrow="Checkout" title="Cash payment" detail="Enter the cash received and complete the sale." onBack={onBack} />
       {error ? <div className="pos-alert" role="alert">{error}</div> : null}
-      <div className="pos-payment-grid">
-        <div className="pos-payment-method">
-          <Banknote size={30} />
-          <h3>Cash</h3>
-          <label><span>Amount received</span><input type="number" min={(total / 100).toFixed(2)} step="0.01" inputMode="decimal" value={amountReceived} onChange={(event) => setAmountReceived(event.target.value)} placeholder={(total / 100).toFixed(2)} /></label>
-          {amount >= total ? <p className="pos-change-due">Change due <strong>{money(change)}</strong></p> : null}
-          <button className="button-primary" type="button" onClick={() => onCash(amount)} disabled={!canAcceptCash || amount < total || saving}><Banknote size={18} />Accept cash</button>
+      <div className="pos-cash-totals" aria-label="Cash payment totals">
+        <div><span>Order total</span><strong>{money(total)}</strong></div>
+        <div><span>Amount paid</span><strong>{money(0)}</strong></div>
+        <div><span>Amount due</span><strong>{money(total)}</strong></div>
+      </div>
+      <div className="pos-cash-workspace">
+        <div className="pos-cash-entry">
+          <div className="pos-cash-entry-head"><Banknote size={28} /><div><span>Tender type</span><strong>Cash</strong></div></div>
+          <label><span>Cash received</span><input type="text" inputMode="decimal" autoComplete="off" value={amountReceived} onChange={(event) => updateAmount(event.target.value)} placeholder="0.00" aria-label="Cash received" /></label>
+          <div className="pos-cash-quick-actions">
+            <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(total))}>Exact cash</button>
+            {quickAmounts.map((amount) => <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(amount))} key={amount}>{money(amount)}</button>)}
+          </div>
+          <dl className="pos-cash-breakdown">
+            <div><dt>Cash tendered</dt><dd>{money(tender.tenderedCents)}</dd></div>
+            <div><dt>Cash applied</dt><dd>{money(tender.appliedCents)}</dd></div>
+            {tender.covered ? <div className="change"><dt>Change due</dt><dd>{money(tender.changeDueCents)}</dd></div> : <div className="remaining"><dt>Remaining due</dt><dd>{money(tender.remainingDueCents)}</dd></div>}
+          </dl>
+          <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Completing..." : "Complete cash payment"}</button>
           {!canAcceptCash ? <small>{cashDisabledReason || "Cash is not available on this register."}</small> : null}
         </div>
-        <div className="pos-payment-method">
-          <WalletCards size={30} />
-          <h3>Card or wallet</h3>
-          <p>Use the restaurant's approved PCI-compliant terminal or hosted payment flow.</p>
-          <button className="button-primary" type="button" onClick={onCard} disabled={!canAcceptCard || saving}><CreditCard size={18} />Send to terminal</button>
-          {!canAcceptCard ? <small>Card payments are not ready for this device.</small> : null}
+        <div className="pos-cash-keypad" aria-label="Cash amount keypad">
+          {keypadRows.flat().map((key) => <button type="button" onClick={() => enterKey(key)} key={key}>{key}</button>)}
+          <button className="backspace" type="button" onClick={() => enterKey("backspace")} aria-label="Backspace"><Delete size={22} />Backspace</button>
+          <button className="clear" type="button" onClick={() => enterKey("clear")}><X size={20} />Clear</button>
         </div>
       </div>
     </section>
@@ -416,8 +443,8 @@ export function PaymentResultScreen({ success, order, changeDueCents, message, o
       {success ? <CheckCircle2 size={52} /> : <CreditCard size={52} />}
       <h2>{success ? "Payment complete" : "Payment needs attention"}</h2>
       <p>{message || (success ? `${order?.orderNumber || "Order"} is ready for its final receipt.` : "No payment was recorded. Choose a payment method and try again.")}</p>
-      {success && changeDueCents > 0 ? <p className="pos-change-callout">Change due <strong>{money(changeDueCents)}</strong></p> : null}
-      <button className="button-primary" type="button" onClick={success ? onComplete : onRetry}>{success ? "Finish order" : "Try another method"}</button>
+      {success ? <p className="pos-change-callout">Change due <strong>{money(changeDueCents)}</strong></p> : null}
+      <button className="button-primary" type="button" onClick={success ? onComplete : onRetry}>{success ? "Done" : "Try another method"}</button>
     </section>
   );
 }

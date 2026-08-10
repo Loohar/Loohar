@@ -264,6 +264,7 @@ function receiptTotals(order) {
 
 function receiptPayment(order, totals) {
   const payment = order.restaurantOrderPayment || order.payment || null;
+  const cashTender = payment?.quoteJson?.cashTender || null;
   const provider = safeText(payment?.provider || order.payment?.provider, "Manual");
   const status = safeText(payment?.status || order.payment?.status, "PENDING");
   const refundedCents = refundedCentsFor(payment) || (order.payment?.refundedAt ? asCents(order.payment?.amountCents) : 0);
@@ -277,7 +278,10 @@ function receiptPayment(order, totals) {
     refundedAt: payment?.refundedAt || order.payment?.refundedAt || null,
     refundedCents,
     balanceCents: Math.max(0, totals.totalCents - paidCents),
-    reference: maskedReference(payment?.providerPaymentIntentId || payment?.providerChargeId || order.payment?.providerPaymentId || order.payment?.stripePaymentIntentId)
+    reference: maskedReference(payment?.providerPaymentIntentId || payment?.providerChargeId || order.payment?.providerPaymentId || order.payment?.stripePaymentIntentId),
+    cashTenderedCents: cashTender?.tenderedCents ?? null,
+    cashAppliedCents: cashTender?.appliedCents ?? null,
+    changeDueCents: cashTender?.changeDueCents ?? null
   };
 }
 

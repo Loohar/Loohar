@@ -4046,6 +4046,7 @@ textarea {
   .pos-setup-fields label,
   .pos-settings-grid label,
   .pos-cash-input,
+  .pos-cash-entry label,
   .pos-payment-method label {
     @apply grid gap-1.5 text-left text-sm font-bold text-slate-600;
   }
@@ -4382,6 +4383,109 @@ textarea {
     @apply my-3 block text-sm font-semibold leading-6 text-slate-500;
   }
 
+  .pos-cash-totals {
+    @apply mt-6 grid gap-2 sm:grid-cols-3;
+  }
+
+  .pos-cash-totals > div {
+    @apply grid gap-1 rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .pos-cash-totals span {
+    @apply text-xs font-black uppercase text-slate-500;
+  }
+
+  .pos-cash-totals strong {
+    @apply text-xl font-black tabular-nums text-ink;
+  }
+
+  .pos-cash-workspace {
+    @apply mx-auto mt-4 grid w-full max-w-4xl gap-4 md:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)];
+  }
+
+  .pos-cash-entry,
+  .pos-cash-keypad {
+    @apply rounded-md border border-line bg-slate-50 p-4;
+  }
+
+  .pos-cash-entry-head {
+    @apply mb-4 flex items-center gap-3 text-mint;
+  }
+
+  .pos-cash-entry-head span,
+  .pos-cash-entry-head strong {
+    @apply block;
+  }
+
+  .pos-cash-entry-head span {
+    @apply text-xs font-black uppercase text-slate-500;
+  }
+
+  .pos-cash-entry-head strong {
+    @apply text-xl font-black text-ink;
+  }
+
+  .pos-cash-entry input {
+    @apply h-16 text-right text-3xl font-black tabular-nums;
+  }
+
+  .pos-cash-quick-actions {
+    @apply mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4;
+  }
+
+  .pos-cash-quick-actions button {
+    @apply min-h-11 rounded-md border border-line bg-white px-2 text-sm font-black text-ink transition hover:border-mint hover:text-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+  }
+
+  .pos-cash-breakdown {
+    @apply my-4 grid gap-2 border-y border-line py-3;
+  }
+
+  .pos-cash-breakdown > div {
+    @apply flex items-center justify-between gap-3 text-sm font-bold text-slate-500;
+  }
+
+  .pos-cash-breakdown dd {
+    @apply font-black tabular-nums text-ink;
+  }
+
+  .pos-cash-breakdown .change {
+    @apply text-emerald-700;
+  }
+
+  .pos-cash-breakdown .change dd {
+    @apply text-lg text-emerald-700;
+  }
+
+  .pos-cash-breakdown .remaining,
+  .pos-cash-breakdown .remaining dd {
+    @apply text-amber-700;
+  }
+
+  .pos-complete-cash {
+    @apply w-full justify-center;
+  }
+
+  .pos-cash-entry > small {
+    @apply mt-3 block text-sm font-semibold text-amber-700;
+  }
+
+  .pos-cash-keypad {
+    @apply grid grid-cols-3 gap-2;
+  }
+
+  .pos-cash-keypad button {
+    @apply grid min-h-16 place-items-center rounded-md border border-line bg-white text-xl font-black tabular-nums text-ink transition hover:border-mint hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-mint/30 active:bg-emerald-100;
+  }
+
+  .pos-cash-keypad .backspace {
+    @apply col-span-2 flex items-center justify-center gap-2 text-sm;
+  }
+
+  .pos-cash-keypad .clear {
+    @apply flex items-center justify-center gap-1 text-sm text-rose-700;
+  }
+
   .pos-change-due,
   .pos-change-callout {
     @apply rounded-md border border-emerald-200 bg-emerald-50 p-4 font-black text-emerald-800;
@@ -4530,6 +4634,22 @@ textarea {
     .pos-settings-grid,
     .pos-pin-settings {
       @apply grid-cols-1;
+    }
+
+    .pos-cash-workspace {
+      @apply grid-cols-1;
+    }
+
+    .pos-cash-totals {
+      @apply grid-cols-3;
+    }
+
+    .pos-cash-totals > div {
+      @apply min-w-0 p-3;
+    }
+
+    .pos-cash-totals strong {
+      @apply text-base;
     }
   }
 

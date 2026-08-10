@@ -5,6 +5,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
+import { requestCashDrawerOpen } from "./posHardwareService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
 import { signPosSessionToken } from "../utils/tokens.js";
 
@@ -918,6 +919,9 @@ function receiptPayload({ order, quote, payment = null }) {
     type: order.type,
     status: order.status,
     paymentStatus: payment?.status || "PENDING",
+    cashTenderedCents: payment?.cashTenderedCents ?? null,
+    cashAppliedCents: payment?.cashAppliedCents ?? null,
+    changeDueCents: payment?.changeDueCents ?? null,
     items: receiptLineItems(order, quote),
     subtotalCents: order.subtotalCents,
     discountCents: order.discountCents,
@@ -1080,38 +1084,99 @@ export async function holdPosOrder({ restaurantId, user, body, deviceId = null }
   return session;
 }
 
+export function cashSettlementAmounts(orderTotalCents, tenderedCents = null, alreadyPaidCents = 0) {
+  const total = Number(orderTotalCents);
+  const alreadyPaid = Number(alreadyPaidCents);
+  const tendered = tenderedCents === null ? total - alreadyPaid : Number(tenderedCents);
+  if (![total, alreadyPaid, tendered].every(Number.isSafeInteger) || total < 0 || alreadyPaid < 0 || tendered < 0) {
+    throw httpError("Enter a valid cash tender amount.", 400, { code: "POS_CASH_TENDER_INVALID" });
+  }
+  const amountDueCents = Math.max(0, total - alreadyPaid);
+  if (amountDueCents === 0) {
+    throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
+  }
+  if (tendered < amountDueCents) {
+    throw httpError("Cash tender must cover the remaining amount due.", 400, {
+      code: "POS_CASH_TENDER_INSUFFICIENT",
+      amountDueCents,
+      remainingDueCents: amountDueCents - tendered
+    });
+  }
+  return {
+    amountDueCents,
+    cashTenderedCents: tendered,
+    cashAppliedCents: amountDueCents,
+    changeDueCents: tendered - amountDueCents
+  };
+}
+
 export async function cashPayment({ restaurantId, user, orderId, deviceId, fingerprint, amountCents = null }) {
   await assertPosFeature(restaurantId, "POST");
   const { device, shift, cashDrawer } = await requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint });
-  const order = await prisma.order.findFirst({ where: { id: orderId, restaurantId }, include: { items: true } });
-  if (!order) throw httpError("Order not found.", 404);
-  const paidAmount = amountCents === null ? order.totalCents : cents(amountCents);
-  if (paidAmount < order.totalCents) throw httpError("Cash payment must cover the order total.", 400);
+  const locationId = shift.locationId || device.locationId || null;
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, restaurantId, ...(locationId ? { locationId } : { locationId: null }) },
+    include: { items: true, payment: true, restaurantOrderPayment: true }
+  });
+  if (!order) throw httpError("Order not found for this register location.", 404, { code: "POS_CASH_ORDER_NOT_FOUND" });
+  const settledPaymentStatuses = new Set(["AUTHORIZED", "PAID", "REFUNDED"]);
+  const recoverableOrderPaymentStatuses = new Set(["REQUIRES_PAYMENT_METHOD", "FAILED", "CANCELED"]);
+  if (
+    settledPaymentStatuses.has(order.payment?.status)
+    || (order.restaurantOrderPayment && !recoverableOrderPaymentStatuses.has(order.restaurantOrderPayment.status))
+  ) {
+    throw httpError("This order already has an active or completed payment.", 409, { code: "POS_CASH_ALREADY_PAID" });
+  }
+  const settlement = cashSettlementAmounts(order.totalCents, amountCents, 0);
+  const cashTender = {
+    tenderType: "CASH",
+    restaurantId,
+    locationId,
+    amountDueCents: settlement.amountDueCents,
+    tenderedCents: settlement.cashTenderedCents,
+    appliedCents: settlement.cashAppliedCents,
+    changeDueCents: settlement.changeDueCents,
+    cashierUserId: user.id,
+    shiftId: shift.id,
+    deviceId: device.id,
+    cashDrawerId: cashDrawer.id,
+    settledAt: new Date().toISOString()
+  };
 
   const result = await prisma.$transaction(async (tx) => {
-    const payment = await tx.payment.upsert({
-      where: { orderId: order.id },
-      update: {
-        provider: "manual_cash",
-        status: "PAID",
-        amountCents: order.totalCents,
-        restaurantNetCents: order.totalCents,
-        driverTipCents: order.driverTipCents,
-        paidAt: new Date()
-      },
-      create: {
-        orderId: order.id,
-        provider: "manual_cash",
-        status: "PAID",
-        amountCents: order.totalCents,
-        restaurantNetCents: order.totalCents,
-        driverTipCents: order.driverTipCents,
-        paidAt: new Date()
-      }
-    });
+    const existingPayment = await tx.payment.findUnique({ where: { orderId: order.id } });
+    let payment;
+    if (existingPayment) {
+      const claimed = await tx.payment.updateMany({
+        where: { id: existingPayment.id, status: { in: ["PENDING", "FAILED"] } },
+        data: {
+          provider: "manual_cash",
+          status: "PAID",
+          amountCents: settlement.cashAppliedCents,
+          restaurantNetCents: settlement.cashAppliedCents,
+          driverTipCents: order.driverTipCents,
+          paidAt: new Date()
+        }
+      });
+      if (claimed.count !== 1) throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
+      payment = await tx.payment.findUnique({ where: { id: existingPayment.id } });
+    } else {
+      payment = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          provider: "manual_cash",
+          status: "PAID",
+          amountCents: settlement.cashAppliedCents,
+          restaurantNetCents: settlement.cashAppliedCents,
+          driverTipCents: order.driverTipCents,
+          paidAt: new Date()
+        }
+      });
+    }
     const orderPayment = await tx.restaurantOrderPayment.upsert({
       where: { orderId: order.id },
       update: {
+        restaurantId,
         provider: "MANUAL",
         status: "PAID",
         paidAt: new Date(),
@@ -1121,7 +1186,7 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         restaurantNetCents: order.totalCents,
         restaurantTipCents: order.restaurantTipCents,
         driverTipCents: order.driverTipCents,
-        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id })
+        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender })
       },
       create: {
         restaurantId,
@@ -1139,7 +1204,7 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         platformFeeCents: 0,
         restaurantGrossCents: order.totalCents,
         restaurantNetCents: order.totalCents,
-        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id }),
+        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender }),
         paidAt: new Date()
       }
     });
@@ -1152,14 +1217,14 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         orderId: order.id,
         paymentId: payment.id,
         actorUserId: user.id,
-        amountCents: order.totalCents,
+        amountCents: settlement.cashAppliedCents,
         entryType: "SALE_CASH",
-        note: `Cash payment for ${order.orderNumber}`
+        note: `Cash payment for ${order.orderNumber}; tendered ${settlement.cashTenderedCents}; change ${settlement.changeDueCents}`
       }
     });
     await tx.cashDrawer.update({
       where: { id: cashDrawer.id },
-      data: { currentBalanceCents: { increment: order.totalCents } }
+      data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
     });
     const receipt = await tx.posReceipt.create({
       data: {
@@ -1169,12 +1234,37 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         orderId: order.id,
         receiptNumber: randomReceiptNumber("CASH"),
         kind: "CUSTOMER_RECEIPT",
-        payloadJson: receiptPayload({ order, quote: { lineItemsJson: [] }, payment }),
+        payloadJson: receiptPayload({
+          order,
+          quote: { lineItemsJson: [] },
+          payment: {
+            ...payment,
+            cashTenderedCents: settlement.cashTenderedCents,
+            cashAppliedCents: settlement.cashAppliedCents,
+            changeDueCents: settlement.changeDueCents
+          }
+        }),
         createdByUserId: user.id
       }
     });
     return { payment, orderPayment, ledger, receipt };
+  }).catch((error) => {
+    if (error?.code === "P2002") {
+      throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
+    }
+    throw error;
   });
+
+  const drawerRequest = await requestCashDrawerOpen({
+    restaurantId,
+    actorUserId: user.id,
+    device,
+    cashDrawer,
+    shift,
+    orderId: order.id,
+    paymentId: result.payment.id,
+    reason: "COMPLETED_CASH_SALE"
+  }).catch((error) => ({ requested: false, physicalOpenRequested: false, hardwareStatus: "REQUEST_FAILED", error: error.message }));
 
   await recordAudit({
     actorUserId: user.id,
@@ -1182,12 +1272,13 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
     action: "pos.payment.cash.accepted",
     entityType: "Payment",
     entityId: result.payment.id,
-    metadata: { orderId: order.id, deviceId: device.id, cashDrawerId: cashDrawer.id }
+    metadata: { orderId: order.id, deviceId: device.id, cashDrawerId: cashDrawer.id, ...settlement, drawerRequest }
   });
   return {
     ...result,
-    amountReceivedCents: paidAmount,
-    changeDueCents: Math.max(0, paidAmount - order.totalCents)
+    ...settlement,
+    amountReceivedCents: settlement.cashTenderedCents,
+    drawerRequest
   };
 }
 

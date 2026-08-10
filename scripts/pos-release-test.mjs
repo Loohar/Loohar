@@ -151,7 +151,6 @@ assertCheck(includesAll(app, [
   '/quotes',
   '/orders',
   '/payments/cash',
-  '/payments/card',
   '/devices',
   '/shifts/clock-in',
   '/held-orders'
