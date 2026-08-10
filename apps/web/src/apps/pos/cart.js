@@ -12,6 +12,15 @@ export function removePosCartLine(lines = [], cartLineId) {
   return lines.filter((line) => line.cartLineId !== cartLineId);
 }
 
+export function nextPosCartLineSelectionAfterRemoval(lines = [], cartLineId, selectedCartLineId) {
+  if (selectedCartLineId !== cartLineId) {
+    return lines.some((line) => line.cartLineId === selectedCartLineId) ? selectedCartLineId : "";
+  }
+  const removedIndex = lines.findIndex((line) => line.cartLineId === cartLineId);
+  if (removedIndex < 0) return "";
+  return lines[removedIndex + 1]?.cartLineId || lines[removedIndex - 1]?.cartLineId || "";
+}
+
 export function replacePosCartLineConfiguration(lines = [], cartLineId, configuration = {}) {
   const target = lines.find((line) => line.cartLineId === cartLineId);
   if (!target) return lines;

@@ -4,7 +4,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { featureGuard } from "../middleware/entitlements.js";
 import { notifyOrderStatusUpdate } from "../services/notificationService.js";
-import { emitKitchenUpdate, emitOrderUpdate, serializeKitchenOrder } from "../services/realtimeService.js";
+import { emitKitchenUpdate, emitOrderUpdate, kitchenEligibleOrderItems, serializeKitchenOrder } from "../services/realtimeService.js";
 
 const router = Router();
 const kitchenRoles = ["KITCHEN_STAFF", "CASHIER", "RESTAURANT_MANAGER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "TENANT_OWNER", "SUPER_ADMIN"];
@@ -126,7 +126,7 @@ async function listKitchenOrders(req, res, next) {
       restaurant,
       locations: locationContext.locations,
       selectedLocation: locationContext.selectedLocation,
-      orders: orders.map(kdsOrder),
+      orders: orders.map(kdsOrder).filter((order) => order.items.length > 0),
       cursor: queryStartedAt.toISOString(),
       reconciliation: Boolean(since)
     });
@@ -153,9 +153,11 @@ async function updateKitchenOrderStatus(req, res, next) {
         restaurantId: restaurant.id,
         ...(locationContext.selectedLocation ? { locationId: locationContext.selectedLocation.id } : {})
       },
-      select: { id: true }
+      select: { id: true, items: { select: { optionsJson: true } } }
     });
-    if (!existing) return res.status(404).json({ error: "Kitchen order not found" });
+    if (!existing || !kitchenEligibleOrderItems(existing.items).length) {
+      return res.status(404).json({ error: "Kitchen order not found" });
+    }
 
     const order = await prisma.order.update({
       where: { id_restaurantId: { id: existing.id, restaurantId: restaurant.id } },

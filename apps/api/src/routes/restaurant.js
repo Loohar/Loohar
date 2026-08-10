@@ -17,6 +17,7 @@ import {
   normalizeMenuItemCustomizationMode,
   removeMenuItemCustomizationSetting,
   updateMenuItemCustomizationSettings,
+  updateMenuItemKitchenSettings,
   withMenuItemCustomizationMode
 } from "../services/menuCustomizationService.js";
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
@@ -396,10 +397,16 @@ function menuItemUpdateData(body = {}) {
   return data;
 }
 
-async function persistMenuItemCustomizationMode(restaurantId, itemId, value) {
+async function persistMenuItemPosSettings(restaurantId, itemId, { customizationMode, sendToKitchen } = {}) {
   const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
   if (!restaurant) throw new Error("Restaurant not found");
-  const nextSettings = updateMenuItemCustomizationSettings(restaurant.settingsJson, itemId, value);
+  let nextSettings = restaurant.settingsJson;
+  if (customizationMode !== undefined) {
+    nextSettings = updateMenuItemCustomizationSettings(nextSettings, itemId, customizationMode);
+  }
+  if (sendToKitchen !== undefined) {
+    nextSettings = updateMenuItemKitchenSettings(nextSettings, itemId, sendToKitchen);
+  }
   if (nextSettings !== restaurant.settingsJson) {
     await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
   }
@@ -1332,6 +1339,7 @@ const menuItemSchema = z.object({
     isDairyFree: z.boolean().optional(),
     isNutFree: z.boolean().optional(),
     customizationMode: z.enum(MENU_ITEM_CUSTOMIZATION_MODES).default("AUTO"),
+    sendToKitchen: z.boolean().default(true),
     options: z.array(z.object({ name: z.string(), priceCents: z.number().int().default(0), required: z.boolean().default(false) })).default([])
   })
 });
@@ -1351,7 +1359,7 @@ router.get("/:restaurantId/menu/items", async (req, res, next) => {
 
 router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, res, next) => {
   try {
-    const { options, customizationMode, ...data } = req.body;
+    const { options, customizationMode, sendToKitchen, ...data } = req.body;
     const restaurantId = restaurantIdFor(req);
     const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
     if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
@@ -1360,8 +1368,8 @@ router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, r
       data: { ...menuItemUpdateData(data), restaurantId, options: { create: options } },
       include: { category: true, options: true, optionGroups: { include: { options: true } } }
     });
-    const settingsJson = await persistMenuItemCustomizationMode(restaurantId, item.id, customizationMode);
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.created", entityType: "MenuItem", entityId: item.id, metadata: { customizationMode: normalizeMenuItemCustomizationMode(customizationMode) } });
+    const settingsJson = await persistMenuItemPosSettings(restaurantId, item.id, { customizationMode, sendToKitchen });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.created", entityType: "MenuItem", entityId: item.id, metadata: { customizationMode: normalizeMenuItemCustomizationMode(customizationMode), sendToKitchen } });
     res.status(201).json({ item: withMenuItemCustomizationMode(item, settingsJson) });
   } catch (error) {
     next(error);
@@ -1381,6 +1389,10 @@ router.patch("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
     const customizationMode = req.body.customizationMode === undefined
       ? undefined
       : normalizeMenuItemCustomizationMode(requestedCustomizationMode);
+    const sendToKitchen = req.body.sendToKitchen;
+    if (sendToKitchen !== undefined && typeof sendToKitchen !== "boolean") {
+      return res.status(400).json({ error: "Kitchen preparation must be enabled or disabled." });
+    }
     if (data.categoryId) {
       const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
       if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
@@ -1392,10 +1404,10 @@ router.patch("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
       data,
       include: { category: true, options: true, optionGroups: { include: { options: true } } }
     });
-    const settingsJson = customizationMode === undefined
+    const settingsJson = customizationMode === undefined && sendToKitchen === undefined
       ? (await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } }))?.settingsJson
-      : await persistMenuItemCustomizationMode(restaurantId, item.id, customizationMode);
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.updated", entityType: "MenuItem", entityId: item.id, metadata: { ...data, ...(customizationMode === undefined ? {} : { customizationMode }) } });
+      : await persistMenuItemPosSettings(restaurantId, item.id, { customizationMode, sendToKitchen });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.updated", entityType: "MenuItem", entityId: item.id, metadata: { ...data, ...(customizationMode === undefined ? {} : { customizationMode }), ...(sendToKitchen === undefined ? {} : { sendToKitchen }) } });
     res.json({ item: withMenuItemCustomizationMode(item, settingsJson) });
   } catch (error) {
     next(error);

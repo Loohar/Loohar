@@ -48,7 +48,7 @@ assert.equal(posCustomizationMode({ customizationMode: "invalid" }), "AUTO", "in
 
 const restaurantRoleBlock = restaurantRoutes.slice(restaurantRoutes.indexOf("const restaurantRoles"), restaurantRoutes.indexOf("router.use"));
 assert.equal(restaurantRoleBlock.includes("CASHIER"), false, "cashiers should not receive menu configuration routes");
-for (const value of ["customizationMode", "MENU_ITEM_CUSTOMIZATION_MODES", "persistMenuItemCustomizationMode", "withMenuItemCustomizationMode"]) {
+for (const value of ["customizationMode", "MENU_ITEM_CUSTOMIZATION_MODES", "persistMenuItemPosSettings", "withMenuItemCustomizationMode"]) {
   assert.equal(restaurantRoutes.includes(value), true, `menu API should include ${value}`);
 }
 assert.equal(posService.includes("withMenuCustomizationModes(categories, restaurant?.settingsJson)"), true, "POS menu should receive owner customization settings");

@@ -57,7 +57,16 @@ function safeModifiers(item) {
   return [];
 }
 
-export function serializeKitchenOrder(order) {
+export function isKitchenEligibleOrderItem(item = {}) {
+  return item.optionsJson?.sendToKitchen !== false;
+}
+
+export function kitchenEligibleOrderItems(items = []) {
+  return (items || []).filter(isKitchenEligibleOrderItem);
+}
+
+export function serializeKitchenOrder(order, { kitchenOnly = true } = {}) {
+  const items = kitchenOnly ? kitchenEligibleOrderItems(order.items) : (order.items || []);
   return {
     id: order.id,
     restaurantId: order.restaurantId,
@@ -89,7 +98,7 @@ export function serializeKitchenOrder(order) {
           address: order.location.address || null
         }
       : null,
-    items: (order.items || []).map((item) => ({
+    items: items.map((item) => ({
       id: item.id,
       menuItemId: item.menuItemId,
       name: item.name,
@@ -123,7 +132,12 @@ function kitchenEvent(eventType, order) {
 }
 
 function hasKitchenSnapshot(order) {
-  return Boolean(order && Array.isArray(order.items) && Array.isArray(order.statusHistory));
+  return Boolean(
+    order
+    && Array.isArray(order.items)
+    && kitchenEligibleOrderItems(order.items).length
+    && Array.isArray(order.statusHistory)
+  );
 }
 
 async function authorizeSocket(socket, next) {
@@ -250,7 +264,7 @@ export function emitKitchenTicketCreated(order) {
 
 export function emitOrderUpdate(order) {
   if (!ioRef) return null;
-  ioRef.to(restaurantRoom(order.restaurantId)).emit("order:update", serializeKitchenOrder(order));
+  ioRef.to(restaurantRoom(order.restaurantId)).emit("order:update", serializeKitchenOrder(order, { kitchenOnly: false }));
   if (!hasKitchenSnapshot(order)) return null;
   const event = kitchenEvent("order.status.updated.v1", order);
   emitKitchenEvent("order.status.updated.v1", event);

@@ -22,10 +22,26 @@ export function menuItemCustomizationMode(settingsJson, itemId) {
   return menuItemCustomizationModes(settingsJson)[String(itemId)] || "AUTO";
 }
 
+export function menuItemKitchenSettings(settingsJson = {}) {
+  const source = settingsJson && typeof settingsJson === "object" && !Array.isArray(settingsJson)
+    ? settingsJson.posItemSendToKitchen
+    : null;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+  return Object.fromEntries(Object.entries(source).map(([itemId, sendToKitchen]) => [
+    String(itemId),
+    sendToKitchen !== false
+  ]));
+}
+
+export function menuItemSendToKitchen(settingsJson, itemId) {
+  return menuItemKitchenSettings(settingsJson)[String(itemId)] !== false;
+}
+
 export function withMenuItemCustomizationMode(item = {}, settingsJson = {}) {
   return {
     ...item,
-    customizationMode: menuItemCustomizationMode(settingsJson, item.id)
+    customizationMode: menuItemCustomizationMode(settingsJson, item.id),
+    sendToKitchen: menuItemSendToKitchen(settingsJson, item.id)
   };
 }
 
@@ -50,6 +66,22 @@ export function updateMenuItemCustomizationSettings(settingsJson = {}, itemId, v
   return { ...base, posItemCustomizationModes: modes };
 }
 
+export function updateMenuItemKitchenSettings(settingsJson = {}, itemId, sendToKitchen) {
+  const base = settingsJson && typeof settingsJson === "object" && !Array.isArray(settingsJson)
+    ? settingsJson
+    : {};
+  const settings = menuItemKitchenSettings(base);
+  const key = String(itemId || "").trim();
+  if (!key) return base;
+  if (sendToKitchen === false) settings[key] = false;
+  else delete settings[key];
+  return { ...base, posItemSendToKitchen: settings };
+}
+
 export function removeMenuItemCustomizationSetting(settingsJson = {}, itemId) {
-  return updateMenuItemCustomizationSettings(settingsJson, itemId, "AUTO");
+  return updateMenuItemKitchenSettings(
+    updateMenuItemCustomizationSettings(settingsJson, itemId, "AUTO"),
+    itemId,
+    true
+  );
 }

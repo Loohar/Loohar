@@ -272,6 +272,8 @@ export function OrderEntryScreen({
   searchQuery,
   setSearchQuery,
   cart,
+  selectedCartLineId,
+  setSelectedCartLineId,
   cartItemCount,
   cartTotalCents,
   mobileCartOpen,
@@ -292,6 +294,13 @@ export function OrderEntryScreen({
   onImageError
 }) {
   const menuItemById = new Map((menuItems || items).map((item) => [item.id, item]));
+  const selectedLine = cart.find((line) => line.cartLineId === selectedCartLineId) || null;
+  const selectedItem = selectedLine ? menuItemById.get(selectedLine.menuItemId) : null;
+  const selectedLineCanModify = canModifyPosItem(selectedItem);
+  const runLineAction = (event, action) => {
+    event.stopPropagation();
+    action();
+  };
   return (
     <section className="pos-entry-screen">
       <PosScreenHeader eyebrow="Current order" title="Order entry" detail="Choose items, review the current order, and continue to payment." onBack={onHome} />
@@ -302,15 +311,33 @@ export function OrderEntryScreen({
             <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)} aria-label="Menu category"><option value="all">All categories</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select>
           </div>
           <div className="pos-entry-categories" aria-label="Menu categories"><button type="button" className={selectedCategory === "all" ? "active" : ""} onClick={() => setSelectedCategory("all")}>All</button>{categories.map((category) => <button type="button" className={selectedCategory === category.id ? "active" : ""} onClick={() => setSelectedCategory(category.id)} key={category.id}>{category.name}</button>)}</div>
-          {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{shouldOpenCustomization(item) ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
+          <div className="pos-entry-menu-scroll">
+            {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{shouldOpenCustomization(item) ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
+          </div>
+          {selectedLine ? (
+            <div className="pos-entry-action-dock" aria-label={`Actions for ${selectedLine.name}`}>
+              <button type="button" onClick={() => onModify(selectedLine.cartLineId)} disabled={!selectedLineCanModify} title={selectedLineCanModify ? `Modify ${selectedLine.name}` : "This item has no customizable options"}><SlidersHorizontal size={17} />Modify</button>
+              <button type="button" onClick={() => onRepeat(selectedLine.cartLineId)}><Repeat2 size={17} />Repeat</button>
+              <div className="pos-entry-dock-quantity" aria-label={`${selectedLine.name} quantity controls`}>
+                <button type="button" onClick={() => onDecrease(selectedLine.cartLineId)} aria-label={`Decrease ${selectedLine.name}`}><Minus size={17} /></button>
+                <strong aria-label={`${selectedLine.name} quantity`}>{selectedLine.quantity}</strong>
+                <button type="button" onClick={() => onIncrease(selectedLine.cartLineId)} aria-label={`Increase ${selectedLine.name}`}><Plus size={17} /></button>
+              </div>
+              <button className="pos-entry-dock-delete" type="button" onClick={() => onRemove(selectedLine.cartLineId)} aria-label={`Remove ${selectedLine.name}`} title="Remove item"><Trash2 size={17} /><span>Delete</span></button>
+            </div>
+          ) : null}
         </div>
         <aside className={`pos-entry-cart ${mobileCartOpen ? "open" : ""}`} aria-label="Current order">
           <div className="pos-entry-cart-head"><div><h3>Current order</h3><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span></div><div><button className="button-muted pos-entry-cart-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button><button className="button-muted" type="button" onClick={onClear} disabled={!cart.length}><Trash2 size={17} />Clear</button></div></div>
-          <div className="pos-entry-cart-lines">
+          <div className="pos-entry-cart-lines" role="listbox" aria-label="Cart items">
             {cart.length ? cart.map((line) => {
               const canModify = canModifyPosItem(menuItemById.get(line.menuItemId));
               return (
-                <article key={line.cartLineId}>
+                <article className={selectedCartLineId === line.cartLineId ? "selected" : ""} key={line.cartLineId} role="option" tabIndex="0" aria-selected={selectedCartLineId === line.cartLineId} onClick={() => setSelectedCartLineId(line.cartLineId)} onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
+                  event.preventDefault();
+                  setSelectedCartLineId(line.cartLineId);
+                }}>
                   <div className="pos-entry-cart-line-copy">
                     <strong>{line.name}</strong>
                     <span>{money(line.priceCents)} each</span>
@@ -318,14 +345,14 @@ export function OrderEntryScreen({
                     {line.specialInstructions ? <small>{line.specialInstructions}</small> : null}
                   </div>
                   <div className="pos-entry-cart-actions">
-                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={() => onModify(line.cartLineId)} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
-                    <button className="pos-entry-line-action" type="button" onClick={() => onRepeat(line.cartLineId)} aria-label={`Repeat ${line.name}`}><Repeat2 size={16} /><span>Repeat</span></button>
+                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={(event) => runLineAction(event, () => onModify(line.cartLineId))} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
+                    <button className="pos-entry-line-action" type="button" onClick={(event) => runLineAction(event, () => onRepeat(line.cartLineId))} aria-label={`Repeat ${line.name}`}><Repeat2 size={16} /><span>Repeat</span></button>
                     <div className="pos-entry-quantity">
-                      <button type="button" onClick={() => onDecrease(line.cartLineId)} aria-label={`Decrease ${line.name}`}><Minus size={16} /></button>
+                      <button type="button" onClick={(event) => runLineAction(event, () => onDecrease(line.cartLineId))} aria-label={`Decrease ${line.name}`}><Minus size={16} /></button>
                       <strong aria-label={`${line.name} quantity`}>{line.quantity}</strong>
-                      <button type="button" onClick={() => onIncrease(line.cartLineId)} aria-label={`Increase ${line.name}`}><Plus size={16} /></button>
+                      <button type="button" onClick={(event) => runLineAction(event, () => onIncrease(line.cartLineId))} aria-label={`Increase ${line.name}`}><Plus size={16} /></button>
                     </div>
-                    <button className="pos-entry-remove" type="button" onClick={() => onRemove(line.cartLineId)} aria-label={`Remove ${line.name}`} title="Remove item"><Trash2 size={17} /></button>
+                    <button className="pos-entry-remove" type="button" onClick={(event) => runLineAction(event, () => onRemove(line.cartLineId))} aria-label={`Remove ${line.name}`} title="Remove item"><Trash2 size={17} /></button>
                   </div>
                 </article>
               );

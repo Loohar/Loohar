@@ -4,7 +4,7 @@ import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
-import { withMenuCustomizationModes } from "./menuCustomizationService.js";
+import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
 import { signPosSessionToken } from "../utils/tokens.js";
 
@@ -146,6 +146,7 @@ async function loadPosOrderConfiguration(restaurantId) {
   });
   if (!restaurant) throw httpError("Restaurant not found.", 404, { code: "POS_RESTAURANT_NOT_FOUND" });
   return {
+    settingsJson: restaurant.settingsJson,
     orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
     deliveryFeeCents: cents(restaurant.deliveryFeeCents),
     deliveryZones: restaurant.deliveryZones
@@ -803,16 +804,19 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
   if (!rawItems.length) throw httpError("At least one menu item is required.", 400);
 
   const itemIds = [...new Set(rawItems.map((line) => String(line.menuItemId || "")).filter(Boolean))];
-  const menuItems = await prisma.menuItem.findMany({
-    where: { restaurantId, id: { in: itemIds }, available: true },
-    include: {
-      options: { orderBy: { sortOrder: "asc" } },
-      optionGroups: {
-        include: { options: { orderBy: { sortOrder: "asc" } } },
-        orderBy: { sortOrder: "asc" }
+  const [menuItems, orderConfiguration] = await Promise.all([
+    prisma.menuItem.findMany({
+      where: { restaurantId, id: { in: itemIds }, available: true },
+      include: {
+        options: { orderBy: { sortOrder: "asc" } },
+        optionGroups: {
+          include: { options: { orderBy: { sortOrder: "asc" } } },
+          orderBy: { sortOrder: "asc" }
+        }
       }
-    }
-  });
+    }),
+    loadPosOrderConfiguration(restaurantId)
+  ]);
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
   const normalizedItems = rawItems.map((line) => {
@@ -831,6 +835,7 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
       modifierOptionIds: optionIds,
       modifiers,
       options: modifiers,
+      sendToKitchen: menuItemSendToKitchen(orderConfiguration.settingsJson, menuItem.id),
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
     };
@@ -838,7 +843,6 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
 
   const subtotalCents = normalizedItems.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const discountCents = cents(body?.discountCents);
-  const orderConfiguration = await loadPosOrderConfiguration(restaurantId);
   const { deliveryFeeCents } = resolvePosDeliveryPricing(orderConfiguration, orderType, body, subtotalCents);
   const tipCents = 0;
   const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
@@ -892,6 +896,21 @@ async function ensurePosCustomer(tx, restaurantId, quoteId, customerJson = {}) {
   });
 }
 
+function receiptLineItems(order, quote) {
+  if (Array.isArray(quote?.lineItemsJson) && quote.lineItemsJson.length) return quote.lineItemsJson;
+  return (order.items || []).map((item) => ({
+    menuItemId: item.menuItemId,
+    name: item.name,
+    quantity: item.quantity,
+    unitPriceCents: item.unitPriceCents,
+    lineTotalCents: item.unitPriceCents * item.quantity,
+    options: item.optionsJson?.options || [],
+    modifiers: item.optionsJson?.modifiers || item.optionsJson?.options || [],
+    specialInstructions: item.optionsJson?.specialInstructions || "",
+    sendToKitchen: item.optionsJson?.sendToKitchen !== false
+  }));
+}
+
 function receiptPayload({ order, quote, payment = null }) {
   return {
     orderId: order.id,
@@ -899,7 +918,7 @@ function receiptPayload({ order, quote, payment = null }) {
     type: order.type,
     status: order.status,
     paymentStatus: payment?.status || "PENDING",
-    items: quote.lineItemsJson,
+    items: receiptLineItems(order, quote),
     subtotalCents: order.subtotalCents,
     discountCents: order.discountCents,
     deliveryFeeCents: order.deliveryFeeCents,
@@ -933,6 +952,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
   if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409);
   if (quote.acceptedAt) throw httpError("POS quote has already been submitted.", 409);
   const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
+  const kitchenLineItems = quote.lineItemsJson.filter((line) => line.sendToKitchen !== false);
 
   const result = await prisma.$transaction(async (tx) => {
     const claimed = await tx.orderQuote.updateMany({
@@ -976,7 +996,8 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
               options: line.options || [],
               modifiers: line.modifiers || line.options || [],
               optionIds: line.optionIds || line.modifierOptionIds || [],
-              specialInstructions: line.specialInstructions || ""
+              specialInstructions: line.specialInstructions || "",
+              sendToKitchen: line.sendToKitchen !== false
             }
           }))
         },
@@ -1001,7 +1022,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
         data: { status: "SUBMITTED", orderId: order.id, submittedAt: new Date(), updatedByUserId: user.id }
       });
     }
-    const receipt = await tx.posReceipt.create({
+    const receipt = kitchenLineItems.length ? await tx.posReceipt.create({
       data: {
         restaurantId,
         locationId: quote.locationId,
@@ -1010,10 +1031,10 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
         orderId: order.id,
         receiptNumber: randomReceiptNumber("POS"),
         kind: "KITCHEN_TICKET",
-        payloadJson: receiptPayload({ order, quote }),
+        payloadJson: receiptPayload({ order, quote: { lineItemsJson: kitchenLineItems } }),
         createdByUserId: user.id
       }
-    });
+    }) : null;
     return { order, receipt };
   });
 
@@ -1062,7 +1083,7 @@ export async function holdPosOrder({ restaurantId, user, body, deviceId = null }
 export async function cashPayment({ restaurantId, user, orderId, deviceId, fingerprint, amountCents = null }) {
   await assertPosFeature(restaurantId, "POST");
   const { device, shift, cashDrawer } = await requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint });
-  const order = await prisma.order.findFirst({ where: { id: orderId, restaurantId } });
+  const order = await prisma.order.findFirst({ where: { id: orderId, restaurantId }, include: { items: true } });
   if (!order) throw httpError("Order not found.", 404);
   const paidAmount = amountCents === null ? order.totalCents : cents(amountCents);
   if (paidAmount < order.totalCents) throw httpError("Cash payment must cover the order total.", 400);

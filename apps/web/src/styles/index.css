@@ -4125,11 +4125,11 @@ textarea {
   }
 
   .pos-entry-menu {
-    @apply min-w-0 rounded-md border border-line bg-white p-4 shadow-soft;
+    @apply flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border border-line bg-white p-4 shadow-soft;
   }
 
   .pos-entry-toolbar {
-    @apply grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px];
+    @apply grid shrink-0 gap-3 sm:grid-cols-[minmax(0,1fr)_220px];
   }
 
   .pos-entry-toolbar label {
@@ -4141,7 +4141,7 @@ textarea {
   }
 
   .pos-entry-categories {
-    @apply my-4 flex gap-2 overflow-x-auto pb-1;
+    @apply my-4 flex shrink-0 gap-2 overflow-x-auto pb-1;
   }
 
   .pos-entry-categories button {
@@ -4150,6 +4150,34 @@ textarea {
 
   .pos-entry-items {
     @apply grid gap-3 sm:grid-cols-2 2xl:grid-cols-3;
+  }
+
+  .pos-entry-menu-scroll {
+    @apply min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1;
+  }
+
+  .pos-entry-action-dock {
+    @apply mt-3 flex shrink-0 items-center gap-2 border-t border-line bg-white pt-3;
+  }
+
+  .pos-entry-action-dock > button {
+    @apply inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-line bg-white px-3 text-sm font-black text-ink transition hover:border-mint hover:text-mint focus:outline-none focus:ring-2 focus:ring-mint/30 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .pos-entry-dock-quantity {
+    @apply flex shrink-0 items-center overflow-hidden rounded-md border border-line bg-white;
+  }
+
+  .pos-entry-dock-quantity button {
+    @apply grid h-11 w-11 place-items-center text-ink transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-mint/30;
+  }
+
+  .pos-entry-dock-quantity strong {
+    @apply min-w-9 text-center font-black text-ink;
+  }
+
+  .pos-entry-action-dock > .pos-entry-dock-delete {
+    @apply flex-none text-rose-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:ring-rose-200;
   }
 
   .pos-entry-items > button {
@@ -4232,7 +4260,11 @@ textarea {
   }
 
   .pos-entry-cart-lines article {
-    @apply flex flex-col gap-3 rounded-md border border-line bg-slate-50 p-3;
+    @apply flex cursor-pointer flex-col gap-3 rounded-md border border-line bg-slate-50 p-3 transition focus:outline-none focus:ring-2 focus:ring-mint/30;
+  }
+
+  .pos-entry-cart-lines article.selected {
+    @apply border-mint bg-emerald-50;
   }
 
   .pos-entry-cart-line-copy {
@@ -4405,9 +4437,13 @@ textarea {
   }
 
   @media (min-width: 1024px) {
+    .pos-entry-menu,
     .pos-entry-cart {
       height: max(560px, calc(100vh - var(--restaurant-owner-header-height, 76px) - 7rem));
       max-height: 760px;
+    }
+
+    .pos-entry-cart {
       position: sticky;
       top: calc(var(--restaurant-owner-header-height, 76px) + 1rem);
     }
@@ -4416,6 +4452,11 @@ textarea {
   @media (max-width: 1023px) {
     .pos-enterprise-register {
       @apply pb-20;
+    }
+
+    .pos-entry-menu {
+      height: min(760px, calc(100dvh - 11rem));
+      min-height: 520px;
     }
 
     .pos-entry-cart {
@@ -4449,6 +4490,24 @@ textarea {
 
     .pos-entry-items {
       @apply grid-cols-1;
+    }
+
+    .pos-entry-menu {
+      height: calc(100dvh - 9rem);
+      min-height: 480px;
+    }
+
+    .pos-entry-action-dock {
+      @apply grid grid-cols-2;
+    }
+
+    .pos-entry-action-dock > button,
+    .pos-entry-dock-quantity {
+      @apply w-full;
+    }
+
+    .pos-entry-dock-quantity {
+      @apply justify-between;
     }
 
     .pos-entry-cart-actions {

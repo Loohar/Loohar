@@ -216,8 +216,11 @@ function lineItemTotal(item, modifiers) {
   return asCents(item.quantity || 1) * (asCents(item.unitPriceCents) + modifierTotal);
 }
 
-function receiptItems(order) {
-  return (order.items || []).map((item) => {
+function receiptItems(order, { kitchenOnly = false } = {}) {
+  const items = kitchenOnly
+    ? (order.items || []).filter((item) => item.optionsJson?.sendToKitchen !== false)
+    : (order.items || []);
+  return items.map((item) => {
     const modifiers = normalizeOrderItemModifiers(item.optionsJson);
     return {
       id: item.id,
@@ -393,7 +396,7 @@ export function buildReceiptPayload(order, { kind = "customer", trackingToken, f
       email: safeText(order.customer?.email),
       phone: safeText(order.customer?.phone)
     },
-    items: receiptItems(order),
+    items: receiptItems(order, { kitchenOnly: receiptType === "KITCHEN_TICKET" }),
     totals,
     payment,
     qr,

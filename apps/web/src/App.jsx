@@ -53,6 +53,7 @@ import {
 } from "./apps/pos/customization.js";
 import {
   adjustPosCartLineQuantity,
+  nextPosCartLineSelectionAfterRemoval,
   removePosCartLine,
   repeatPosCartLine,
   replacePosCartLineConfiguration
@@ -8068,6 +8069,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState([]);
+  const [selectedCartLineId, setSelectedCartLineId] = useState("");
   const [quote, setQuote] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
   const [lastOrderReceiptKind, setLastOrderReceiptKind] = useState("guest");
@@ -8303,6 +8305,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }, [cart, customer, orderType, notes, locationId, tableNumber, restaurantKey]);
 
   useEffect(() => {
+    if (selectedCartLineId && !cart.some((line) => line.cartLineId === selectedCartLineId)) {
+      setSelectedCartLineId("");
+    }
+  }, [cart, selectedCartLineId]);
+
+  useEffect(() => {
     if ([POS_WORKFLOW.BOOTING, POS_WORKFLOW.OFFLINE, POS_WORKFLOW.LOCKED, POS_WORKFLOW.CASHIER_AUTHENTICATION].includes(workflow.value)) return undefined;
     const reset = () => {
       window.clearTimeout(inactivityTimerRef.current);
@@ -8483,6 +8491,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function removeCartLine(cartLineId) {
     setQuote(null);
+    setSelectedCartLineId((selected) => nextPosCartLineSelectionAfterRemoval(cart, cartLineId, selected));
     setCart((current) => removePosCartLine(current, cartLineId));
   }
 
@@ -8753,6 +8762,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setOrderType(session.orderType || "WALK_IN");
     setCustomer(normalizePosCustomer(session.customerJson));
     setTableNumber(String(session.customerJson?.tableNumber || ""));
+    setSelectedCartLineId("");
     setCart(lines.map((line) => {
       const item = itemById.get(line.menuItemId) || {};
       const optionIds = posLineModifierOptionIds(line);
@@ -8846,6 +8856,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function resetCurrentOrder() {
     setCart([]);
+    setSelectedCartLineId("");
     setQuote(null);
     setLastOrder(null);
     setLastOrderReceiptKind("guest");
@@ -9021,6 +9032,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
           cart={cart}
+          selectedCartLineId={selectedCartLineId}
+          setSelectedCartLineId={setSelectedCartLineId}
           cartItemCount={cartItemCount}
           cartTotalCents={cartTotalCents}
           mobileCartOpen={mobileCartOpen}
@@ -9031,7 +9044,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           onDecrease={(cartLineId) => adjustQuantity(cartLineId, -1)}
           onModify={modifyCartLine}
           onRemove={removeCartLine}
-          onClear={() => { setCart([]); setQuote(null); }}
+          onClear={() => { setCart([]); setSelectedCartLineId(""); setQuote(null); }}
           onPay={payCurrentOrder}
           onHold={holdOrder}
           onHome={returnHome}
@@ -9643,7 +9656,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const [featureLocks, setFeatureLocks] = useState({});
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
-  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", featured: false, available: true });
+  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", sendToKitchen: true, featured: false, available: true });
   const [newItemImage, setNewItemImage] = useState(null);
   const [itemFileInputKey, setItemFileInputKey] = useState(0);
   const [uploadingAsset, setUploadingAsset] = useState("");
@@ -9757,6 +9770,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       calories: form.calories === "" || form.calories === null || form.calories === undefined ? null : Number(form.calories),
       spiceLevel: form.spiceLevel || null,
       customizationMode: posCustomizationMode(form),
+      sendToKitchen: form.sendToKitchen !== false,
       featured: Boolean(form.featured),
       available: form.available !== false
     };
@@ -9772,6 +9786,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       calories: item.calories === "" || item.calories === null || item.calories === undefined ? null : Number(item.calories),
       spiceLevel: item.spiceLevel || null,
       customizationMode: posCustomizationMode(item),
+      sendToKitchen: item.sendToKitchen !== false,
       available: item.available !== false,
       featured: Boolean(item.featured),
       recommended: Boolean(item.recommended)
@@ -10328,7 +10343,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       if (newItemImage && created.item?.id) {
         await uploadRestaurantImage("menu-item", newItemImage, { menuItemId: created.item.id, altText: payload.name });
       }
-      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", featured: false, available: true });
+      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", sendToKitchen: true, featured: false, available: true });
       setNewItemImage(null);
       setItemFileInputKey((key) => key + 1);
       await loadRestaurant();
@@ -11030,6 +11045,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
               </select>
               <span className="mt-1 block text-xs font-medium text-slate-500">{customizationModeDetail(itemForm.customizationMode)}</span>
             </label>
+            <label className="flex items-start gap-3 rounded-md border border-line p-3 text-sm text-slate-600 sm:col-span-2">
+              <input className="mt-1" type="checkbox" checked={itemForm.sendToKitchen !== false} onChange={(event) => setItemForm({ ...itemForm, sendToKitchen: event.target.checked })} />
+              <span><strong className="block text-ink">Kitchen preparation</strong><small className="mt-1 block font-medium">Enable for items that require kitchen or bar preparation.</small></span>
+            </label>
             <label className={`seg ${itemForm.featured ? "active" : ""}`}><input type="checkbox" checked={itemForm.featured} onChange={(event) => setItemForm({ ...itemForm, featured: event.target.checked })} />Featured</label>
             <label className={`seg ${itemForm.available ? "active" : ""}`}><input type="checkbox" checked={itemForm.available} onChange={(event) => setItemForm({ ...itemForm, available: event.target.checked })} />Available</label>
             <label className="button-muted justify-center">
@@ -11101,6 +11120,10 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
                               {POS_CUSTOMIZATION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
                             </select>
                             <span className="mt-1 block text-xs font-medium text-slate-500">{customizationModeDetail(posCustomizationMode(item))}</span>
+                          </label>
+                          <label className="flex items-start gap-3 rounded-md border border-line p-3 text-sm text-slate-600">
+                            <input className="mt-1" type="checkbox" checked={item.sendToKitchen !== false} onChange={(event) => updateItemDraft(item.id, { sendToKitchen: event.target.checked })} />
+                            <span><strong className="block text-ink">Kitchen preparation</strong><small className="mt-1 block font-medium">Enable for items that require kitchen or bar preparation.</small></span>
                           </label>
                           <details className="menu-modifier-builder">
                             <summary>
