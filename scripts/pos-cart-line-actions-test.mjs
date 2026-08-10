@@ -8,6 +8,7 @@ import {
   replacePosCartLineConfiguration
 } from "../apps/web/src/apps/pos/cart.js";
 import {
+  canModifyPosItem,
   normalizePosModifierGroups,
   posModifierValidationErrors,
   posSelectionsFromOptionIds,
@@ -111,6 +112,8 @@ const simpleLine = {
 
 assert.equal(shouldOpenCustomization(simpleItem), false, "simple item should not expose Modify");
 assert.equal(shouldOpenCustomization(configurableItem), true, "configurable item should expose Modify");
+assert.equal(canModifyPosItem(simpleItem), false, "simple item should hide Modify");
+assert.equal(canModifyPosItem(configurableItem), true, "configurable item should show Modify");
 
 const preloaded = posSelectionsFromOptionIds(
   configurableItem,
@@ -140,8 +143,8 @@ const mergedEdit = replacePosCartLineConfiguration(
   configurableLine.cartLineId,
   withoutShrimpConfiguration
 );
-assert.equal(mergedEdit.length, 1, "editing to an identical configuration should preserve merged-line behavior");
-assert.equal(mergedEdit[0].quantity, 3, "merged edit should preserve the quantities of both configured lines");
+assert.equal(mergedEdit.length, 2, "editing should not merge away the selected cart line");
+assert.equal(mergedEdit.find((line) => line.cartLineId === configurableLine.cartLineId)?.quantity, 2, "editing should preserve the selected line quantity and identity");
 
 const replacedSide = togglePosModifierSelection({ side: ["fries"] }, configurableItem.optionGroups[1], "rice");
 assert.deepEqual(replacedSide.side, ["rice"], "max-one modifier selection should replace the previous option");
@@ -162,23 +165,25 @@ assert.equal(repeated[0].specialInstructions, configurableLine.specialInstructio
 const remaining = removePosCartLine([simpleLine, configurableLine], configurableLine.cartLineId);
 assert.deepEqual(remaining.map((line) => line.cartLineId), [simpleLine.cartLineId], "Remove should delete only the selected line");
 
-const reviewState = posWorkflowReducer(
+const paymentState = posWorkflowReducer(
   { value: POS_WORKFLOW.ORDER_ENTRY, previous: POS_WORKFLOW.NEW_ORDER_SETUP, context: {}, transitionCount: 0 },
-  { type: POS_EVENT.REVIEW_ORDER }
+  { type: POS_EVENT.SELECT_PAYMENT }
 );
-const editState = posWorkflowReducer(reviewState, { type: POS_EVENT.EDIT_ORDER });
-assert.equal(reviewState.value, POS_WORKFLOW.ORDER_REVIEW, "Review should enter order review");
-assert.equal(editState.value, POS_WORKFLOW.ORDER_ENTRY, "Back/Edit should return to order entry");
-assert.deepEqual([simpleLine, configurableLine], [simpleLine, configurableLine], "Review and Back should not mutate cart state");
+const editState = posWorkflowReducer(paymentState, { type: POS_EVENT.EDIT_ORDER });
+assert.equal(paymentState.value, POS_WORKFLOW.PAYMENT_SELECTION, "Pay should enter the existing payment flow directly");
+assert.equal(editState.value, POS_WORKFLOW.ORDER_ENTRY, "payment Back should return to Current Order");
+assert.deepEqual([simpleLine, configurableLine], [simpleLine, configurableLine], "Pay and Back should not mutate cart state");
 
 const addConfiguredBlock = app.slice(app.indexOf("function addConfiguredItemToCart"), app.indexOf("function adjustQuantity"));
-const reviewBlock = app.slice(app.indexOf("async function reviewCurrentOrder"), app.indexOf("async function sendCurrentOrderToKitchen"));
-const reviewWorkflowBlock = app.slice(app.indexOf("case POS_WORKFLOW.ORDER_REVIEW"), app.indexOf("case POS_WORKFLOW.PAYMENT_SELECTION"));
+const payBlock = app.slice(app.indexOf("async function payCurrentOrder"), app.indexOf("async function completeSuccessfulTransaction"));
+const successBlock = app.slice(app.indexOf("async function completeSuccessfulTransaction"), app.indexOf("async function sendCurrentOrderToKitchen"));
 assert.ok(addConfiguredBlock.includes("replacePosCartLineConfiguration") && addConfiguredBlock.includes("setQuote(null)"), "modified lines should replace in place and invalidate stale quotes");
-assert.ok(reviewBlock.includes("await calculateQuote()"), "review should request a fresh server-authoritative quote");
-assert.ok(reviewWorkflowBlock.includes("POS_EVENT.EDIT_ORDER") && !reviewWorkflowBlock.includes("setCart("), "Review Back/Edit should preserve the current cart");
-assert.ok(screens.includes("canModify ?") && screens.includes("Modify ${line.name}"), "Modify should render only for configurable cart lines");
-assert.ok(screens.includes("Repeat ${line.name}") && screens.includes("Remove ${line.name}"), "cart lines should expose obvious Repeat and Remove actions");
-assert.ok(styles.includes(".pos-entry-cart-actions") && styles.includes("grid-cols-[minmax(0,1fr)_auto]"), "phone actions should wrap into a secondary row without horizontal scrolling");
+assert.ok(addConfiguredBlock.includes("void calculateQuote(updatedCart)"), "modified lines should request a fresh server-authoritative quote");
+assert.ok(payBlock.includes("await calculateQuote()") && payBlock.includes("POS_EVENT.SELECT_PAYMENT"), "Pay should quote before entering the existing payment flow");
+assert.ok(successBlock.includes("resetCurrentOrder()") && successBlock.includes("POS_EVENT.HOME"), "successful payment should clear the cart and return to Register Home");
+assert.ok(screens.includes("canModifyPosItem") && screens.includes("Modify ${line.name}"), "Modify should render only for meaningfully configurable cart lines");
+assert.ok(screens.includes("Repeat ${line.name}") && screens.includes('title="Remove item"'), "cart lines should expose Repeat and a compact accessible delete icon");
+assert.ok(styles.includes(".pos-entry-cart-actions") && styles.includes("overflow-y-auto") && styles.includes(".pos-entry-cart-footer-actions"), "cart lines should scroll while the Pay footer remains outside the scroll region");
+assert.ok(app.includes("disabled={posModifierValidationErrors(customizingItem, modifierSelections).length > 0}"), "required modifier validation should disable Add and Update");
 
-console.log("pos-cart-line-actions-test passed (18 focused behaviors).");
+console.log("pos-cart-line-actions-test passed (streamlined cart and payment behaviors).");

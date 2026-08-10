@@ -3,6 +3,26 @@ function numeric(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+export const POS_CUSTOMIZATION_MODE = Object.freeze({
+  AUTO: "AUTO",
+  REQUIRED: "REQUIRED",
+  OPTIONAL: "OPTIONAL",
+  NONE: "NONE"
+});
+
+export const POS_CUSTOMIZATION_MODE_OPTIONS = Object.freeze([
+  { value: POS_CUSTOMIZATION_MODE.AUTO, label: "Automatic", detail: "Loohar prompts when this item has choices." },
+  { value: POS_CUSTOMIZATION_MODE.REQUIRED, label: "Always prompt", detail: "Staff customize this item before adding it." },
+  { value: POS_CUSTOMIZATION_MODE.OPTIONAL, label: "Optional prompt", detail: "Staff see customization and may keep optional choices empty." },
+  { value: POS_CUSTOMIZATION_MODE.NONE, label: "No customization", detail: "This item goes directly into the order." }
+]);
+
+export function posCustomizationMode(item = {}) {
+  const normalized = String(item.customizationMode || "").trim().toUpperCase();
+  if (Object.values(POS_CUSTOMIZATION_MODE).includes(normalized)) return normalized;
+  return explicitCustomizationRequired(item) ? POS_CUSTOMIZATION_MODE.REQUIRED : POS_CUSTOMIZATION_MODE.AUTO;
+}
+
 function itemScoped(record = {}, item = {}) {
   const itemId = item.id || item.menuItemId;
   const ownerId = record.menuItemId ?? record.itemId ?? record.menuItem?.id;
@@ -110,7 +130,34 @@ export function posModifierConfigurationError(item = {}) {
 
 export function shouldOpenCustomization(item = {}) {
   if (posModifierConfigurationError(item)) return false;
-  return explicitCustomizationRequired(item) || normalizePosModifierGroups(item).length > 0;
+  const mode = posCustomizationMode(item);
+  if (mode === POS_CUSTOMIZATION_MODE.NONE) return false;
+  if ([POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode)) return true;
+  return normalizePosModifierGroups(item).length > 0;
+}
+
+export function canModifyPosItem(item = {}) {
+  if (!item || posModifierConfigurationError(item)) return false;
+  const mode = posCustomizationMode(item);
+  return normalizePosModifierGroups(item).length > 0
+    || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode);
+}
+
+export function posDefaultModifierSelections(item = {}) {
+  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+    group.id,
+    group.options
+      .filter((option) => option.isDefault)
+      .slice(0, Math.max(1, numeric(group.maxSelect, 1)))
+      .map((option) => option.id)
+  ]));
+}
+
+export function posDirectAddConfigurationError(item = {}) {
+  if (shouldOpenCustomization(item)) return "";
+  const errors = posModifierValidationErrors(item, posDefaultModifierSelections(item));
+  if (!errors.length) return "";
+  return `${item.name || "This item"} needs a default modifier selection before No customization can be used.`;
 }
 
 export function posSelectionsFromOptionIds(item = {}, optionIds = []) {

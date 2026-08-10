@@ -26,7 +26,7 @@ import {
   Wifi,
   WifiOff
 } from "lucide-react";
-import { shouldOpenCustomization } from "./customization.js";
+import { canModifyPosItem, shouldOpenCustomization } from "./customization.js";
 
 function money(cents = 0) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
@@ -283,7 +283,7 @@ export function OrderEntryScreen({
   onModify,
   onRemove,
   onClear,
-  onReview,
+  onPay,
   onHold,
   onHome,
   saving,
@@ -294,7 +294,7 @@ export function OrderEntryScreen({
   const menuItemById = new Map((menuItems || items).map((item) => [item.id, item]));
   return (
     <section className="pos-entry-screen">
-      <PosScreenHeader eyebrow="Current order" title="Order entry" detail="Choose items and modifiers. Review the order before payment or Kitchen submission." onBack={onHome} />
+      <PosScreenHeader eyebrow="Current order" title="Order entry" detail="Choose items, review the current order, and continue to payment." onBack={onHome} />
       <div className="pos-entry-layout">
         <div className="pos-entry-menu">
           <div className="pos-entry-toolbar">
@@ -308,7 +308,7 @@ export function OrderEntryScreen({
           <div className="pos-entry-cart-head"><div><h3>Current order</h3><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span></div><div><button className="button-muted pos-entry-cart-close" type="button" onClick={() => setMobileCartOpen(false)}>Close</button><button className="button-muted" type="button" onClick={onClear} disabled={!cart.length}><Trash2 size={17} />Clear</button></div></div>
           <div className="pos-entry-cart-lines">
             {cart.length ? cart.map((line) => {
-              const canModify = shouldOpenCustomization(menuItemById.get(line.menuItemId));
+              const canModify = canModifyPosItem(menuItemById.get(line.menuItemId));
               return (
                 <article key={line.cartLineId}>
                   <div className="pos-entry-cart-line-copy">
@@ -318,23 +318,23 @@ export function OrderEntryScreen({
                     {line.specialInstructions ? <small>{line.specialInstructions}</small> : null}
                   </div>
                   <div className="pos-entry-cart-actions">
+                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={() => onModify(line.cartLineId)} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
                     <button className="pos-entry-line-action" type="button" onClick={() => onRepeat(line.cartLineId)} aria-label={`Repeat ${line.name}`}><Repeat2 size={16} /><span>Repeat</span></button>
                     <div className="pos-entry-quantity">
                       <button type="button" onClick={() => onDecrease(line.cartLineId)} aria-label={`Decrease ${line.name}`}><Minus size={16} /></button>
                       <strong aria-label={`${line.name} quantity`}>{line.quantity}</strong>
                       <button type="button" onClick={() => onIncrease(line.cartLineId)} aria-label={`Increase ${line.name}`}><Plus size={16} /></button>
                     </div>
-                    {canModify ? <button className="pos-entry-line-action" type="button" onClick={() => onModify(line.cartLineId)} aria-label={`Modify ${line.name}`}><SlidersHorizontal size={16} /><span>Modify</span></button> : null}
-                    <button className="pos-entry-line-action remove" type="button" onClick={() => onRemove(line.cartLineId)} aria-label={`Remove ${line.name}`}><Trash2 size={16} /><span>Remove</span></button>
+                    <button className="pos-entry-remove" type="button" onClick={() => onRemove(line.cartLineId)} aria-label={`Remove ${line.name}`} title="Remove item"><Trash2 size={17} /></button>
                   </div>
                 </article>
               );
             }) : <div className="empty-state pos-entry-empty-cart"><ShoppingBag size={28} /><strong>Cart is empty</strong><span>Choose an item from the menu.</span></div>}
           </div>
-          <div className="pos-entry-cart-footer"><div><span>Estimated subtotal</span><strong>{money(cartTotalCents)}</strong></div><button className="button-muted" type="button" onClick={onHold} disabled={!cart.length || saving}><PauseCircle size={18} />Hold</button><button className="button-primary" type="button" onClick={onReview} disabled={!cart.length || saving}><ReceiptText size={18} />Review order</button></div>
+          <div className="pos-entry-cart-footer"><div><span>Estimated subtotal</span><strong>{money(cartTotalCents)}</strong></div><div className="pos-entry-cart-footer-actions"><button className="button-muted" type="button" onClick={onHold} disabled={!cart.length || saving}><PauseCircle size={18} />Hold</button><button className="button-primary" type="button" onClick={onPay} disabled={!cart.length || saving}><CreditCard size={18} />Pay</button></div></div>
         </aside>
       </div>
-      <button className="pos-entry-mobile-summary" type="button" onClick={() => setMobileCartOpen(true)}><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span><strong>{money(cartTotalCents)}</strong><span>View order</span></button>
+      <button className="pos-entry-mobile-summary" type="button" onClick={() => setMobileCartOpen(true)}><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span><strong>{money(cartTotalCents)}</strong><span>Review &amp; pay</span></button>
     </section>
   );
 }

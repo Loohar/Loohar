@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  canModifyPosItem,
   normalizePosModifierGroups,
+  posDefaultModifierSelections,
+  posDirectAddConfigurationError,
   posModifierConfigurationError,
   shouldOpenCustomization
 } from "../apps/web/src/apps/pos/customization.js";
@@ -128,11 +131,20 @@ assert.equal(shouldOpenCustomization(unrelatedModifierItem), false, "item should
 assert.equal(normalizePosModifierGroups(unrelatedModifierItem).length, 0, "unrelated item-specific groups should be ignored");
 
 assert.equal(shouldOpenCustomization(explicitItem), true, "explicit item configuration can require customization");
+assert.equal(shouldOpenCustomization({ ...simpleItem, customizationMode: "REQUIRED" }), true, "required mode should always prompt");
+assert.equal(shouldOpenCustomization({ ...simpleItem, customizationMode: "OPTIONAL" }), true, "optional mode should present the prompt");
+assert.equal(shouldOpenCustomization({ ...optionalItem, customizationMode: "NONE" }), false, "none mode should direct-add even when optional choices exist");
+assert.equal(shouldOpenCustomization({ ...requiredItem, customizationMode: "AUTO" }), true, "auto mode should prompt for meaningful modifiers");
+assert.equal(canModifyPosItem({ ...optionalItem, customizationMode: "NONE" }), true, "direct-add items should remain modifiable when choices exist");
+assert.equal(canModifyPosItem({ ...simpleItem, customizationMode: "NONE" }), false, "simple direct-add items should hide Modify");
+assert.deepEqual(posDefaultModifierSelections(simpleItem), {}, "simple direct-add items should not invent selections");
+assert.equal(posDirectAddConfigurationError(simpleItem), "", "simple direct-add items should remain valid");
+assert.match(posDirectAddConfigurationError({ ...requiredItem, customizationMode: "NONE" }), /needs a default modifier selection/, "none mode should reject required choices without defaults");
 
 const addToCartBlock = app.slice(app.indexOf("function addToCart(item)"), app.indexOf("function openModifierDialog(item)"));
 assert.ok(addToCartBlock.includes("posModifierConfigurationError(item)"), "POS tap path should guard invalid required modifier configuration");
 assert.ok(addToCartBlock.includes("shouldOpenCustomization(item)"), "POS tap path should use the canonical customization decision");
-assert.ok(addToCartBlock.includes("addConfiguredItemToCart(item)"), "simple POS item should direct-add through the existing cart path");
+assert.ok(addToCartBlock.includes("addConfiguredItemToCart(item, { selections: posDefaultModifierSelections(item) })"), "simple POS item should direct-add through the existing cart path");
 
 assert.ok(app.includes("quantity: 1"), "new direct-add line should add exactly one item");
 assert.ok(app.includes("quantity: line.quantity + 1"), "repeated direct-add should increment existing quantity");
@@ -141,6 +153,7 @@ assert.ok(app.includes("selectedPosModifierRows(item, selections)"), "configured
 assert.ok(app.includes("modifierSignature: signature"), "cart should keep modifier-aware line signatures");
 assert.ok(app.includes("modifierSelections: canonicalPosLineModifierSelections(line)"), "review/order quote payload should include canonical modifier selections");
 assert.ok(workflowScreens.includes("shouldOpenCustomization(item)"), "customize badge should use the same decision as item taps");
-assert.ok(workflowScreens.includes("Review order"), "review order action should remain available after direct-add");
+const orderEntryBlock = workflowScreens.slice(workflowScreens.indexOf("export function OrderEntryScreen"), workflowScreens.indexOf("export function OrderReviewScreen"));
+assert.ok(orderEntryBlock.includes(">Pay</button>") && !orderEntryBlock.includes("Review order"), "current order should pay directly without a separate review action");
 
 console.log("pos-simple-items-test passed.");

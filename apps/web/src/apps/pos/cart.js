@@ -24,19 +24,5 @@ export function replacePosCartLineConfiguration(lines = [], cartLineId, configur
     modifierSignature: String(configuration.modifierSignature ?? target.modifierSignature ?? ""),
     specialInstructions: String(configuration.specialInstructions ?? target.specialInstructions ?? "")
   };
-  const identicalLine = lines.find((line) => (
-    line.cartLineId !== cartLineId
-    && line.menuItemId === target.menuItemId
-    && line.modifierSignature === updatedTarget.modifierSignature
-  ));
-
-  if (identicalLine) {
-    return lines
-      .filter((line) => line.cartLineId !== cartLineId)
-      .map((line) => line.cartLineId === identicalLine.cartLineId
-        ? { ...line, quantity: Number(line.quantity || 1) + Number(target.quantity || 1) }
-        : line);
-  }
-
   return lines.map((line) => line.cartLineId === cartLineId ? updatedTarget : line);
 }

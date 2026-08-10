@@ -4203,11 +4203,11 @@ textarea {
   }
 
   .pos-entry-cart {
-    @apply flex min-h-[560px] flex-col rounded-md border border-line bg-white p-4 shadow-soft;
+    @apply flex min-h-0 flex-col overflow-hidden rounded-md border border-line bg-white p-4 shadow-soft;
   }
 
   .pos-entry-cart-head {
-    @apply flex items-start justify-between gap-3 border-b border-line pb-3;
+    @apply flex shrink-0 items-start justify-between gap-3 border-b border-line pb-3;
   }
 
   .pos-entry-cart-head h3 {
@@ -4228,7 +4228,7 @@ textarea {
   }
 
   .pos-entry-cart-lines {
-    @apply min-h-0 flex-1 space-y-2 overflow-y-auto py-3;
+    @apply min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain py-3 pr-1;
   }
 
   .pos-entry-cart-lines article {
@@ -4256,8 +4256,8 @@ textarea {
     @apply inline-flex min-h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-line bg-white px-2.5 text-xs font-black text-ink;
   }
 
-  .pos-entry-line-action.remove {
-    @apply ml-auto border-rose-200 text-rose-700;
+  .pos-entry-remove {
+    @apply ml-auto grid h-11 w-11 shrink-0 place-items-center rounded-md border border-line bg-white text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-200;
   }
 
   .pos-entry-quantity {
@@ -4273,15 +4273,23 @@ textarea {
   }
 
   .pos-entry-cart-footer {
-    @apply grid gap-2 border-t border-line pt-3;
+    @apply grid shrink-0 gap-3 border-t border-line bg-white pt-3;
   }
 
-  .pos-entry-cart-footer > div {
+  .pos-entry-cart-footer > div:first-child {
     @apply flex items-center justify-between text-sm font-bold text-slate-500;
   }
 
-  .pos-entry-cart-footer > div strong {
+  .pos-entry-cart-footer > div:first-child strong {
     @apply text-lg font-black text-ink;
+  }
+
+  .pos-entry-cart-footer-actions {
+    @apply grid grid-cols-[auto_minmax(0,1fr)] gap-2;
+  }
+
+  .pos-entry-cart-footer-actions button {
+    @apply justify-center;
   }
 
   .pos-entry-mobile-summary {
@@ -4398,7 +4406,8 @@ textarea {
 
   @media (min-width: 1024px) {
     .pos-entry-cart {
-      max-height: calc(100vh - var(--restaurant-owner-header-height, 76px) - 7rem);
+      height: max(560px, calc(100vh - var(--restaurant-owner-header-height, 76px) - 7rem));
+      max-height: 760px;
       position: sticky;
       top: calc(var(--restaurant-owner-header-height, 76px) + 1rem);
     }
@@ -4443,15 +4452,19 @@ textarea {
     }
 
     .pos-entry-cart-actions {
-      @apply grid grid-cols-[minmax(0,1fr)_auto];
+      @apply flex flex-wrap;
     }
 
     .pos-entry-line-action {
-      @apply w-full;
+      @apply w-auto flex-1;
     }
 
-    .pos-entry-line-action.remove {
-      @apply ml-0;
+    .pos-entry-quantity {
+      @apply flex-none;
+    }
+
+    .pos-entry-remove {
+      @apply ml-auto;
     }
 
     .pos-payment-grid,

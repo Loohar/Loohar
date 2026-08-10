@@ -32,12 +32,13 @@ if (mode === "all" || mode === "sticky") {
     "pos-entry-cart-footer",
     "Current order",
     "Estimated subtotal",
-    "Review order"
-  ]), "Current Order separates scrollable item lines from persistent review and hold actions");
+    ">Pay</button>"
+  ]), "Current Order separates scrollable item lines from persistent Pay and Hold actions");
   assertCheck(includesAll(styles, [
     "@media (min-width: 1024px)",
     "position: sticky",
-    "max-height: calc(100vh",
+    "height: max(560px, calc(100vh",
+    "max-height: 760px",
     "overflow-y: auto",
     "lg:grid-cols-[minmax(0,1fr)_360px]",
     "xl:grid-cols-[minmax(0,1fr)_400px]"

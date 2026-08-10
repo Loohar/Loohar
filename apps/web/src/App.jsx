@@ -39,7 +39,12 @@ import {
   savePosOrderDraft
 } from "./apps/pos/stateMachine.js";
 import {
+  POS_CUSTOMIZATION_MODE_OPTIONS,
+  canModifyPosItem,
   normalizePosModifierGroups,
+  posCustomizationMode,
+  posDefaultModifierSelections,
+  posDirectAddConfigurationError,
   posModifierConfigurationError,
   posModifierValidationErrors,
   posSelectionsFromOptionIds,
@@ -63,6 +68,11 @@ const platformNavItems = [
   { id: "customer", label: "Customer", icon: Store },
   { id: "driver", label: "Driver", icon: Bike }
 ];
+
+function customizationModeDetail(value) {
+  return POS_CUSTOMIZATION_MODE_OPTIONS.find((option) => option.value === value)?.detail
+    || POS_CUSTOMIZATION_MODE_OPTIONS[0].detail;
+}
 
 let qrCodeLoader;
 let socketIoLoader;
@@ -8367,20 +8377,23 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setError(configurationError);
       return;
     }
-    if (shouldOpenCustomization(item)) {
+    const opensCustomization = shouldOpenCustomization(item);
+    if (opensCustomization) {
       openModifierDialog(item);
       return;
     }
-    addConfiguredItemToCart(item);
+    const directAddError = posDirectAddConfigurationError(item);
+    if (directAddError) {
+      setError(directAddError);
+      return;
+    }
+    addConfiguredItemToCart(item, { selections: posDefaultModifierSelections(item) });
   }
 
   function openModifierDialog(item, cartLine = null) {
     const defaults = cartLine
       ? posSelectionsFromOptionIds(item, posLineModifierOptionIds(cartLine))
-      : Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
-        group.id,
-        group.options.filter((option) => option.isDefault).slice(0, Math.max(1, Number(group.maxSelect || 1))).map((option) => option.id)
-      ]));
+      : posDefaultModifierSelections(item);
     setCustomizingItem(item);
     setEditingCartLineId(cartLine?.cartLineId || "");
     setModifierSelections(defaults);
@@ -8392,7 +8405,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   function modifyCartLine(cartLineId) {
     const line = cart.find((candidate) => candidate.cartLineId === cartLineId);
     const item = itemsForRegister.find((candidate) => candidate.id === line?.menuItemId);
-    if (!line || !item || !shouldOpenCustomization(item)) return;
+    if (!line || !item || !canModifyPosItem(item)) return;
     openModifierDialog(item, line);
   }
 
@@ -8434,10 +8447,14 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     };
     setQuote(null);
     setLastOrder(null);
+    if (editingCartLineId) {
+      const updatedCart = replacePosCartLineConfiguration(cart, editingCartLineId, configuration);
+      setCart(updatedCart);
+      closeModifierDialog();
+      void calculateQuote(updatedCart);
+      return;
+    }
     setCart((current) => {
-      if (editingCartLineId) {
-        return replacePosCartLineConfiguration(current, editingCartLineId, configuration);
-      }
       const existing = current.find((line) => line.menuItemId === item.id && line.modifierSignature === signature);
       if (existing) {
         return current.map((line) => line.cartLineId === existing.cartLineId ? { ...line, quantity: line.quantity + 1 } : line);
@@ -8540,8 +8557,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
-  async function calculateQuote() {
-    if (!cart.length) {
+  async function calculateQuote(lines = cart) {
+    if (!lines.length) {
       setError("Add at least one menu item before calculating a quote.");
       return null;
     }
@@ -8555,7 +8572,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           orderType,
           deliveryZoneId: customer.deliveryZoneId || null,
           locationId: locationId || activeDevice?.locationId || null,
-          lineItems: cart.map((line) => ({
+          lineItems: lines.map((line) => ({
             menuItemId: line.menuItemId,
             quantity: line.quantity,
             modifierSelections: canonicalPosLineModifierSelections(line),
@@ -8658,11 +8675,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           amountCents
         }
       });
-      setPaymentResult({ success: true, changeDueCents: payload.changeDueCents || 0, message: "Cash payment recorded." });
       setLastOrderReceiptKind("final");
-      setNotice("Cash payment accepted and receipt recorded.");
-      dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order.id } });
-      await loadPos();
+      await completeSuccessfulTransaction(order, payload.changeDueCents || 0);
     } catch (posError) {
       setError(posError);
       setPaymentResult({ success: false, message: posError?.message || "Cash payment was not recorded." });
@@ -8845,9 +8859,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     clearPosOrderDraft(restaurantKey);
   }
 
-  async function reviewCurrentOrder() {
+  async function payCurrentOrder() {
     const activeQuote = await calculateQuote();
-    if (activeQuote) dispatchWorkflow({ type: POS_EVENT.REVIEW_ORDER });
+    if (activeQuote) dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT });
+  }
+
+  async function completeSuccessfulTransaction(order, changeDueCents = 0) {
+    resetCurrentOrder();
+    const changeMessage = changeDueCents > 0 ? ` Change due ${money(changeDueCents)}.` : "";
+    setNotice(`Payment complete. ${order?.orderNumber || "Order"} was sent to the Kitchen.${changeMessage}`);
+    dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order?.id } });
+    dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
+    dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
+    await Promise.all([loadPos({ silent: true }), loadOrderLists()]);
   }
 
   async function sendCurrentOrderToKitchen() {
@@ -8865,11 +8889,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function finishPaidOrder() {
     const order = lastOrder;
-    const receiptKind = lastOrderReceiptKind;
     resetCurrentOrder();
-    setLastOrder(order);
-    setLastOrderReceiptKind(receiptKind);
     dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
+    dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
   }
 
   function beginNewOrder() {
@@ -9010,7 +9032,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           onModify={modifyCartLine}
           onRemove={removeCartLine}
           onClear={() => { setCart([]); setQuote(null); }}
-          onReview={reviewCurrentOrder}
+          onPay={payCurrentOrder}
           onHold={holdOrder}
           onHome={returnHome}
           saving={savingAction}
@@ -9230,7 +9252,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             {modifierError ? <div className="field-error">{modifierError}</div> : null}
             <div className="pos-modifier-actions">
               <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
-              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()}>{editingCartLineId ? "Update item" : "Add to order"}</button>
+              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()} disabled={posModifierValidationErrors(customizingItem, modifierSelections).length > 0}>{editingCartLineId ? "Update item" : "Add to order"}</button>
             </div>
           </div>
         </div>
@@ -9621,7 +9643,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
   const [featureLocks, setFeatureLocks] = useState({});
   const [error, setError] = useState("");
   const [categoryName, setCategoryName] = useState("");
-  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
+  const [itemForm, setItemForm] = useState({ categoryId: "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", featured: false, available: true });
   const [newItemImage, setNewItemImage] = useState(null);
   const [itemFileInputKey, setItemFileInputKey] = useState(0);
   const [uploadingAsset, setUploadingAsset] = useState("");
@@ -9734,6 +9756,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       preparationTimeMins: Number(form.preparationTimeMins || 15),
       calories: form.calories === "" || form.calories === null || form.calories === undefined ? null : Number(form.calories),
       spiceLevel: form.spiceLevel || null,
+      customizationMode: posCustomizationMode(form),
       featured: Boolean(form.featured),
       available: form.available !== false
     };
@@ -9748,6 +9771,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       preparationTimeMins: Number(item.preparationTimeMins || 15),
       calories: item.calories === "" || item.calories === null || item.calories === undefined ? null : Number(item.calories),
       spiceLevel: item.spiceLevel || null,
+      customizationMode: posCustomizationMode(item),
       available: item.available !== false,
       featured: Boolean(item.featured),
       recommended: Boolean(item.recommended)
@@ -10087,7 +10111,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       });
       if (payload.website) setWebsite(payload.website);
       if (payload.restaurant) setProfile(payload.restaurant);
-      if (payload.item) setItems((current) => current.map((item) => item.id === payload.item.id ? payload.item : item));
+      if (payload.item) setItems((current) => current.map((item) => item.id === payload.item.id ? { ...item, ...payload.item } : item));
       if (payload.image) setGallery((current) => [...current, payload.image].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
       if (kind === "restaurant-logo" || kind === "restaurant-hero") {
         setWebsiteDirty(false);
@@ -10304,7 +10328,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       if (newItemImage && created.item?.id) {
         await uploadRestaurantImage("menu-item", newItemImage, { menuItemId: created.item.id, altText: payload.name });
       }
-      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", featured: false, available: true });
+      setItemForm({ categoryId: categories[0]?.id || "", name: "", priceCents: 1295, preparationTimeMins: 15, description: "", calories: "", spiceLevel: "", customizationMode: "AUTO", featured: false, available: true });
       setNewItemImage(null);
       setItemFileInputKey((key) => key + 1);
       await loadRestaurant();
@@ -11000,6 +11024,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
             </label>
             <input className="input" type="number" min="0" placeholder="Calories optional" value={itemForm.calories} onChange={(event) => setItemForm({ ...itemForm, calories: event.target.value })} />
             <input className="input" placeholder="Spice level optional" value={itemForm.spiceLevel} onChange={(event) => setItemForm({ ...itemForm, spiceLevel: event.target.value })} />
+            <label className="text-sm font-semibold text-slate-600 sm:col-span-2">Customization prompt
+              <select className="select mt-1" value={itemForm.customizationMode} onChange={(event) => setItemForm({ ...itemForm, customizationMode: event.target.value })}>
+                {POS_CUSTOMIZATION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+              </select>
+              <span className="mt-1 block text-xs font-medium text-slate-500">{customizationModeDetail(itemForm.customizationMode)}</span>
+            </label>
             <label className={`seg ${itemForm.featured ? "active" : ""}`}><input type="checkbox" checked={itemForm.featured} onChange={(event) => setItemForm({ ...itemForm, featured: event.target.checked })} />Featured</label>
             <label className={`seg ${itemForm.available ? "active" : ""}`}><input type="checkbox" checked={itemForm.available} onChange={(event) => setItemForm({ ...itemForm, available: event.target.checked })} />Available</label>
             <label className="button-muted justify-center">
@@ -11066,6 +11096,12 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
                             {item.featured ? <StatusPill tone="good">Featured</StatusPill> : null}
                             {item.recommended ? <StatusPill tone="neutral">Recommended</StatusPill> : null}
                           </div>
+                          <label className="text-sm font-semibold text-slate-600">Customization prompt
+                            <select className="select mt-1" value={posCustomizationMode(item)} onChange={(event) => updateItemDraft(item.id, { customizationMode: event.target.value })}>
+                              {POS_CUSTOMIZATION_MODE_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+                            </select>
+                            <span className="mt-1 block text-xs font-medium text-slate-500">{customizationModeDetail(posCustomizationMode(item))}</span>
+                          </label>
                           <details className="menu-modifier-builder">
                             <summary>
                               <span>Modifiers</span>

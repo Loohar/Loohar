@@ -4,6 +4,7 @@ import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
+import { withMenuCustomizationModes } from "./menuCustomizationService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
 import { signPosSessionToken } from "../utils/tokens.js";
 
@@ -699,23 +700,30 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
 }
 
 export async function posMenu(restaurantId) {
-  return prisma.menuCategory.findMany({
-    where: { restaurantId, active: true },
-    include: {
-      items: {
-        where: { available: true },
-        include: {
-          options: { orderBy: { sortOrder: "asc" } },
-          optionGroups: {
-            include: { options: { orderBy: { sortOrder: "asc" } } },
-            orderBy: { sortOrder: "asc" }
-          }
-        },
-        orderBy: { name: "asc" }
-      }
-    },
-    orderBy: { name: "asc" }
-  });
+  const [categories, restaurant] = await Promise.all([
+    prisma.menuCategory.findMany({
+      where: { restaurantId, active: true },
+      include: {
+        items: {
+          where: { available: true },
+          include: {
+            options: { orderBy: { sortOrder: "asc" } },
+            optionGroups: {
+              include: { options: { orderBy: { sortOrder: "asc" } } },
+              orderBy: { sortOrder: "asc" }
+            }
+          },
+          orderBy: { name: "asc" }
+        }
+      },
+      orderBy: { name: "asc" }
+    }),
+    prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { settingsJson: true }
+    })
+  ]);
+  return withMenuCustomizationModes(categories, restaurant?.settingsJson);
 }
 
 export async function posMenuAvailabilityDiagnostics(restaurantId, categories = []) {

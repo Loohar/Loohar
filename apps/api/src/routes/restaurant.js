@@ -12,6 +12,13 @@ import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { revokeAllUserSessions } from "../services/authSessionService.js";
 import { notifyDriverAssignment, notifyOrderStatusUpdate } from "../services/notificationService.js";
 import { buildReceiptPayload, issueOrderTrackingToken, receiptOrderInclude } from "../services/orderWorkflowService.js";
+import {
+  MENU_ITEM_CUSTOMIZATION_MODES,
+  normalizeMenuItemCustomizationMode,
+  removeMenuItemCustomizationSetting,
+  updateMenuItemCustomizationSettings,
+  withMenuItemCustomizationMode
+} from "../services/menuCustomizationService.js";
 import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../services/realtimeService.js";
 import { deleteImageFromSupabaseStorage } from "../services/uploadService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
@@ -387,6 +394,25 @@ function menuItemUpdateData(body = {}) {
   if (data.calories !== undefined) data.calories = data.calories === null || data.calories === "" ? null : Number(data.calories);
   if (data.spiceLevel !== undefined) data.spiceLevel = data.spiceLevel ? String(data.spiceLevel).trim() : null;
   return data;
+}
+
+async function persistMenuItemCustomizationMode(restaurantId, itemId, value) {
+  const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
+  if (!restaurant) throw new Error("Restaurant not found");
+  const nextSettings = updateMenuItemCustomizationSettings(restaurant.settingsJson, itemId, value);
+  if (nextSettings !== restaurant.settingsJson) {
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+  }
+  return nextSettings;
+}
+
+async function removePersistedMenuItemCustomizationMode(restaurantId, itemId) {
+  const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
+  if (!restaurant) return;
+  const nextSettings = removeMenuItemCustomizationSetting(restaurant.settingsJson, itemId);
+  if (nextSettings !== restaurant.settingsJson) {
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+  }
 }
 
 function isValidHttpUrl(value = "") {
@@ -1305,14 +1331,19 @@ const menuItemSchema = z.object({
     isSpicy: z.boolean().optional(),
     isDairyFree: z.boolean().optional(),
     isNutFree: z.boolean().optional(),
+    customizationMode: z.enum(MENU_ITEM_CUSTOMIZATION_MODES).default("AUTO"),
     options: z.array(z.object({ name: z.string(), priceCents: z.number().int().default(0), required: z.boolean().default(false) })).default([])
   })
 });
 
 router.get("/:restaurantId/menu/items", async (req, res, next) => {
   try {
-    const items = await prisma.menuItem.findMany({ where: { restaurantId: restaurantIdFor(req) }, include: { category: true, options: true, optionGroups: { include: { options: true } } }, orderBy: { name: "asc" } });
-    res.json({ items });
+    const restaurantId = restaurantIdFor(req);
+    const [items, restaurant] = await Promise.all([
+      prisma.menuItem.findMany({ where: { restaurantId }, include: { category: true, options: true, optionGroups: { include: { options: true } } }, orderBy: { name: "asc" } }),
+      prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } })
+    ]);
+    res.json({ items: items.map((item) => withMenuItemCustomizationMode(item, restaurant?.settingsJson)) });
   } catch (error) {
     next(error);
   }
@@ -1320,7 +1351,7 @@ router.get("/:restaurantId/menu/items", async (req, res, next) => {
 
 router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, res, next) => {
   try {
-    const { options, ...data } = req.body;
+    const { options, customizationMode, ...data } = req.body;
     const restaurantId = restaurantIdFor(req);
     const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
     if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
@@ -1329,8 +1360,9 @@ router.post("/:restaurantId/menu/items", validate(menuItemSchema), async (req, r
       data: { ...menuItemUpdateData(data), restaurantId, options: { create: options } },
       include: { category: true, options: true, optionGroups: { include: { options: true } } }
     });
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.created", entityType: "MenuItem", entityId: item.id });
-    res.status(201).json({ item });
+    const settingsJson = await persistMenuItemCustomizationMode(restaurantId, item.id, customizationMode);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.created", entityType: "MenuItem", entityId: item.id, metadata: { customizationMode: normalizeMenuItemCustomizationMode(customizationMode) } });
+    res.status(201).json({ item: withMenuItemCustomizationMode(item, settingsJson) });
   } catch (error) {
     next(error);
   }
@@ -1340,6 +1372,15 @@ router.patch("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
     const data = menuItemUpdateData(req.body);
+    const requestedCustomizationMode = req.body.customizationMode === undefined
+      ? undefined
+      : String(req.body.customizationMode || "").trim().toUpperCase();
+    if (requestedCustomizationMode !== undefined && !MENU_ITEM_CUSTOMIZATION_MODES.includes(requestedCustomizationMode)) {
+      return res.status(400).json({ error: "Select a valid customization prompt." });
+    }
+    const customizationMode = req.body.customizationMode === undefined
+      ? undefined
+      : normalizeMenuItemCustomizationMode(requestedCustomizationMode);
     if (data.categoryId) {
       const category = await prisma.menuCategory.findUnique({ where: { id_restaurantId: { id: data.categoryId, restaurantId } }, select: { id: true } });
       if (!category) return res.status(400).json({ error: "Select a valid menu category for this restaurant." });
@@ -1351,8 +1392,11 @@ router.patch("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
       data,
       include: { category: true, options: true, optionGroups: { include: { options: true } } }
     });
-    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.updated", entityType: "MenuItem", entityId: item.id, metadata: data });
-    res.json({ item });
+    const settingsJson = customizationMode === undefined
+      ? (await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } }))?.settingsJson
+      : await persistMenuItemCustomizationMode(restaurantId, item.id, customizationMode);
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.updated", entityType: "MenuItem", entityId: item.id, metadata: { ...data, ...(customizationMode === undefined ? {} : { customizationMode }) } });
+    res.json({ item: withMenuItemCustomizationMode(item, settingsJson) });
   } catch (error) {
     next(error);
   }
@@ -1388,6 +1432,7 @@ router.delete("/:restaurantId/menu/items/:itemId", async (req, res, next) => {
       prisma.menuItemOptionGroup.deleteMany({ where: { menuItemId: req.params.itemId } }),
       prisma.menuItem.delete({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } })
     ]);
+    await removePersistedMenuItemCustomizationMode(restaurantId, req.params.itemId);
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.item.deleted", entityType: "MenuItem", entityId: req.params.itemId });
     res.status(204).send();
   } catch (error) {
