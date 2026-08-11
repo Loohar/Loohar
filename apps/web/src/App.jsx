@@ -60,6 +60,7 @@ import {
 } from "./apps/pos/cart.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
+import { isPrivateNetworkHost } from "./shared/networkHost.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
 
@@ -1700,7 +1701,7 @@ function normalizeBrowserHost(value = window.location.hostname) {
 function tenantHostRouteInfo() {
   const host = normalizeBrowserHost();
   if (host.endsWith(".vercel.app")) return { isTenantHost: false, host, slug: "" };
-  if (!host || reservedTenantHosts.has(host) || host.endsWith(".local") || host === "0.0.0.0") return { isTenantHost: false, host, slug: "" };
+  if (!host || reservedTenantHosts.has(host) || host.endsWith(".local") || host === "0.0.0.0" || (import.meta.env.DEV && isPrivateNetworkHost(host))) return { isTenantHost: false, host, slug: "" };
   if (host.endsWith(`.${tenantRootDomain}`)) {
     const slug = host.slice(0, -(tenantRootDomain.length + 1)).split(".").pop();
     return { isTenantHost: Boolean(slug), host, slug };

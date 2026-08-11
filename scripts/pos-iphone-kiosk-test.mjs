@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { cashTenderSummary } from "../apps/web/src/apps/pos/cashTender.js";
+import { isPrivateNetworkHost } from "../apps/web/src/shared/networkHost.js";
 
 const root = process.cwd();
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -23,6 +24,13 @@ for (const [width, height] of portraitViewports) {
 }
 
 assert.ok(app.includes('restaurant-shell${safePage === "pos" ? " restaurant-shell-pos" : ""}'), "restaurant shell should identify the active POS route");
+for (const host of ["10.0.0.8", "172.16.0.8", "172.31.255.254", "192.168.0.135", "169.254.10.20", "fd00::1", "fe80::1"]) {
+  assert.equal(isPrivateNetworkHost(host), true, `${host} should be treated as a private development host`);
+}
+for (const host of ["172.15.0.8", "172.32.0.8", "8.8.8.8", "restaurant.example.com", "fcbistro.com"]) {
+  assert.equal(isPrivateNetworkHost(host), false, `${host} should continue through normal tenant-domain routing`);
+}
+assert.ok(app.includes("import.meta.env.DEV && isPrivateNetworkHost(host)"), "private network bypass must remain development-only");
 assert.ok(app.includes("pos-mobile-brand") && app.includes("pos-mobile-dashboard-link"), "mobile POS should provide compact brand and dashboard escape controls");
 assert.ok(app.includes('!kioskLocked ? <a className="icon-button pos-mobile-dashboard-link"'), "dashboard escape should stay hidden in kiosk mode");
 assert.ok(styles.includes(".restaurant-shell-pos .restaurant-shell-topbar") && styles.includes(".restaurant-shell-pos .restaurant-shell-page-head"), "phone POS should remove desktop restaurant chrome");
