@@ -3088,7 +3088,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
   }
 
   return (
-    <div className="restaurant-shell">
+    <div className={`restaurant-shell${safePage === "pos" ? " restaurant-shell-pos" : ""}`}>
       <aside className="restaurant-shell-sidebar">
         <div className="restaurant-shell-sidebar-head">
           <LooharPlatformBrand size="compact" href="/" />
@@ -8947,6 +8947,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
     returnHome();
   };
+  const restaurantDashboardHref = restaurantKey ? `/restaurant/${restaurantKey}/dashboard` : "/restaurant";
   let workflowScreen;
 
   switch (effectiveWorkflow) {
@@ -9196,13 +9197,18 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     <Suspense fallback={<PosChunkFallback restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />}>
       <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""}`}>
       <div className="pos-workflow-topline">
+        <div className="pos-mobile-brand" aria-label={`${restaurantForPos?.name || restaurantForPos?.businessName || "Restaurant"} mobile POS`}>
+          <span>Loohar</span>
+          <strong>{restaurantForPos?.name || restaurantForPos?.businessName || "Restaurant"}</strong>
+        </div>
         <CashierBadge user={workflow.context.unlockedBy || user} />
         <div className="pos-workflow-status">
           <span className={apiOnline ? "online" : "offline"}>{apiOnline ? "Online" : "Offline"}</span>
-          <span>{activeDevice?.name || "Register not configured"}</span>
-          <span>{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
+          <span className="pos-workflow-register-label">{activeDevice?.name || "Register not configured"}</span>
+          <span className="pos-workflow-shift-label">{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
         </div>
         <div className="pos-workflow-topline-actions">
+          {!kioskLocked ? <a className="icon-button pos-mobile-dashboard-link" href={restaurantDashboardHref} aria-label="Return to restaurant dashboard"><LayoutDashboard size={18} /></a> : null}
           {showRegisterControl ? (
             <button
               className="icon-button"
@@ -9238,33 +9244,35 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
               </div>
               <button className="icon-button" type="button" onClick={closeModifierDialog} aria-label="Close modifier selection"><X size={18} /></button>
             </div>
-            <div className="pos-modifier-groups">
-              {normalizePosModifierGroups(customizingItem).map((group) => {
-                const selectedIds = modifierSelections[group.id] || [];
-                const maximum = Math.max(1, Number(group.maxSelect || 1));
-                const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
-                return (
-                  <fieldset className="pos-modifier-group" key={group.id}>
-                    <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
-                    <div className="pos-modifier-options">
-                      {group.options.map((option) => {
-                        const selected = selectedIds.includes(option.id);
-                        return (
-                          <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
-                            <span>{option.name}</span>
-                            <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </fieldset>
-                );
-              })}
+            <div className="pos-modifier-scroll">
+              <div className="pos-modifier-groups">
+                {normalizePosModifierGroups(customizingItem).map((group) => {
+                  const selectedIds = modifierSelections[group.id] || [];
+                  const maximum = Math.max(1, Number(group.maxSelect || 1));
+                  const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+                  return (
+                    <fieldset className="pos-modifier-group" key={group.id}>
+                      <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
+                      <div className="pos-modifier-options">
+                        {group.options.map((option) => {
+                          const selected = selectedIds.includes(option.id);
+                          return (
+                            <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
+                              <span>{option.name}</span>
+                              <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  );
+                })}
+              </div>
+              <label className="pos-modifier-instructions text-sm font-semibold text-slate-600">Special instructions
+                <textarea className="input mt-1 min-h-20 py-2" value={modifierInstructions} onChange={(event) => setModifierInstructions(event.target.value)} placeholder="No onions, sauce on the side..." />
+              </label>
+              {modifierError ? <div className="field-error">{modifierError}</div> : null}
             </div>
-            <label className="text-sm font-semibold text-slate-600">Special instructions
-              <textarea className="input mt-1 min-h-20 py-2" value={modifierInstructions} onChange={(event) => setModifierInstructions(event.target.value)} placeholder="No onions, sauce on the side..." />
-            </label>
-            {modifierError ? <div className="field-error">{modifierError}</div> : null}
             <div className="pos-modifier-actions">
               <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
               <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()} disabled={posModifierValidationErrors(customizingItem, modifierSelections).length > 0}>{editingCartLineId ? "Update item" : "Add to order"}</button>

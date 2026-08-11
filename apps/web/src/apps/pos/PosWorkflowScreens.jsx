@@ -310,12 +310,20 @@ export function OrderEntryScreen({
     event.stopPropagation();
     action();
   };
+  const activateCartLine = (line, item, canModify) => {
+    setSelectedCartLineId(line.cartLineId);
+    if (canModify && typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches) {
+      setMobileCartOpen(false);
+      onModify(line, item);
+    }
+  };
   return (
     <section className="pos-entry-screen">
       <PosScreenHeader eyebrow="Current order" title="Order entry" detail="Choose items, review the current order, and continue to payment." onBack={onHome} />
       <div className="pos-entry-layout">
         <div className="pos-entry-menu">
           <div className="pos-entry-toolbar">
+            <button className="pos-entry-mobile-home" type="button" onClick={onHome} aria-label="Return to Register Home"><ArrowLeft size={19} /></button>
             <label><Search size={18} /><span className="sr-only">Search menu</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search menu" /></label>
             <select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)} aria-label="Menu category"><option value="all">All categories</option>{categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select>
           </div>
@@ -343,7 +351,7 @@ export function OrderEntryScreen({
               const menuItem = menuItemById.get(line.menuItemId);
               const canModify = canModifyPosItem(menuItem);
               return (
-                <article className={selectedCartLineId === line.cartLineId ? "selected" : ""} key={line.cartLineId} role="option" tabIndex="0" aria-selected={selectedCartLineId === line.cartLineId} onClick={() => setSelectedCartLineId(line.cartLineId)} onKeyDown={(event) => {
+                <article className={selectedCartLineId === line.cartLineId ? "selected" : ""} key={line.cartLineId} role="option" tabIndex="0" aria-selected={selectedCartLineId === line.cartLineId} onClick={() => activateCartLine(line, menuItem, canModify)} onKeyDown={(event) => {
                   if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
                   event.preventDefault();
                   setSelectedCartLineId(line.cartLineId);
@@ -371,7 +379,10 @@ export function OrderEntryScreen({
           <div className="pos-entry-cart-footer"><div><span>Estimated subtotal</span><strong>{money(cartTotalCents)}</strong></div><div className="pos-entry-cart-footer-actions"><button className="button-muted" type="button" onClick={onHold} disabled={!cart.length || saving}><PauseCircle size={18} />Hold</button><button className="button-primary" type="button" onClick={onPay} disabled={!cart.length || saving}><CreditCard size={18} />Pay</button></div></div>
         </aside>
       </div>
-      <button className="pos-entry-mobile-summary" type="button" onClick={() => setMobileCartOpen(true)}><span>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</span><strong>{money(cartTotalCents)}</strong><span>Review &amp; pay</span></button>
+      <button className="pos-entry-mobile-summary" type="button" onClick={() => setMobileCartOpen(true)} aria-label={`View current order with ${cartItemCount} items totaling ${money(cartTotalCents)}`}>
+        <span className="pos-entry-mobile-summary-copy"><small>{cartItemCount} item{cartItemCount === 1 ? "" : "s"}</small><strong>{money(cartTotalCents)}</strong></span>
+        <span className="pos-entry-mobile-summary-command"><ShoppingBag size={18} />View order</span>
+      </button>
     </section>
   );
 }
@@ -424,14 +435,14 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
             <div><dt>Cash applied</dt><dd>{money(tender.appliedCents)}</dd></div>
             {tender.covered ? <div className="change"><dt>Change due</dt><dd>{money(tender.changeDueCents)}</dd></div> : <div className="remaining"><dt>Remaining due</dt><dd>{money(tender.remainingDueCents)}</dd></div>}
           </dl>
-          <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
-          {!canAcceptCash ? <small>{cashDisabledReason || "Cash is not available on this register."}</small> : null}
         </div>
         <div className="pos-cash-keypad" aria-label="Cash amount keypad">
           {keypadRows.flat().map((key) => <button type="button" onClick={() => enterKey(key)} key={key}>{key}</button>)}
           <button className="backspace" type="button" onClick={() => enterKey("backspace")} aria-label="Backspace"><Delete size={22} />Backspace</button>
           <button className="clear" type="button" onClick={() => enterKey("clear")}><X size={20} />Clear</button>
         </div>
+        <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
+        {!canAcceptCash ? <small className="pos-cash-disabled-reason">{cashDisabledReason || "Cash is not available on this register."}</small> : null}
       </div>
     </section>
   );
@@ -439,7 +450,7 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
 
 export function PaymentResultScreen({ success, order, changeDueCents, message, onComplete, onRetry }) {
   return (
-    <section className={`pos-centered-screen ${success ? "success" : "failure"}`} role="status">
+    <section className={`pos-centered-screen pos-payment-result ${success ? "success" : "failure"}`} role="status">
       {success ? <CheckCircle2 size={52} /> : <CreditCard size={52} />}
       <h2>{success ? "Payment complete" : "Payment needs attention"}</h2>
       <p>{message || (success ? `${order?.orderNumber || "Order"} is ready for its final receipt.` : "No payment was recorded. Choose a payment method and try again.")}</p>

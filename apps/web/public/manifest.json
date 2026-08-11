@@ -1,6 +1,7 @@
 {
   "name": "Loohar",
   "short_name": "Loohar",
+  "id": "/",
   "description": "Restaurant websites, direct ordering, pickup, delivery, loyalty, and operations in one restaurant-owned SaaS platform.",
   "start_url": "/",
   "scope": "/",
@@ -8,6 +9,15 @@
   "orientation": "any",
   "background_color": "#f6f8fb",
   "theme_color": "#111827",
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Restaurant POS",
+      "short_name": "POS",
+      "description": "Open the secure Loohar restaurant sign-in for POS access.",
+      "url": "/restaurant/login"
+    }
+  ],
   "icons": [
     {
       "src": "/favicon/android-chrome-192x192.png?v=2026-07-nav",
