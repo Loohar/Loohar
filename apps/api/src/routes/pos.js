@@ -247,8 +247,16 @@ router.post("/:restaurantId/pos/orders", requirePosSession, async (req, res, nex
       sessionId: sessionId || null,
       customerJson: customer || {},
       notes,
-      deviceId: deviceContext(req).deviceId || null
+      deviceId: deviceContext(req).deviceId || null,
+      entitlementVerified: Boolean(req.entitlementDecision?.allowed)
     });
+    if (result.performance) {
+      res.setHeader("Server-Timing", [
+        `pos-order-db;dur=${result.performance.dbTransactionMs}`,
+        `pos-kds;dur=${result.performance.kdsMs}`,
+        `pos-order-total;dur=${result.performance.serviceTotalMs}`
+      ].join(", "));
+    }
     res.status(201).json(result);
   } catch (error) {
     next(error);
@@ -356,7 +364,8 @@ router.post("/:restaurantId/pos/held-orders/:sessionId/submit", requirePosSessio
       sessionId: session.id,
       customerJson: session.customerJson || {},
       notes: req.body?.notes,
-      deviceId: session.deviceId || deviceContext(req).deviceId || null
+      deviceId: session.deviceId || deviceContext(req).deviceId || null,
+      entitlementVerified: Boolean(req.entitlementDecision?.allowed)
     });
     res.status(201).json(result);
   } catch (error) {
@@ -371,8 +380,18 @@ router.post("/:restaurantId/pos/payments/cash", requirePosSession, async (req, r
       user: req.user,
       orderId: req.body?.orderId,
       amountCents: req.body?.amountCents ?? null,
+      entitlementVerified: Boolean(req.entitlementDecision?.allowed),
+      sessionDevice: req.posSessionDevice,
       ...deviceContext(req)
     });
+    if (result.performance) {
+      res.setHeader("Server-Timing", [
+        `pos-access;dur=${result.performance.accessAndOrderMs}`,
+        `pos-db;dur=${result.performance.dbTransactionMs}`,
+        `pos-receipt;dur=${result.performance.receiptMs}`,
+        `pos-total;dur=${result.performance.serviceTotalMs}`
+      ].join(", "));
+    }
     res.status(201).json(result);
   } catch (error) {
     next(error);

@@ -418,6 +418,8 @@ export async function getUserPosPermissions(user, restaurantId) {
 }
 
 export async function assertPosPermission(user, restaurantId, permission) {
+  const rolePermissions = ROLE_PERMISSIONS[user?.role] || [];
+  if (rolePermissions.includes(permission)) return [...rolePermissions];
   const permissions = await getUserPosPermissions(user, restaurantId);
   if (!permissions.includes(permission)) {
     throw httpError("Insufficient POS permission.", 403, { code: "POS_PERMISSION_DENIED", permission });
@@ -647,9 +649,15 @@ export async function requireOpenShift({ restaurantId, userId, deviceId = null }
   return shift;
 }
 
-export async function requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint }) {
+export async function requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint, verifiedDevice = null }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCEPT_CASH);
-  const device = await requireActiveDevice({ restaurantId, deviceId, fingerprint });
+  const canReuseVerifiedDevice = verifiedDevice
+    && verifiedDevice.id === deviceId
+    && verifiedDevice.restaurantId === restaurantId
+    && verifiedDevice.status === "ACTIVE";
+  const device = canReuseVerifiedDevice
+    ? verifiedDevice
+    : await requireActiveDevice({ restaurantId, deviceId, fingerprint });
   if (device.deviceType !== "MAIN_TERMINAL") {
     throw httpError("Cash payments are only allowed from a main terminal.", 403, { code: "POS_CASH_MAIN_TERMINAL_REQUIRED" });
   }
@@ -948,8 +956,18 @@ async function nextOrderNumber(tx, restaurantId) {
   throw httpError("Unable to generate POS order number.", 500);
 }
 
-export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = null, customerJson = {}, notes = "", deviceId = null }) {
-  await assertPosFeature(restaurantId, "POST");
+export async function submitPosOrder({
+  restaurantId,
+  user,
+  quoteId,
+  sessionId = null,
+  customerJson = {},
+  notes = "",
+  deviceId = null,
+  entitlementVerified = false
+}) {
+  const serviceStartedAt = Date.now();
+  if (!entitlementVerified) await assertPosFeature(restaurantId, "POST");
   await assertPosPermission(user, restaurantId, POS_PERMISSION.SEND_TO_KITCHEN);
   const quote = await prisma.orderQuote.findFirst({ where: { id: quoteId, restaurantId } });
   if (!quote || quote.voidedAt) throw httpError("POS quote not found.", 404);
@@ -958,6 +976,8 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
   const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
   const kitchenLineItems = quote.lineItemsJson.filter((line) => line.sendToKitchen !== false);
 
+  const transactionStartedAt = Date.now();
+  let receiptMs = 0;
   const result = await prisma.$transaction(async (tx) => {
     const claimed = await tx.orderQuote.updateMany({
       where: {
@@ -1026,6 +1046,7 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
         data: { status: "SUBMITTED", orderId: order.id, submittedAt: new Date(), updatedByUserId: user.id }
       });
     }
+    const receiptStartedAt = Date.now();
     const receipt = kitchenLineItems.length ? await tx.posReceipt.create({
       data: {
         restaurantId,
@@ -1039,10 +1060,14 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
         createdByUserId: user.id
       }
     }) : null;
+    receiptMs = Date.now() - receiptStartedAt;
     return { order, receipt };
   });
-
+  const dbTransactionMs = Date.now() - transactionStartedAt;
+  const kdsStartedAt = Date.now();
   emitKitchenTicketCreated(result.order);
+  const kdsMs = Date.now() - kdsStartedAt;
+  const auditStartedAt = Date.now();
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
@@ -1051,7 +1076,15 @@ export async function submitPosOrder({ restaurantId, user, quoteId, sessionId = 
     entityId: result.order.id,
     metadata: { quoteId, sessionId, totalCents: quote.totalCents }
   });
-  return result;
+  const performance = process.env.NODE_ENV === "production" ? undefined : {
+    dbTransactionMs,
+    receiptMs,
+    kdsMs,
+    auditMs: Date.now() - auditStartedAt,
+    serviceTotalMs: Date.now() - serviceStartedAt
+  };
+  if (performance) console.info(JSON.stringify({ event: "pos.order.performance", ...performance }));
+  return { ...result, ...(performance ? { performance } : {}) };
 }
 
 export async function holdPosOrder({ restaurantId, user, body, deviceId = null }) {
@@ -1110,14 +1143,79 @@ export function cashSettlementAmounts(orderTotalCents, tenderedCents = null, alr
   };
 }
 
-export async function cashPayment({ restaurantId, user, orderId, deviceId, fingerprint, amountCents = null }) {
-  await assertPosFeature(restaurantId, "POST");
-  const { device, shift, cashDrawer } = await requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint });
-  const locationId = shift.locationId || device.locationId || null;
-  const order = await prisma.order.findFirst({
+async function runCashPostCommitTasks({ restaurantId, user, device, cashDrawer, shift, order, paymentId, settlement }) {
+  const startedAt = Date.now();
+  const drawerStartedAt = Date.now();
+  const drawerRequest = await requestCashDrawerOpen({
+    restaurantId,
+    actorUserId: user.id,
+    device,
+    cashDrawer,
+    shift,
+    orderId: order.id,
+    paymentId,
+    reason: "COMPLETED_CASH_SALE"
+  }).catch((error) => ({
+    requested: false,
+    physicalOpenRequested: false,
+    hardwareStatus: "REQUEST_FAILED",
+    errorCode: error?.code || "DRAWER_REQUEST_FAILED"
+  }));
+  const drawerMs = Date.now() - drawerStartedAt;
+  const auditStartedAt = Date.now();
+  await recordAudit({
+    actorUserId: user.id,
+    restaurantId,
+    action: "pos.payment.cash.accepted",
+    entityType: "Payment",
+    entityId: paymentId,
+    metadata: { orderId: order.id, deviceId: device.id, cashDrawerId: cashDrawer.id, ...settlement, drawerRequest }
+  });
+  if (process.env.NODE_ENV !== "production") {
+    console.info(JSON.stringify({
+      event: "pos.cash.post_commit.performance",
+      drawerMs,
+      auditMs: Date.now() - auditStartedAt,
+      totalMs: Date.now() - startedAt,
+      hardwareStatus: drawerRequest.hardwareStatus
+    }));
+  }
+}
+
+export async function cashPayment({
+  restaurantId,
+  user,
+  orderId,
+  deviceId,
+  fingerprint,
+  amountCents = null,
+  entitlementVerified = false,
+  sessionDevice = null
+}) {
+  const serviceStartedAt = Date.now();
+  const entitlementStartedAt = Date.now();
+  if (!entitlementVerified) await assertPosFeature(restaurantId, "POST");
+  const entitlementMs = Date.now() - entitlementStartedAt;
+  const accessStartedAt = Date.now();
+  const sessionLocationId = sessionDevice?.locationId || null;
+  const findOrder = (locationId) => prisma.order.findFirst({
     where: { id: orderId, restaurantId, ...(locationId ? { locationId } : { locationId: null }) },
     include: { items: true, payment: true, restaurantOrderPayment: true }
   });
+  const accessPromise = requireCashRegisterAccess({
+    restaurantId,
+    user,
+    deviceId,
+    fingerprint,
+    verifiedDevice: sessionDevice
+  });
+  const orderPromise = sessionDevice ? findOrder(sessionLocationId) : Promise.resolve(null);
+  const [{ device, shift, cashDrawer }, sessionScopedOrder] = await Promise.all([accessPromise, orderPromise]);
+  const locationId = shift.locationId || device.locationId || null;
+  const order = sessionDevice && locationId === sessionLocationId
+    ? sessionScopedOrder
+    : await findOrder(locationId);
+  const accessAndOrderMs = Date.now() - accessStartedAt;
   if (!order) throw httpError("Order not found for this register location.", 404, { code: "POS_CASH_ORDER_NOT_FOUND" });
   const settledPaymentStatuses = new Set(["AUTHORIZED", "PAID", "REFUNDED"]);
   const recoverableOrderPaymentStatuses = new Set(["REQUIRES_PAYMENT_METHOD", "FAILED", "CANCELED"]);
@@ -1143,43 +1241,45 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
     settledAt: new Date().toISOString()
   };
 
+  const transactionStartedAt = Date.now();
+  const transactionTiming = {};
   const result = await prisma.$transaction(async (tx) => {
-    const existingPayment = await tx.payment.findUnique({ where: { orderId: order.id } });
+    const existingPayment = order.payment;
+    const paidAt = new Date();
+    const paymentData = {
+      provider: "manual_cash",
+      status: "PAID",
+      amountCents: settlement.cashAppliedCents,
+      restaurantNetCents: settlement.cashAppliedCents,
+      driverTipCents: order.driverTipCents,
+      paidAt
+    };
+    const paymentStartedAt = Date.now();
     let payment;
     if (existingPayment) {
       const claimed = await tx.payment.updateMany({
         where: { id: existingPayment.id, status: { in: ["PENDING", "FAILED"] } },
-        data: {
-          provider: "manual_cash",
-          status: "PAID",
-          amountCents: settlement.cashAppliedCents,
-          restaurantNetCents: settlement.cashAppliedCents,
-          driverTipCents: order.driverTipCents,
-          paidAt: new Date()
-        }
+        data: paymentData
       });
       if (claimed.count !== 1) throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
-      payment = await tx.payment.findUnique({ where: { id: existingPayment.id } });
+      payment = { ...existingPayment, ...paymentData };
     } else {
       payment = await tx.payment.create({
         data: {
           orderId: order.id,
-          provider: "manual_cash",
-          status: "PAID",
-          amountCents: settlement.cashAppliedCents,
-          restaurantNetCents: settlement.cashAppliedCents,
-          driverTipCents: order.driverTipCents,
-          paidAt: new Date()
+          ...paymentData
         }
       });
     }
+    transactionTiming.legacyPaymentMs = Date.now() - paymentStartedAt;
+    const orderPaymentStartedAt = Date.now();
     const orderPayment = await tx.restaurantOrderPayment.upsert({
       where: { orderId: order.id },
       update: {
         restaurantId,
         provider: "MANUAL",
         status: "PAID",
-        paidAt: new Date(),
+        paidAt,
         totalCents: order.totalCents,
         platformFeeCents: 0,
         restaurantGrossCents: order.totalCents,
@@ -1205,9 +1305,11 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         restaurantGrossCents: order.totalCents,
         restaurantNetCents: order.totalCents,
         quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender }),
-        paidAt: new Date()
+        paidAt
       }
     });
+    transactionTiming.orderPaymentMs = Date.now() - orderPaymentStartedAt;
+    const ledgerStartedAt = Date.now();
     const ledger = await tx.cashLedgerEntry.create({
       data: {
         restaurantId,
@@ -1222,10 +1324,14 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         note: `Cash payment for ${order.orderNumber}; tendered ${settlement.cashTenderedCents}; change ${settlement.changeDueCents}`
       }
     });
+    transactionTiming.cashLedgerMs = Date.now() - ledgerStartedAt;
+    const drawerBalanceStartedAt = Date.now();
     await tx.cashDrawer.update({
       where: { id: cashDrawer.id },
       data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
     });
+    transactionTiming.drawerBalanceMs = Date.now() - drawerBalanceStartedAt;
+    const receiptStartedAt = Date.now();
     const receipt = await tx.posReceipt.create({
       data: {
         restaurantId,
@@ -1247,6 +1353,7 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
         createdByUserId: user.id
       }
     });
+    transactionTiming.receiptMs = Date.now() - receiptStartedAt;
     return { payment, orderPayment, ledger, receipt };
   }).catch((error) => {
     if (error?.code === "P2002") {
@@ -1254,31 +1361,42 @@ export async function cashPayment({ restaurantId, user, orderId, deviceId, finge
     }
     throw error;
   });
-
-  const drawerRequest = await requestCashDrawerOpen({
+  const dbTransactionMs = Date.now() - transactionStartedAt;
+  const drawerDispatchStartedAt = Date.now();
+  const drawerRequest = { requested: true, physicalOpenRequested: false, hardwareStatus: "DISPATCHED" };
+  const postCommitTask = runCashPostCommitTasks({
     restaurantId,
-    actorUserId: user.id,
+    user,
     device,
     cashDrawer,
     shift,
-    orderId: order.id,
+    order,
     paymentId: result.payment.id,
-    reason: "COMPLETED_CASH_SALE"
-  }).catch((error) => ({ requested: false, physicalOpenRequested: false, hardwareStatus: "REQUEST_FAILED", error: error.message }));
-
-  await recordAudit({
-    actorUserId: user.id,
-    restaurantId,
-    action: "pos.payment.cash.accepted",
-    entityType: "Payment",
-    entityId: result.payment.id,
-    metadata: { orderId: order.id, deviceId: device.id, cashDrawerId: cashDrawer.id, ...settlement, drawerRequest }
+    settlement
   });
+  void postCommitTask.catch((error) => {
+    console.error(JSON.stringify({ event: "pos.cash.post_commit.failed", code: error?.code || "POST_COMMIT_FAILED" }));
+  });
+  const performance = process.env.NODE_ENV === "production" ? undefined : {
+    entitlementMs,
+    accessAndOrderMs,
+    dbTransactionMs,
+    paymentSettlementMs: transactionTiming.legacyPaymentMs + transactionTiming.orderPaymentMs,
+    cashLedgerMs: transactionTiming.cashLedgerMs,
+    drawerBalanceMs: transactionTiming.drawerBalanceMs,
+    receiptMs: transactionTiming.receiptMs,
+    drawerDispatchMs: Date.now() - drawerDispatchStartedAt,
+    kdsMs: 0,
+    serviceTotalMs: Date.now() - serviceStartedAt,
+    postCommit: "deferred"
+  };
+  if (performance) console.info(JSON.stringify({ event: "pos.cash.performance", ...performance }));
   return {
     ...result,
     ...settlement,
     amountReceivedCents: settlement.cashTenderedCents,
-    drawerRequest
+    drawerRequest,
+    ...(performance ? { performance } : {})
   };
 }
 

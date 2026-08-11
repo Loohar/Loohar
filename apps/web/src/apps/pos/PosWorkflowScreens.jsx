@@ -424,7 +424,7 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
             <div><dt>Cash applied</dt><dd>{money(tender.appliedCents)}</dd></div>
             {tender.covered ? <div className="change"><dt>Change due</dt><dd>{money(tender.changeDueCents)}</dd></div> : <div className="remaining"><dt>Remaining due</dt><dd>{money(tender.remainingDueCents)}</dd></div>}
           </dl>
-          <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Completing..." : "Complete cash payment"}</button>
+          <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
           {!canAcceptCash ? <small>{cashDisabledReason || "Cash is not available on this register."}</small> : null}
         </div>
         <div className="pos-cash-keypad" aria-label="Cash amount keypad">

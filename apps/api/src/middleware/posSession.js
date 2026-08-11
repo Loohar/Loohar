@@ -30,7 +30,15 @@ export async function requirePosSession(req, res, next) {
       }),
       prisma.posDevice.findFirst({
         where: { id: deviceId, restaurantId, status: "ACTIVE" },
-        select: { id: true, locationId: true }
+        select: {
+          id: true,
+          restaurantId: true,
+          locationId: true,
+          name: true,
+          deviceType: true,
+          status: true,
+          cashDrawerId: true
+        }
       })
     ]);
     if (!staff || !device) {
@@ -47,6 +55,8 @@ export async function requirePosSession(req, res, next) {
     }
 
     req.posSession = payload;
+    req.posSessionStaff = staff;
+    req.posSessionDevice = device;
     next();
   } catch (error) {
     if (["TokenExpiredError", "JsonWebTokenError", "NotBeforeError"].includes(error.name)) {

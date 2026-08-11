@@ -8097,6 +8097,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const loadedOnceRef = useRef(false);
   const inactivityTimerRef = useRef(null);
   const posSessionTokenRef = useRef("");
+  const cashPaymentInFlightRef = useRef(false);
 
   useEffect(() => {
     setFingerprint(posDeviceFingerprint());
@@ -8640,7 +8641,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
-  async function submitOrder({ preserveCart = false, quoteOverride = null } = {}) {
+  async function submitOrder({ preserveCart = false, quoteOverride = null, refreshAfterSubmit = true } = {}) {
     setSaving("submit");
     setError("");
     setNotice("");
@@ -8662,7 +8663,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         setQuote(null);
       }
       setNotice("Order sent to the kitchen queue.");
-      await onRefresh?.();
+      if (refreshAfterSubmit) await onRefresh?.();
       return payload.order;
     } catch (posError) {
       setError(posError);
@@ -8673,14 +8674,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   async function acceptCashPayment(amountCents) {
+    if (cashPaymentInFlightRef.current) return;
+    cashPaymentInFlightRef.current = true;
+    posPerformanceMark("cash-payment-click");
     setSaving("cash");
     setError("");
     setNotice("");
     dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
     try {
-      const paymentQuote = await calculateQuote();
-      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote }) : null);
+      const paymentQuote = lastOrder ? null : (quote || await calculateQuote());
+      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote, refreshAfterSubmit: false }) : null);
       if (!order?.id) throw new Error("The order could not be committed before payment.");
+      posPerformanceMark("cash-payment-api-start");
+      posPerformanceMeasure("cash-payment-pre-api-duration", "cash-payment-click", "cash-payment-api-start");
       const payload = await posApi("/payments/cash", {
         method: "POST",
         body: {
@@ -8688,13 +8694,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           amountCents
         }
       });
+      posPerformanceMark("cash-payment-api-end");
+      posPerformanceMeasure("cash-payment-api-duration", "cash-payment-api-start", "cash-payment-api-end");
+      if (import.meta.env?.DEV && payload.performance) {
+        globalThis.console?.debug?.("[Loohar POS cash server perf]", payload.performance);
+      }
       setLastOrderReceiptKind("final");
-      await completeSuccessfulTransaction(order, payload.changeDueCents || 0, payload.drawerRequest);
+      completeSuccessfulTransaction(order, payload.changeDueCents || 0, payload.drawerRequest);
     } catch (posError) {
       setError(posError);
       setPaymentResult({ success: false, message: posError?.message || "Cash payment was not recorded." });
       dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
     } finally {
+      cashPaymentInFlightRef.current = false;
       setSaving("");
     }
   }
@@ -8868,7 +8880,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setPaymentResult({ success: true, changeDueCents, message, drawerRequest });
     setNotice(`${order?.orderNumber || "Order"} was paid and sent to the Kitchen.`);
     dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order?.id } });
-    await Promise.all([loadPos({ silent: true }), loadOrderLists()]);
+    posPerformanceMark("cash-payment-complete-visible");
+    posPerformanceMeasure("cash-payment-click-to-complete", "cash-payment-click", "cash-payment-complete-visible");
   }
 
   async function sendCurrentOrderToKitchen() {
@@ -8889,6 +8902,11 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     resetCurrentOrder();
     dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
     dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
+    posPerformanceMark("cash-payment-reconciliation-start");
+    void Promise.all([loadPos({ silent: true }), loadOrderLists()]).finally(() => {
+      posPerformanceMark("cash-payment-reconciliation-end");
+      posPerformanceMeasure("cash-payment-reconciliation-duration", "cash-payment-reconciliation-start", "cash-payment-reconciliation-end");
+    });
   }
 
   function beginNewOrder() {

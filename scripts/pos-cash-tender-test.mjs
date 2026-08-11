@@ -87,7 +87,7 @@ for (const value of ["restaurantId", "locationId", "requireCashRegisterAccess", 
 assert.ok(cashService.includes("tx.payment.updateMany") && cashService.includes('code: "POS_CASH_ALREADY_PAID"'), "cash settlement should atomically prevent duplicate payment");
 assert.ok(cashService.includes('error?.code === "P2002"'), "concurrent cash creation should map uniqueness conflicts to already paid");
 assert.ok(cashService.includes('entryType: "SALE_CASH"') && cashService.includes("settlement.cashAppliedCents"), "cash ledger should record only the applied amount");
-assert.ok(cashService.indexOf("requestCashDrawerOpen") > cashService.indexOf("prisma.$transaction"), "drawer requests should occur only after committed settlement");
+assert.ok(cashService.indexOf("runCashPostCommitTasks") > cashService.indexOf("prisma.$transaction"), "drawer requests should dispatch only after committed settlement");
 
 for (const reason of ["COMPLETED_CASH_SALE", "MANAGER_AUTHORIZED_OPEN", "CASH_MANAGEMENT"]) {
   assert.ok(hardwareService.includes(reason), `drawer hook should authorize ${reason}`);
