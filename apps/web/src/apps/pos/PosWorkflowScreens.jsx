@@ -132,7 +132,7 @@ export function CashierPinScreen({ pin, setPin, error, lockedUntil, saving, onSu
         </div>
         <form className="pos-pin-form" onSubmit={onSubmit} onKeyDown={handleKeyDown}>
           <div className="pos-pin-dots" role="status" aria-label={`${pin.length} of ${minLength} to ${maxLength} PIN digits entered`}>
-            {Array.from({ length: maxLength }, (_, index) => <span className={index < pin.length ? "filled" : index < minLength ? "required" : "optional"} key={index} aria-hidden="true" />)}
+            {Array.from({ length: pin.length }, (_, index) => <span className="filled" key={index} aria-hidden="true" />)}
           </div>
           <div className="pos-pin-keypad" aria-label="POS PIN keypad">
             {pinKeys.map((key, index) => {

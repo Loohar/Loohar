@@ -27,8 +27,17 @@ assert.equal(isPosPinSubmittable("12345678"), true, "maximum-length PIN should s
 assert.equal(POS_PIN_MIN_LENGTH, 4);
 assert.equal(POS_PIN_MAX_LENGTH, 8);
 
-assert.ok(screens.includes("pos-pin-dots") && screens.includes("aria-hidden=\"true\""), "PIN digits should be represented only by masked dots");
-assert.ok(!screens.slice(screens.indexOf("export function CashierPinScreen"), screens.indexOf("export function RegisterHomeScreen")).includes('name="pos-pin"'), "cashier sign-in should not open a standard PIN input");
+const pinScreen = screens.slice(screens.indexOf("export function CashierPinScreen"), screens.indexOf("export function RegisterHomeScreen"));
+const maskedDotCount = (value) => normalizePosPin(value).length;
+assert.equal(maskedDotCount(""), 0, "zero entered digits should render no PIN dots");
+assert.equal(maskedDotCount("1"), 1, "one entered digit should render one masked dot");
+assert.equal(maskedDotCount("1234"), 4, "four entered digits should render four masked dots");
+assert.equal(maskedDotCount("12345678"), 8, "eight entered digits should render eight masked dots");
+assert.equal(maskedDotCount(applyPosPinKey("1234", "backspace")), 3, "Backspace should reduce the masked-dot count");
+assert.equal(maskedDotCount(applyPosPinKey("1234", "clear")), 0, "Clear should remove every masked dot");
+assert.ok(pinScreen.includes("pos-pin-dots") && pinScreen.includes("Array.from({ length: pin.length }") && pinScreen.includes("aria-hidden=\"true\""), "PIN digits should be represented only by entered-length masked dots");
+assert.equal(pinScreen.includes("Array.from({ length: maxLength }"), false, "PIN UI must not render unused placeholder dots");
+assert.equal(pinScreen.includes('name="pos-pin"') || pinScreen.includes("value={pin}") || pinScreen.includes(">{pin}<"), false, "cashier PIN must never render in plaintext");
 for (const label of ["Delete last PIN digit", "Clear PIN", "Unlock register", "Cancel"]) {
   assert.ok(screens.includes(label), `PIN screen should expose ${label}`);
 }

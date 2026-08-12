@@ -24,6 +24,8 @@ const successBlock = sectionBetween(app, "async function completeSuccessfulTrans
 const finishBlock = sectionBetween(app, "function finishPaidOrder", "function beginNewOrder");
 const orderService = sectionBetween(posService, "export async function submitPosOrder", "export async function holdPosOrder");
 const cashService = sectionBetween(posService, "export async function cashPayment", "export async function cardPaymentIntent");
+const cashTransaction = sectionBetween(posService, "async function settleCashOrderTransaction", "async function runCashPostCommitTasks");
+const cashQuoteService = sectionBetween(posService, "async function cashPaymentFromQuote", "export async function cashPayment");
 const postCommitService = sectionBetween(posService, "async function runCashPostCommitTasks", "export async function cashPayment");
 
 assert.ok(app.includes("const cashPaymentInFlightRef = useRef(false)"), "cash payment should have an immediate in-memory submission lock");
@@ -31,12 +33,14 @@ assert.ok(cashBlock.indexOf("if (cashPaymentInFlightRef.current) return") < cash
 assert.ok(cashBlock.includes("cashPaymentInFlightRef.current = false"), "the cash submission lock should release after success or failure");
 assert.ok(screens.includes('saving ? "Processing..." : "Complete cash payment"'), "cash payment should show immediate processing feedback");
 
-assert.ok(cashBlock.includes("lastOrder ? null : (quote || await calculateQuote(cart, { trackCashPayment: true }))"), "cash completion should reuse the quote created before payment selection");
-assert.ok(cashBlock.includes("refreshAfterSubmit: false"), "cash order submission should skip the broad restaurant refresh");
+assert.ok(cashBlock.includes("const paymentQuote = lastOrder ? null : quote"), "cash completion should reuse the server quote prepared on the payment screen");
+assert.equal(cashBlock.includes("submitOrder("), false, "cash completion should not perform a separate order mutation");
+assert.equal(cashBlock.includes("calculateQuote("), false, "cash completion should not perform quote networking after Complete is tapped");
 assert.ok(submitBlock.includes("if (refreshAfterSubmit) void loadOrderLists()"), "non-payment submission should refresh only POS order state in the background");
 assert.equal(submitBlock.includes("onRefresh"), false, "POS submission should not trigger the broad restaurant dashboard refresh");
-assert.equal(cashBlock.match(/calculateQuote\(/g)?.length, 1, "cash completion should have only a fallback quote call");
-assert.ok(cashBlock.includes("cashPaymentRequestCountRef.current += 1"), "cash completion should count each authoritative request");
+assert.equal((cashBlock.match(/posApi\("\/payments\/cash"/g) || []).length, 1, "cash completion should issue exactly one authoritative request");
+assert.ok(cashBlock.includes("cashTenderSummary(orderTotalCents, amountCents)") && cashBlock.indexOf("cashTenderSummary(orderTotalCents, amountCents)") < cashBlock.indexOf('posApi("/payments/cash"'), "cash tender should be validated locally before settlement networking");
+assert.ok(cashBlock.includes("cashPaymentRequestCountRef.current += 1"), "cash completion should count the authoritative request");
 
 const cashRequestIndex = cashBlock.indexOf('await posApi("/payments/cash"');
 const successIndex = cashBlock.indexOf("completeSuccessfulTransaction(");
@@ -51,19 +55,21 @@ assert.equal(finishBlock.includes("loadPos("), false, "Done should preserve the 
 assert.ok(posSession.includes("req.posSessionDevice = device"), "validated POS middleware should expose its device result for reuse");
 assert.ok(posRoute.includes("sessionDevice: req.posSessionDevice"), "cash settlement should reuse the already validated session device");
 assert.ok(posRoute.includes("entitlementVerified: Boolean(req.entitlementDecision?.allowed)"), "cash and order services should reuse the route entitlement decision");
-assert.ok(cashService.includes("const existingPayment = order.payment"), "cash settlement should reuse the payment loaded with the validated order");
-assert.equal(cashService.includes("tx.payment.findUnique"), false, "cash settlement should not re-read the payment inside the transaction");
+assert.ok(cashTransaction.includes("const existingPayment = order.payment"), "cash settlement should reuse the payment loaded with the validated order");
+assert.equal(cashTransaction.includes("tx.payment.findUnique"), false, "cash settlement should not re-read the payment inside the transaction");
 assert.ok(cashService.includes("Promise.all([accessPromise, orderPromise])"), "register access and location-scoped order validation should run in parallel");
 
-assert.ok(cashService.includes("tx.cashLedgerEntry.create") && cashService.includes("tx.cashDrawer.update"), "ledger and drawer balance must remain inside the committed transaction");
-assert.ok(cashService.includes("tx.posReceipt.create"), "final receipt persistence must remain inside the transaction");
+assert.ok(cashTransaction.includes("tx.cashLedgerEntry.create") && cashTransaction.includes("tx.cashDrawer.update"), "ledger and drawer balance must remain inside the committed transaction");
+assert.ok(cashTransaction.includes("tx.posReceipt.create"), "final receipt persistence must remain inside the transaction");
+assert.ok(cashQuoteService.includes("createPosOrderTransaction") && cashQuoteService.includes("settleCashOrderTransaction") && cashQuoteService.includes("await prisma.$transaction"), "new cash sales should create the order and settle cash in one atomic transaction");
+assert.ok(cashQuoteService.includes('action: "pos.cash.quote.settled"') && cashQuoteService.includes("recoverSettledCashQuote"), "quote settlement should be durably idempotent for retries");
 assert.ok(cashService.includes("void postCommitTask.catch"), "drawer acknowledgement and audit enrichment should not block Payment Complete");
 assert.equal(cashService.match(/runCashPostCommitTasks\(/g)?.length, 1, "drawer post-commit work should dispatch once");
 assert.ok(postCommitService.includes("requestCashDrawerOpen") && postCommitService.includes('action: "pos.payment.cash.accepted"'), "deferred drawer and payment actions should remain audited");
 
 assert.ok(orderService.indexOf("emitKitchenTicketCreated(result.order)") > orderService.indexOf("await prisma.$transaction"), "KDS emit must remain post-commit");
 assert.equal(orderService.match(/emitKitchenTicketCreated\(/g)?.length, 1, "KDS event should emit once");
-assert.ok(orderService.includes("kdsMs") && cashService.includes("dbTransactionMs") && posRoute.includes("Server-Timing"), "development timing should cover KDS, transaction, receipt, and total service duration");
+assert.ok(orderService.includes("kdsMs") && cashQuoteService.includes("dbTransactionMs") && posRoute.includes("Server-Timing"), "development timing should cover KDS, transaction, receipt, and total service duration");
 
 assert.ok(successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED") && !successBlock.includes("resetCurrentOrder()"), "change due should remain visible until Done");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should still clear the cart and return Register Home");

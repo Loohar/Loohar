@@ -956,6 +956,103 @@ async function nextOrderNumber(tx, restaurantId) {
   throw httpError("Unable to generate POS order number.", 500);
 }
 
+async function createPosOrderTransaction({
+  tx,
+  restaurantId,
+  user,
+  quote,
+  normalizedCustomer,
+  sessionId = null,
+  notes = "",
+  deviceId = null,
+  timing = {}
+}) {
+  const claimed = await tx.orderQuote.updateMany({
+    where: {
+      id: quote.id,
+      restaurantId,
+      acceptedAt: null,
+      voidedAt: null,
+      expiresAt: { gt: new Date() }
+    },
+    data: { acceptedAt: new Date() }
+  });
+  if (claimed.count !== 1) throw httpError("POS quote has already been submitted or expired.", 409);
+
+  const customer = await ensurePosCustomer(tx, restaurantId, quote.id, normalizedCustomer);
+  const orderNumber = await nextOrderNumber(tx, restaurantId);
+  const order = await tx.order.create({
+    data: {
+      restaurantId,
+      locationId: quote.locationId,
+      customerId: customer.id,
+      orderNumber,
+      type: quote.orderType,
+      status: "PENDING",
+      subtotalCents: quote.subtotalCents,
+      discountCents: quote.discountCents,
+      deliveryFeeCents: quote.deliveryFeeCents,
+      taxCents: quote.taxCents,
+      tipCents: quote.tipCents,
+      restaurantTipCents: quote.tipCents,
+      totalCents: quote.totalCents,
+      deliveryAddress: normalizedCustomer.deliveryAddress || null,
+      notes: String(notes || "").slice(0, 1000),
+      items: {
+        create: quote.lineItemsJson.map((line) => ({
+          menuItemId: line.menuItemId,
+          name: line.name,
+          quantity: line.quantity,
+          unitPriceCents: line.unitPriceCents,
+          optionsJson: {
+            options: line.options || [],
+            modifiers: line.modifiers || line.options || [],
+            optionIds: line.optionIds || line.modifierOptionIds || [],
+            specialInstructions: line.specialInstructions || "",
+            sendToKitchen: line.sendToKitchen !== false
+          }
+        }))
+      },
+      statusHistory: {
+        create: {
+          status: "PENDING",
+          note: "Submitted from POS register",
+          changedBy: user.id
+        }
+      }
+    },
+    include: {
+      customer: true,
+      location: true,
+      items: true,
+      statusHistory: { orderBy: { createdAt: "asc" } }
+    }
+  });
+  if (sessionId) {
+    await tx.posOrderSession.updateMany({
+      where: { id: sessionId, restaurantId },
+      data: { status: "SUBMITTED", orderId: order.id, submittedAt: new Date(), updatedByUserId: user.id }
+    });
+  }
+  const kitchenLineItems = quote.lineItemsJson.filter((line) => line.sendToKitchen !== false);
+  const receiptStartedAt = Date.now();
+  const receipt = kitchenLineItems.length ? await tx.posReceipt.create({
+    data: {
+      restaurantId,
+      locationId: quote.locationId,
+      deviceId,
+      sessionId,
+      orderId: order.id,
+      receiptNumber: randomReceiptNumber("POS"),
+      kind: "KITCHEN_TICKET",
+      payloadJson: receiptPayload({ order, quote: { lineItemsJson: kitchenLineItems } }),
+      createdByUserId: user.id
+    }
+  }) : null;
+  timing.kitchenReceiptMs = Date.now() - receiptStartedAt;
+  return { order, receipt };
+}
+
 export async function submitPosOrder({
   restaurantId,
   user,
@@ -974,95 +1071,20 @@ export async function submitPosOrder({
   if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409);
   if (quote.acceptedAt) throw httpError("POS quote has already been submitted.", 409);
   const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
-  const kitchenLineItems = quote.lineItemsJson.filter((line) => line.sendToKitchen !== false);
 
   const transactionStartedAt = Date.now();
-  let receiptMs = 0;
-  const result = await prisma.$transaction(async (tx) => {
-    const claimed = await tx.orderQuote.updateMany({
-      where: {
-        id: quote.id,
-        restaurantId,
-        acceptedAt: null,
-        voidedAt: null,
-        expiresAt: { gt: new Date() }
-      },
-      data: { acceptedAt: new Date() }
-    });
-    if (claimed.count !== 1) throw httpError("POS quote has already been submitted or expired.", 409);
-
-    const customer = await ensurePosCustomer(tx, restaurantId, quote.id, normalizedCustomer);
-    const orderNumber = await nextOrderNumber(tx, restaurantId);
-    const order = await tx.order.create({
-      data: {
-        restaurantId,
-        locationId: quote.locationId,
-        customerId: customer.id,
-        orderNumber,
-        type: quote.orderType,
-        status: "PENDING",
-        subtotalCents: quote.subtotalCents,
-        discountCents: quote.discountCents,
-        deliveryFeeCents: quote.deliveryFeeCents,
-        taxCents: quote.taxCents,
-        tipCents: quote.tipCents,
-        restaurantTipCents: quote.tipCents,
-        totalCents: quote.totalCents,
-        deliveryAddress: normalizedCustomer.deliveryAddress || null,
-        notes: String(notes || "").slice(0, 1000),
-        items: {
-          create: quote.lineItemsJson.map((line) => ({
-            menuItemId: line.menuItemId,
-            name: line.name,
-            quantity: line.quantity,
-            unitPriceCents: line.unitPriceCents,
-            optionsJson: {
-              options: line.options || [],
-              modifiers: line.modifiers || line.options || [],
-              optionIds: line.optionIds || line.modifierOptionIds || [],
-              specialInstructions: line.specialInstructions || "",
-              sendToKitchen: line.sendToKitchen !== false
-            }
-          }))
-        },
-        statusHistory: {
-          create: {
-            status: "PENDING",
-            note: "Submitted from POS register",
-            changedBy: user.id
-          }
-        }
-      },
-      include: {
-        customer: true,
-        location: true,
-        items: true,
-        statusHistory: { orderBy: { createdAt: "asc" } }
-      }
-    });
-    if (sessionId) {
-      await tx.posOrderSession.updateMany({
-        where: { id: sessionId, restaurantId },
-        data: { status: "SUBMITTED", orderId: order.id, submittedAt: new Date(), updatedByUserId: user.id }
-      });
-    }
-    const receiptStartedAt = Date.now();
-    const receipt = kitchenLineItems.length ? await tx.posReceipt.create({
-      data: {
-        restaurantId,
-        locationId: quote.locationId,
-        deviceId,
-        sessionId,
-        orderId: order.id,
-        receiptNumber: randomReceiptNumber("POS"),
-        kind: "KITCHEN_TICKET",
-        payloadJson: receiptPayload({ order, quote: { lineItemsJson: kitchenLineItems } }),
-        createdByUserId: user.id
-      }
-    }) : null;
-    receiptMs = Date.now() - receiptStartedAt;
-    return { order, receipt };
-  });
+  const transactionTiming = {};
+  const result = await prisma.$transaction((tx) => createPosOrderTransaction({
+    tx,
+    restaurantId,
+    user,
+    quote,
+    normalizedCustomer,
+    sessionId,
+    notes,
+    deviceId,
+    timing: transactionTiming
+  }));
   const dbTransactionMs = Date.now() - transactionStartedAt;
   const kdsStartedAt = Date.now();
   emitKitchenTicketCreated(result.order);
@@ -1078,7 +1100,7 @@ export async function submitPosOrder({
   });
   const performance = process.env.NODE_ENV === "production" ? undefined : {
     dbTransactionMs,
-    receiptMs,
+    receiptMs: transactionTiming.kitchenReceiptMs || 0,
     kdsMs,
     auditMs: Date.now() - auditStartedAt,
     serviceTotalMs: Date.now() - serviceStartedAt
@@ -1143,6 +1165,135 @@ export function cashSettlementAmounts(orderTotalCents, tenderedCents = null, alr
   };
 }
 
+async function settleCashOrderTransaction({
+  tx,
+  restaurantId,
+  user,
+  order,
+  device,
+  shift,
+  cashDrawer,
+  settlement,
+  cashTender,
+  timing = {}
+}) {
+  const existingPayment = order.payment;
+  const paidAt = new Date();
+  const paymentData = {
+    provider: "manual_cash",
+    status: "PAID",
+    amountCents: settlement.cashAppliedCents,
+    restaurantNetCents: settlement.cashAppliedCents,
+    driverTipCents: order.driverTipCents,
+    paidAt
+  };
+  const paymentStartedAt = Date.now();
+  let payment;
+  if (existingPayment) {
+    const claimed = await tx.payment.updateMany({
+      where: { id: existingPayment.id, status: { in: ["PENDING", "FAILED"] } },
+      data: paymentData
+    });
+    if (claimed.count !== 1) throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
+    payment = { ...existingPayment, ...paymentData };
+  } else {
+    payment = await tx.payment.create({
+      data: {
+        orderId: order.id,
+        ...paymentData
+      }
+    });
+  }
+  timing.legacyPaymentMs = Date.now() - paymentStartedAt;
+
+  const orderPaymentStartedAt = Date.now();
+  const orderPayment = await tx.restaurantOrderPayment.upsert({
+    where: { orderId: order.id },
+    update: {
+      restaurantId,
+      provider: "MANUAL",
+      status: "PAID",
+      paidAt,
+      totalCents: order.totalCents,
+      platformFeeCents: 0,
+      restaurantGrossCents: order.totalCents,
+      restaurantNetCents: order.totalCents,
+      restaurantTipCents: order.restaurantTipCents,
+      driverTipCents: order.driverTipCents,
+      quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender })
+    },
+    create: {
+      restaurantId,
+      orderId: order.id,
+      provider: "MANUAL",
+      status: "PAID",
+      subtotalCents: order.subtotalCents,
+      discountCents: order.discountCents,
+      taxableAmountCents: Math.max(0, order.subtotalCents - order.discountCents),
+      taxCents: order.taxCents,
+      deliveryFeeCents: order.deliveryFeeCents,
+      restaurantTipCents: order.restaurantTipCents,
+      driverTipCents: order.driverTipCents,
+      totalCents: order.totalCents,
+      platformFeeCents: 0,
+      restaurantGrossCents: order.totalCents,
+      restaurantNetCents: order.totalCents,
+      quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender }),
+      paidAt
+    }
+  });
+  timing.orderPaymentMs = Date.now() - orderPaymentStartedAt;
+
+  const ledgerStartedAt = Date.now();
+  const ledger = await tx.cashLedgerEntry.create({
+    data: {
+      restaurantId,
+      locationId: shift.locationId,
+      cashDrawerId: cashDrawer.id,
+      shiftId: shift.id,
+      orderId: order.id,
+      paymentId: payment.id,
+      actorUserId: user.id,
+      amountCents: settlement.cashAppliedCents,
+      entryType: "SALE_CASH",
+      note: `Cash payment for ${order.orderNumber}; tendered ${settlement.cashTenderedCents}; change ${settlement.changeDueCents}`
+    }
+  });
+  timing.cashLedgerMs = Date.now() - ledgerStartedAt;
+
+  const drawerBalanceStartedAt = Date.now();
+  await tx.cashDrawer.update({
+    where: { id: cashDrawer.id },
+    data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
+  });
+  timing.drawerBalanceMs = Date.now() - drawerBalanceStartedAt;
+
+  const receiptStartedAt = Date.now();
+  const receipt = await tx.posReceipt.create({
+    data: {
+      restaurantId,
+      locationId: shift.locationId,
+      deviceId: device.id,
+      orderId: order.id,
+      receiptNumber: randomReceiptNumber("CASH"),
+      kind: "CUSTOMER_RECEIPT",
+      payloadJson: receiptPayload({
+        order,
+        quote: { lineItemsJson: [] },
+        payment: {
+          ...payment,
+          cashTenderedCents: settlement.cashTenderedCents,
+          cashAppliedCents: settlement.cashAppliedCents,
+          changeDueCents: settlement.changeDueCents
+        }
+      }),
+      createdByUserId: user.id
+    }
+  });
+  timing.receiptMs = Date.now() - receiptStartedAt;
+  return { payment, orderPayment, ledger, receipt };
+}
+
 async function runCashPostCommitTasks({ restaurantId, user, device, cashDrawer, shift, order, paymentId, settlement }) {
   const startedAt = Date.now();
   const drawerStartedAt = Date.now();
@@ -1182,16 +1333,262 @@ async function runCashPostCommitTasks({ restaurantId, user, device, cashDrawer, 
   }
 }
 
-export async function cashPayment({
+async function recoverSettledCashQuote({ restaurantId, quoteId, locationId }) {
+  const audit = await prisma.auditLog.findFirst({
+    where: {
+      restaurantId,
+      action: "pos.cash.quote.settled",
+      entityType: "OrderQuote",
+      entityId: quoteId
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  const metadata = safeJson(audit?.metadataJson, {});
+  if (!metadata.orderId) return null;
+  const order = await prisma.order.findFirst({
+    where: {
+      id: metadata.orderId,
+      restaurantId,
+      ...(locationId ? { locationId } : { locationId: null })
+    },
+    include: {
+      customer: true,
+      location: true,
+      items: true,
+      statusHistory: { orderBy: { createdAt: "asc" } },
+      payment: true,
+      restaurantOrderPayment: true
+    }
+  });
+  if (!order?.payment || !order.restaurantOrderPayment) return null;
+  const [ledger, receipt] = await Promise.all([
+    metadata.ledgerId ? prisma.cashLedgerEntry.findFirst({ where: { id: metadata.ledgerId, restaurantId } }) : null,
+    metadata.receiptId ? prisma.posReceipt.findFirst({ where: { id: metadata.receiptId, restaurantId } }) : null
+  ]);
+  const settlement = safeJson(metadata.settlement, {});
+  return {
+    order,
+    payment: order.payment,
+    orderPayment: order.restaurantOrderPayment,
+    ledger,
+    receipt,
+    ...settlement,
+    amountReceivedCents: settlement.cashTenderedCents,
+    drawerRequest: safeJson(metadata.drawerRequest, {
+      requested: true,
+      physicalOpenRequested: false,
+      hardwareStatus: "ALREADY_DISPATCHED"
+    }),
+    recovered: true
+  };
+}
+
+async function cashPaymentFromQuote({
   restaurantId,
   user,
-  orderId,
+  quoteId,
+  customerJson = {},
+  notes = "",
   deviceId,
   fingerprint,
   amountCents = null,
   entitlementVerified = false,
   sessionDevice = null
 }) {
+  const serviceStartedAt = Date.now();
+  const entitlementStartedAt = Date.now();
+  if (!entitlementVerified) await assertPosFeature(restaurantId, "POST");
+  const entitlementMs = Date.now() - entitlementStartedAt;
+  const accessStartedAt = Date.now();
+  const [{ device, shift, cashDrawer }, quote] = await Promise.all([
+    requireCashRegisterAccess({ restaurantId, user, deviceId, fingerprint, verifiedDevice: sessionDevice }),
+    prisma.orderQuote.findFirst({ where: { id: quoteId, restaurantId } }),
+    assertPosPermission(user, restaurantId, POS_PERMISSION.SEND_TO_KITCHEN)
+  ]);
+  const locationId = shift.locationId || device.locationId || null;
+  const accessAndOrderMs = Date.now() - accessStartedAt;
+  if (!quote || quote.voidedAt) throw httpError("POS quote not found.", 404, { code: "POS_CASH_QUOTE_NOT_FOUND" });
+  if ((quote.locationId || null) !== locationId) {
+    throw httpError("POS quote does not belong to this register location.", 404, { code: "POS_CASH_QUOTE_NOT_FOUND" });
+  }
+  if (quote.deviceId && quote.deviceId !== device.id) {
+    throw httpError("POS quote belongs to a different register.", 403, { code: "POS_CASH_QUOTE_DEVICE_MISMATCH" });
+  }
+  if (quote.acceptedAt) {
+    const recovered = await recoverSettledCashQuote({ restaurantId, quoteId, locationId });
+    if (!recovered) throw httpError("POS quote has already been submitted.", 409, { code: "POS_CASH_QUOTE_ALREADY_SUBMITTED" });
+    const performance = process.env.NODE_ENV === "production" ? undefined : {
+      entitlementMs,
+      accessAndOrderMs,
+      dbTransactionMs: 0,
+      paymentSettlementMs: 0,
+      cashLedgerMs: 0,
+      drawerBalanceMs: 0,
+      receiptMs: 0,
+      drawerDispatchMs: 0,
+      kdsMs: 0,
+      serviceTotalMs: Date.now() - serviceStartedAt,
+      postCommit: "already-dispatched",
+      recovered: true
+    };
+    return { ...recovered, ...(performance ? { performance } : {}) };
+  }
+  if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409, { code: "POS_CASH_QUOTE_EXPIRED" });
+
+  const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
+  const settlement = cashSettlementAmounts(quote.totalCents, amountCents, 0);
+  const cashTender = {
+    tenderType: "CASH",
+    restaurantId,
+    locationId,
+    amountDueCents: settlement.amountDueCents,
+    tenderedCents: settlement.cashTenderedCents,
+    appliedCents: settlement.cashAppliedCents,
+    changeDueCents: settlement.changeDueCents,
+    cashierUserId: user.id,
+    shiftId: shift.id,
+    deviceId: device.id,
+    cashDrawerId: cashDrawer.id,
+    settledAt: new Date().toISOString()
+  };
+  const drawerRequest = { requested: true, physicalOpenRequested: false, hardwareStatus: "DISPATCHED" };
+
+  const transactionStartedAt = Date.now();
+  const transactionTiming = {};
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const orderResult = await createPosOrderTransaction({
+        tx,
+        restaurantId,
+        user,
+        quote,
+        normalizedCustomer,
+        sessionId: quote.sessionId || null,
+        notes,
+        deviceId: device.id,
+        timing: transactionTiming
+      });
+      const cashResult = await settleCashOrderTransaction({
+        tx,
+        restaurantId,
+        user,
+        order: orderResult.order,
+        device,
+        shift,
+        cashDrawer,
+        settlement,
+        cashTender,
+        timing: transactionTiming
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: user.id,
+          restaurantId,
+          action: "pos.cash.quote.settled",
+          entityType: "OrderQuote",
+          entityId: quote.id,
+          metadataJson: {
+            orderId: orderResult.order.id,
+            paymentId: cashResult.payment.id,
+            ledgerId: cashResult.ledger.id,
+            receiptId: cashResult.receipt.id,
+            settlement,
+            drawerRequest
+          }
+        }
+      });
+      return { order: orderResult.order, kitchenReceipt: orderResult.receipt, ...cashResult };
+    });
+  } catch (error) {
+    if (error?.code === "P2002") {
+      throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
+    }
+    if (error?.status === 409) {
+      const recovered = await recoverSettledCashQuote({ restaurantId, quoteId, locationId });
+      if (recovered) return recovered;
+    }
+    throw error;
+  }
+  const dbTransactionMs = Date.now() - transactionStartedAt;
+  const kdsStartedAt = Date.now();
+  emitKitchenTicketCreated(result.order);
+  const kdsMs = Date.now() - kdsStartedAt;
+  const drawerDispatchStartedAt = Date.now();
+  const postCommitTask = Promise.all([
+    runCashPostCommitTasks({
+      restaurantId,
+      user,
+      device,
+      cashDrawer,
+      shift,
+      order: result.order,
+      paymentId: result.payment.id,
+      settlement
+    }),
+    recordAudit({
+      actorUserId: user.id,
+      restaurantId,
+      action: "pos.order.submitted",
+      entityType: "Order",
+      entityId: result.order.id,
+      metadata: { quoteId, sessionId: quote.sessionId || null, totalCents: quote.totalCents }
+    })
+  ]);
+  void postCommitTask.catch((error) => {
+    console.error(JSON.stringify({ event: "pos.cash.post_commit.failed", code: error?.code || "POST_COMMIT_FAILED" }));
+  });
+  const performance = process.env.NODE_ENV === "production" ? undefined : {
+    entitlementMs,
+    accessAndOrderMs,
+    dbTransactionMs,
+    paymentSettlementMs: (transactionTiming.legacyPaymentMs || 0) + (transactionTiming.orderPaymentMs || 0),
+    cashLedgerMs: transactionTiming.cashLedgerMs || 0,
+    drawerBalanceMs: transactionTiming.drawerBalanceMs || 0,
+    receiptMs: (transactionTiming.kitchenReceiptMs || 0) + (transactionTiming.receiptMs || 0),
+    drawerDispatchMs: Date.now() - drawerDispatchStartedAt,
+    kdsMs,
+    serviceTotalMs: Date.now() - serviceStartedAt,
+    postCommit: "deferred"
+  };
+  if (performance) console.info(JSON.stringify({ event: "pos.cash.performance", ...performance }));
+  return {
+    ...result,
+    ...settlement,
+    amountReceivedCents: settlement.cashTenderedCents,
+    drawerRequest,
+    ...(performance ? { performance } : {})
+  };
+}
+
+export async function cashPayment({
+  restaurantId,
+  user,
+  orderId,
+  quoteId = null,
+  customerJson = {},
+  notes = "",
+  deviceId,
+  fingerprint,
+  amountCents = null,
+  entitlementVerified = false,
+  sessionDevice = null
+}) {
+  if (!orderId && quoteId) {
+    return cashPaymentFromQuote({
+      restaurantId,
+      user,
+      quoteId,
+      customerJson,
+      notes,
+      deviceId,
+      fingerprint,
+      amountCents,
+      entitlementVerified,
+      sessionDevice
+    });
+  }
+  if (!orderId) throw httpError("orderId or quoteId is required.", 400, { code: "POS_CASH_ORDER_REQUIRED" });
   const serviceStartedAt = Date.now();
   const entitlementStartedAt = Date.now();
   if (!entitlementVerified) await assertPosFeature(restaurantId, "POST");
@@ -1243,119 +1640,18 @@ export async function cashPayment({
 
   const transactionStartedAt = Date.now();
   const transactionTiming = {};
-  const result = await prisma.$transaction(async (tx) => {
-    const existingPayment = order.payment;
-    const paidAt = new Date();
-    const paymentData = {
-      provider: "manual_cash",
-      status: "PAID",
-      amountCents: settlement.cashAppliedCents,
-      restaurantNetCents: settlement.cashAppliedCents,
-      driverTipCents: order.driverTipCents,
-      paidAt
-    };
-    const paymentStartedAt = Date.now();
-    let payment;
-    if (existingPayment) {
-      const claimed = await tx.payment.updateMany({
-        where: { id: existingPayment.id, status: { in: ["PENDING", "FAILED"] } },
-        data: paymentData
-      });
-      if (claimed.count !== 1) throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
-      payment = { ...existingPayment, ...paymentData };
-    } else {
-      payment = await tx.payment.create({
-        data: {
-          orderId: order.id,
-          ...paymentData
-        }
-      });
-    }
-    transactionTiming.legacyPaymentMs = Date.now() - paymentStartedAt;
-    const orderPaymentStartedAt = Date.now();
-    const orderPayment = await tx.restaurantOrderPayment.upsert({
-      where: { orderId: order.id },
-      update: {
-        restaurantId,
-        provider: "MANUAL",
-        status: "PAID",
-        paidAt,
-        totalCents: order.totalCents,
-        platformFeeCents: 0,
-        restaurantGrossCents: order.totalCents,
-        restaurantNetCents: order.totalCents,
-        restaurantTipCents: order.restaurantTipCents,
-        driverTipCents: order.driverTipCents,
-        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender })
-      },
-      create: {
-        restaurantId,
-        orderId: order.id,
-        provider: "MANUAL",
-        status: "PAID",
-        subtotalCents: order.subtotalCents,
-        discountCents: order.discountCents,
-        taxableAmountCents: Math.max(0, order.subtotalCents - order.discountCents),
-        taxCents: order.taxCents,
-        deliveryFeeCents: order.deliveryFeeCents,
-        restaurantTipCents: order.restaurantTipCents,
-        driverTipCents: order.driverTipCents,
-        totalCents: order.totalCents,
-        platformFeeCents: 0,
-        restaurantGrossCents: order.totalCents,
-        restaurantNetCents: order.totalCents,
-        quoteJson: zeroPlatformFeeQuoteJson({ source: "POS_CASH", deviceId: device.id, cashTender }),
-        paidAt
-      }
-    });
-    transactionTiming.orderPaymentMs = Date.now() - orderPaymentStartedAt;
-    const ledgerStartedAt = Date.now();
-    const ledger = await tx.cashLedgerEntry.create({
-      data: {
-        restaurantId,
-        locationId: shift.locationId,
-        cashDrawerId: cashDrawer.id,
-        shiftId: shift.id,
-        orderId: order.id,
-        paymentId: payment.id,
-        actorUserId: user.id,
-        amountCents: settlement.cashAppliedCents,
-        entryType: "SALE_CASH",
-        note: `Cash payment for ${order.orderNumber}; tendered ${settlement.cashTenderedCents}; change ${settlement.changeDueCents}`
-      }
-    });
-    transactionTiming.cashLedgerMs = Date.now() - ledgerStartedAt;
-    const drawerBalanceStartedAt = Date.now();
-    await tx.cashDrawer.update({
-      where: { id: cashDrawer.id },
-      data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
-    });
-    transactionTiming.drawerBalanceMs = Date.now() - drawerBalanceStartedAt;
-    const receiptStartedAt = Date.now();
-    const receipt = await tx.posReceipt.create({
-      data: {
-        restaurantId,
-        locationId: shift.locationId,
-        deviceId: device.id,
-        orderId: order.id,
-        receiptNumber: randomReceiptNumber("CASH"),
-        kind: "CUSTOMER_RECEIPT",
-        payloadJson: receiptPayload({
-          order,
-          quote: { lineItemsJson: [] },
-          payment: {
-            ...payment,
-            cashTenderedCents: settlement.cashTenderedCents,
-            cashAppliedCents: settlement.cashAppliedCents,
-            changeDueCents: settlement.changeDueCents
-          }
-        }),
-        createdByUserId: user.id
-      }
-    });
-    transactionTiming.receiptMs = Date.now() - receiptStartedAt;
-    return { payment, orderPayment, ledger, receipt };
-  }).catch((error) => {
+  const result = await prisma.$transaction((tx) => settleCashOrderTransaction({
+    tx,
+    restaurantId,
+    user,
+    order,
+    device,
+    shift,
+    cashDrawer,
+    settlement,
+    cashTender,
+    timing: transactionTiming
+  })).catch((error) => {
     if (error?.code === "P2002") {
       throw httpError("This order is already paid.", 409, { code: "POS_CASH_ALREADY_PAID" });
     }

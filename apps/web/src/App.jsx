@@ -58,7 +58,7 @@ import {
   repeatPosCartLine,
   replacePosCartLineConfiguration
 } from "./apps/pos/cart.js";
-import { cashTenderInputToCents } from "./apps/pos/cashTender.js";
+import { cashTenderInputToCents, cashTenderSummary } from "./apps/pos/cashTender.js";
 import { filterPosMenuItems, preparePosMenuItems } from "./apps/pos/menuPerformance.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
@@ -8866,6 +8866,21 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   async function acceptCashPayment(amountCents) {
     if (cashPaymentInFlightRef.current) return;
+    const paymentQuote = lastOrder ? null : quote;
+    const orderTotalCents = Number(lastOrder?.totalCents ?? paymentQuote?.totalCents);
+    if (!lastOrder?.id && !paymentQuote?.id) {
+      setError("The server-verified total is still being prepared.");
+      return;
+    }
+    if (!Number.isSafeInteger(amountCents) || !Number.isSafeInteger(orderTotalCents)) {
+      setError("Enter a valid cash tender amount.");
+      return;
+    }
+    const localTender = cashTenderSummary(orderTotalCents, amountCents);
+    if (!localTender.covered) {
+      setError("Cash tender must cover the amount due.");
+      return;
+    }
     cashPaymentInFlightRef.current = true;
     cashPaymentStartedAtRef.current = posPerformanceNow();
     cashPaymentServerConfirmedAtRef.current = 0;
@@ -8876,16 +8891,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     setNotice("");
     dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
     try {
-      const paymentQuote = lastOrder ? null : (quote || await calculateQuote(cart, { trackCashPayment: true }));
-      const order = lastOrder || (paymentQuote ? await submitOrder({ preserveCart: true, quoteOverride: paymentQuote, refreshAfterSubmit: false, trackCashPayment: true }) : null);
-      if (!order?.id) throw new Error("The order could not be committed before payment.");
       posPerformanceMark("cash-payment-api-start");
       posPerformanceMeasure("cash-payment-pre-api-duration", "cash-payment-click", "cash-payment-api-start");
       cashPaymentRequestCountRef.current += 1;
       const payload = await posApi("/payments/cash", {
         method: "POST",
         body: {
-          orderId: order.id,
+          ...(lastOrder?.id ? { orderId: lastOrder.id } : {
+            quoteId: paymentQuote.id,
+            customer: { ...customer, tableNumber },
+            notes: posOperationalNotes(orderType, customer, tableNumber, notes)
+          }),
           amountCents
         }
       });
@@ -8895,6 +8911,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       if (import.meta.env?.DEV && payload.performance) {
         globalThis.console?.debug?.("[Loohar POS cash server perf]", payload.performance);
       }
+      const order = payload.order || lastOrder;
+      if (!order?.id) throw new Error("Cash was recorded, but the completed order could not be loaded.");
+      setLastOrder(order);
       setLastOrderReceiptKind("final");
       completeSuccessfulTransaction(order, payload);
     } catch (posError) {

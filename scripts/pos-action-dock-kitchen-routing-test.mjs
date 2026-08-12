@@ -89,7 +89,10 @@ assert.equal(restaurantRoutes.slice(restaurantRoutes.indexOf("const restaurantRo
 assert.ok(posService.includes("menuItemSendToKitchen(orderConfiguration.settingsJson, menuItem.id)"), "quote creation should resolve Kitchen eligibility on the server");
 assert.ok(posService.includes("sendToKitchen: line.sendToKitchen !== false"), "order items should snapshot Kitchen eligibility at commit");
 assert.ok(posService.includes("kitchenLineItems.length ? await tx.posReceipt.create"), "packaged-only orders should not create an empty persisted Kitchen ticket");
-assert.equal(posService.match(/emitKitchenTicketCreated\(result\.order\)/g)?.length, 1, "the post-commit path should emit at most one Kitchen-created event");
+const submittedOrderService = posService.slice(posService.indexOf("export async function submitPosOrder"), posService.indexOf("export async function holdPosOrder"));
+const atomicCashService = posService.slice(posService.indexOf("async function cashPaymentFromQuote"), posService.indexOf("export async function cashPayment"));
+assert.equal((submittedOrderService.match(/emitKitchenTicketCreated\(result\.order\)/g) || []).length, 1, "standard order submission should emit one post-commit Kitchen-created event");
+assert.equal((atomicCashService.match(/emitKitchenTicketCreated\(result\.order\)/g) || []).length, 1, "atomic cash checkout should emit one post-commit Kitchen-created event");
 assert.ok(kitchenRoutes.includes("orders.map(kdsOrder).filter((order) => order.items.length > 0)"), "Kitchen reconciliation should omit packaged-only orders");
 assert.ok(workflow.includes('kitchenOnly: receiptType === "KITCHEN_TICKET"'), "printed Kitchen tickets should filter lines while customer receipts keep all items");
 assert.ok(posService.includes("subtotalCents = normalizedItems.reduce"), "payment totals should continue to include every quoted line");

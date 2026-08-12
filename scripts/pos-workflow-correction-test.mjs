@@ -77,8 +77,9 @@ assert.equal(state.value, POS_WORKFLOW.PAYMENT_SELECTION, "failed payment should
 const cashBlock = app.slice(app.indexOf("async function acceptCashPayment"), app.indexOf("function openGuestCheck"));
 const successBlock = app.slice(app.indexOf("async function completeSuccessfulTransaction"), app.indexOf("async function sendCurrentOrderToKitchen"));
 const finishBlock = app.slice(app.indexOf("function finishPaidOrder"), app.indexOf("function beginNewOrder"));
-assert.equal(cashBlock.includes("lastOrder ||"), true, "payment retry should reuse the committed order and avoid duplicate Kitchen tickets");
-assert.equal(cashBlock.match(/submitOrder\(/g)?.length, 1, "cash flow should commit/send the order only once");
+assert.equal(cashBlock.includes("lastOrder?.id ? { orderId: lastOrder.id }"), true, "payment retry should reuse the committed order and avoid duplicate Kitchen tickets");
+assert.equal((cashBlock.match(/submitOrder\(/g) || []).length, 0, "cash flow should not issue a separate order request");
+assert.equal((cashBlock.match(/posApi\("\/payments\/cash"/g) || []).length, 1, "cash flow should use one authoritative settlement request");
 assert.equal(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true"), true, "successful payment should preserve the active order while change is visible");
 assert.equal(successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), true, "successful payment should enter the confirmation state");
 assert.equal(finishBlock.includes("resetCurrentOrder()"), true, "Done should clear the active cart");

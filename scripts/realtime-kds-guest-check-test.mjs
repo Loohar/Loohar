@@ -58,11 +58,17 @@ function testDeduplication() {
 }
 
 function testAfterCommit() {
-  const transactionStart = pos.indexOf("const result = await prisma.$transaction");
-  const emitAt = pos.indexOf("emitKitchenTicketCreated(result.order)");
-  const transactionReturn = pos.indexOf("return { order, receipt };", transactionStart);
-  check(transactionStart >= 0 && transactionReturn > transactionStart && emitAt > transactionReturn, "POS publishes the Kitchen event only after its transaction resolves");
-  check(!pos.slice(transactionStart, transactionReturn).includes("emitKitchenTicketCreated"), "No Kitchen event is emitted inside the database transaction");
+  const flows = [
+    ["standard POS submission", pos.slice(pos.indexOf("export async function submitPosOrder"), pos.indexOf("export async function holdPosOrder"))],
+    ["atomic cash checkout", pos.slice(pos.indexOf("async function cashPaymentFromQuote"), pos.indexOf("export async function cashPayment"))]
+  ];
+  for (const [label, flow] of flows) {
+    const transactionStart = flow.indexOf("prisma.$transaction");
+    const transactionResolved = flow.indexOf("const dbTransactionMs", transactionStart);
+    const emitAt = flow.indexOf("emitKitchenTicketCreated(result.order)");
+    check(transactionStart >= 0 && transactionResolved > transactionStart && emitAt > transactionResolved, `${label} publishes the Kitchen event only after its transaction resolves`);
+    check(!flow.slice(transactionStart, transactionResolved).includes("emitKitchenTicketCreated"), `${label} does not emit a Kitchen event inside the database transaction`);
+  }
   check(includesAll(realtime, ["kitchen.ticket.created.v1", "eventId: crypto.randomUUID()", "schemaVersion: 1"]), "Kitchen created events are versioned and uniquely identified");
 }
 

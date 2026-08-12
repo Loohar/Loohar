@@ -4093,15 +4093,7 @@ textarea {
   }
 
   .pos-pin-dots span {
-    @apply h-4 w-4 rounded-full border-2 border-slate-300 bg-white;
-  }
-
-  .pos-pin-dots span.required {
-    @apply border-slate-500;
-  }
-
-  .pos-pin-dots span.filled {
-    @apply border-ink bg-ink;
+    @apply h-4 w-4 rounded-full bg-ink;
   }
 
   .pos-pin-keypad {

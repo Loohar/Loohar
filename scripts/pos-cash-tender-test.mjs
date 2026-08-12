@@ -81,13 +81,15 @@ assert.ok(paymentScreen.includes("disabled={!quoteReady || !canAcceptCash || !te
 assert.ok(screens.includes('success ? "Done" : "Try another method"'), "cash confirmation should require Done before returning home");
 
 const cashService = sectionBetween(posService, "export async function cashPayment", "export async function cardPaymentIntent");
+const cashTransaction = sectionBetween(posService, "async function settleCashOrderTransaction", "async function runCashPostCommitTasks");
+const cashQuoteService = sectionBetween(posService, "async function cashPaymentFromQuote", "export async function cashPayment");
 for (const value of ["restaurantId", "locationId", "requireCashRegisterAccess", "cashSettlementAmounts", "cashTender", "cashAppliedCents", "changeDueCents"]) {
-  assert.ok(cashService.includes(value), `cash settlement should preserve and validate ${value}`);
+  assert.ok(`${cashService}\n${cashQuoteService}`.includes(value), `cash settlement should preserve and validate ${value}`);
 }
-assert.ok(cashService.includes("tx.payment.updateMany") && cashService.includes('code: "POS_CASH_ALREADY_PAID"'), "cash settlement should atomically prevent duplicate payment");
-assert.ok(cashService.includes('error?.code === "P2002"'), "concurrent cash creation should map uniqueness conflicts to already paid");
-assert.ok(cashService.includes('entryType: "SALE_CASH"') && cashService.includes("settlement.cashAppliedCents"), "cash ledger should record only the applied amount");
-assert.ok(cashService.indexOf("runCashPostCommitTasks") > cashService.indexOf("prisma.$transaction"), "drawer requests should dispatch only after committed settlement");
+assert.ok(cashTransaction.includes("tx.payment.updateMany") && cashTransaction.includes('code: "POS_CASH_ALREADY_PAID"'), "cash settlement should atomically prevent duplicate payment");
+assert.ok(cashService.includes('error?.code === "P2002"') && cashQuoteService.includes('error?.code === "P2002"'), "concurrent cash creation should map uniqueness conflicts to already paid");
+assert.ok(cashTransaction.includes('entryType: "SALE_CASH"') && cashTransaction.includes("settlement.cashAppliedCents"), "cash ledger should record only the applied amount");
+assert.ok(cashQuoteService.indexOf("runCashPostCommitTasks") > cashQuoteService.indexOf("prisma.$transaction"), "drawer requests should dispatch only after committed settlement");
 
 for (const reason of ["COMPLETED_CASH_SALE", "MANAGER_AUTHORIZED_OPEN", "CASH_MANAGEMENT"]) {
   assert.ok(hardwareService.includes(reason), `drawer hook should authorize ${reason}`);
@@ -98,7 +100,8 @@ assert.ok(hardwareService.includes('action: "pos.cash-drawer.open.requested"'), 
 const acceptCashBlock = sectionBetween(app, "async function acceptCashPayment", "function openGuestCheck");
 const successBlock = sectionBetween(app, "async function completeSuccessfulTransaction", "async function sendCurrentOrderToKitchen");
 const finishBlock = sectionBetween(app, "function finishPaidOrder", "function beginNewOrder");
-assert.equal(acceptCashBlock.match(/submitOrder\(/g)?.length, 1, "cash retry should not create a duplicate order or KDS ticket");
+assert.equal((acceptCashBlock.match(/submitOrder\(/g) || []).length, 0, "cash completion should not issue a separate order request");
+assert.equal((acceptCashBlock.match(/posApi\("\/payments\/cash"/g) || []).length, 1, "cash completion should submit one authoritative settlement request");
 assert.ok(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true") && !successBlock.includes("resetCurrentOrder()"), "change should remain visible before cart reset");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should clear temporary state and return Register Home");
 assert.equal(acceptCashBlock.includes("resetCurrentOrder()"), false, "failed cash settlement should preserve the cart for retry");
