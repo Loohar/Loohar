@@ -27,6 +27,7 @@ import {
   WifiOff,
   X
 } from "lucide-react";
+import { applyPosPinKey, isPosPinSubmittable, POS_PIN_MAX_LENGTH, POS_PIN_MIN_LENGTH } from "./pinKeypad.js";
 import {
   applyCashKey,
   cashTenderCentsToInput,
@@ -57,23 +58,24 @@ export function PosScreenHeader({ eyebrow, title, detail, onBack, actions }) {
   );
 }
 
-export function PosBootScreen({ restaurantName = "Restaurant" }) {
+export function PosBootScreen({ restaurantName = "Restaurant", stage = "Connecting to register..." }) {
   return (
     <section className="pos-boot-screen" aria-live="polite" aria-busy="true">
       <div className="pos-boot-mark"><Store size={30} /></div>
-      <h2>Preparing {restaurantName} POS</h2>
-      <p>Loading this register, menu, shift, and payment readiness.</p>
+      <h2>{stage}</h2>
+      <p>Preparing {restaurantName} POS. This should only take a moment.</p>
       <div className="pos-boot-lines" aria-hidden="true"><span /><span /><span /></div>
     </section>
   );
 }
 
-export function PosOfflineScreen({ hasDraft, onRetry }) {
+export function PosOfflineScreen({ hasDraft, title = "Register is offline", message = "", developmentHint = "", onRetry }) {
   return (
     <section className="pos-centered-screen" role="status">
       <WifiOff size={40} />
-      <h2>Register is offline</h2>
-      <p>{hasDraft ? "Your active order is preserved on this device. Reconnect before quoting, payment, or Kitchen submission." : "Reconnect to the Loohar API before starting an order."}</p>
+      <h2>{title}</h2>
+      <p>{message || (hasDraft ? "Your active order is preserved on this device. Reconnect before quoting, payment, or Kitchen submission." : "Reconnect to the Loohar API before starting an order.")}</p>
+      {developmentHint ? <small className="pos-recovery-development-hint">{developmentHint}</small> : null}
       <button className="button-primary" type="button" onClick={onRetry}><RefreshCw size={18} />Try again</button>
     </section>
   );
@@ -97,23 +99,55 @@ export function RegisterLockScreen({ restaurant, device, shift, online, now, onB
   );
 }
 
-export function CashierPinScreen({ pin, setPin, error, lockedUntil, saving, onSubmit, onCancel }) {
-  const disabled = saving || pin.length < 4 || Boolean(lockedUntil);
+const pinKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "backspace", "0", "clear"];
+
+export function CashierPinScreen({ pin, setPin, error, lockedUntil, saving, onSubmit, onCancel, minLength = POS_PIN_MIN_LENGTH, maxLength = POS_PIN_MAX_LENGTH }) {
+  const disabled = saving || !isPosPinSubmittable(pin, minLength, maxLength) || Boolean(lockedUntil);
+  const applyKey = (key) => {
+    if (saving || lockedUntil) return;
+    setPin((current) => applyPosPinKey(current, key, maxLength));
+  };
+  const handleKeyDown = (event) => {
+    if (/^\d$/.test(event.key)) {
+      event.preventDefault();
+      applyKey(event.key);
+    } else if (event.key === "Backspace") {
+      event.preventDefault();
+      applyKey("backspace");
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+    }
+  };
   return (
     <section className="pos-pin-screen">
-      <LockKeyhole size={38} />
-      <h2>Cashier sign in</h2>
-      <p>Enter your personal POS PIN. Five failed attempts temporarily lock this account.</p>
-      {error ? <div className="pos-alert" role="alert">{error}</div> : null}
-      {lockedUntil ? <div className="pos-alert" role="alert">PIN entry is locked until {new Date(lockedUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</div> : null}
-      <form className="pos-pin-form" onSubmit={onSubmit}>
-        <label>
-          <span>POS PIN</span>
-          <input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="off" type="password" name="pos-pin" aria-label="POS PIN" autoFocus />
-        </label>
-        <button className="button-primary" type="submit" disabled={disabled}><UnlockKeyhole size={18} />{saving ? "Checking..." : "Unlock register"}</button>
-        <button className="button-muted" type="button" onClick={onCancel}>Cancel</button>
-      </form>
+      <div className="pos-pin-layout">
+        <div className="pos-pin-intro">
+          <span className="pos-pin-icon"><LockKeyhole size={32} /></span>
+          <div><h2>Cashier sign in</h2><p>Enter your personal POS PIN</p></div>
+          <small>{minLength}–{maxLength} digits. Five failed attempts temporarily lock this account.</small>
+          {error ? <div className="pos-alert" role="alert">{error}</div> : null}
+          {lockedUntil ? <div className="pos-alert" role="alert">PIN entry is locked until {new Date(lockedUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</div> : null}
+        </div>
+        <form className="pos-pin-form" onSubmit={onSubmit} onKeyDown={handleKeyDown}>
+          <div className="pos-pin-dots" role="status" aria-label={`${pin.length} of ${minLength} to ${maxLength} PIN digits entered`}>
+            {Array.from({ length: maxLength }, (_, index) => <span className={index < pin.length ? "filled" : index < minLength ? "required" : "optional"} key={index} aria-hidden="true" />)}
+          </div>
+          <div className="pos-pin-keypad" aria-label="POS PIN keypad">
+            {pinKeys.map((key, index) => {
+              const isBackspace = key === "backspace";
+              const isClear = key === "clear";
+              return (
+                <button className={isBackspace || isClear ? "utility" : "digit"} type="button" onClick={() => applyKey(key)} disabled={saving || Boolean(lockedUntil) || ((isBackspace || isClear) && !pin.length)} aria-label={isBackspace ? "Delete last PIN digit" : isClear ? "Clear PIN" : `PIN digit ${key}`} autoFocus={index === 0} key={key}>
+                  {isBackspace ? <Delete size={22} /> : isClear ? "Clear" : key}
+                </button>
+              );
+            })}
+          </div>
+          <button className="button-primary pos-pin-unlock" type="submit" disabled={disabled}><UnlockKeyhole size={18} />{saving ? "Checking..." : "Unlock register"}</button>
+          <button className="button-muted pos-pin-cancel" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
+        </form>
+      </div>
     </section>
   );
 }
@@ -511,13 +545,14 @@ export function OrderCompleteScreen({ order, onHome, onNewOrder, onPrint, printL
   );
 }
 
-export function RecoveryScreen({ message, onRetry, onLock }) {
+export function RecoveryScreen({ title = "Register recovery", message, developmentHint = "", retrying = false, onRetry, onLock }) {
   return (
     <section className="pos-centered-screen failure" role="alert">
       <RefreshCw size={42} />
-      <h2>Register recovery</h2>
+      <h2>{title}</h2>
       <p>{message || "The last action could not be confirmed. Retry safely before creating another payment or order."}</p>
-      <div className="pos-workflow-actions"><button className="button-primary" type="button" onClick={onRetry}>Retry</button><button className="button-muted" type="button" onClick={onLock}>Lock register</button></div>
+      {developmentHint ? <small className="pos-recovery-development-hint">{developmentHint}</small> : null}
+      <div className="pos-workflow-actions"><button className="button-primary" type="button" onClick={onRetry} disabled={retrying}>{retrying ? "Connecting..." : "Retry"}</button><button className="button-muted" type="button" onClick={onLock}>Lock register</button></div>
     </section>
   );
 }

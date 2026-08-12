@@ -1,4 +1,5 @@
 import { clearSession, getAccessToken, getRefreshToken, getSessionRevision, storeSession } from "../shared/auth.js";
+import { API_HEALTH_TIMEOUT_MS, DEFAULT_API_TIMEOUT_MS, fetchWithTimeout } from "./networkRequest.js";
 
 const isDev = import.meta.env.DEV;
 const localDevApiOrigin = [("http" + ":"), "", ("local" + "host")].join("/") + ":5001";
@@ -74,13 +75,13 @@ async function refreshStoredSession() {
   if (refreshPromise) return refreshPromise;
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
-  refreshPromise = fetch(`${API_URL}${apiPath("/api/auth/refresh")}`, {
+  refreshPromise = fetchWithTimeout(`${API_URL}${apiPath("/api/auth/refresh")}`, {
     method: "POST",
     credentials: "include",
     cache: "no-store",
     body: JSON.stringify({ refreshToken }),
     headers: { "Content-Type": "application/json" }
-  })
+  }, DEFAULT_API_TIMEOUT_MS)
     .then(async (response) => {
       const payload = await parseApiError(response);
       if (!response.ok) throw createApiError(response, payload);
@@ -133,19 +134,21 @@ async function performApiRequest(path, options = {}) {
   delete requestOptions.skipAuth;
   delete requestOptions.skipDedupe;
   delete requestOptions.token;
-  const response = await fetch(url, requestOptions);
+  delete requestOptions.timeoutMs;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
+  const response = await fetchWithTimeout(url, requestOptions, timeoutMs);
 
   if (!response.ok) {
     if (response.status === 401 && options.authRetry !== false && !options.skipAuth && !isRefreshRequest(path)) {
       const refreshed = await refreshStoredSession().catch(() => null);
       if (refreshed?.accessToken) {
-        const retryResponse = await fetch(url, {
+        const retryResponse = await fetchWithTimeout(url, {
           ...requestOptions,
           headers: {
             ...requestOptions.headers,
             ...authHeaders(refreshed.accessToken)
           }
-        });
+        }, timeoutMs);
         if (retryResponse.ok) {
           if (retryResponse.status === 204) return null;
           return retryResponse.json();
@@ -182,11 +185,14 @@ async function runApiHealthProbe() {
   const inferredCandidates = API_URL.endsWith("/api")
     ? [`${API_URL}/health`, `${API_ORIGIN}/health`]
     : [`${API_URL}/api/health`, `${API_URL}/health`];
-  const candidates = API_HEALTH_URL ? [API_HEALTH_URL, ...inferredCandidates] : inferredCandidates;
+  const candidates = [...new Set(API_HEALTH_URL ? [API_HEALTH_URL, ...inferredCandidates] : inferredCandidates)];
+  const deadline = Date.now() + API_HEALTH_TIMEOUT_MS;
   let lastError;
   for (const url of candidates) {
     try {
-      const response = await fetch(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } });
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw lastError || new Error("API health check timed out.");
+      const response = await fetchWithTimeout(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } }, Math.min(3000, remainingMs));
       if (!response.ok) throw new Error(`Health check failed with ${response.status}`);
       const payload = await response.json();
       return payload;

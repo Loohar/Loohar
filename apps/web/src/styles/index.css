@@ -3948,6 +3948,10 @@ textarea {
     @apply bg-amber-100 text-amber-800;
   }
 
+  .pos-workflow-status .degraded {
+    @apply bg-rose-100 text-rose-700;
+  }
+
   .pos-workflow-topline-actions,
   .pos-workflow-header-actions,
   .pos-workflow-actions {
@@ -4021,6 +4025,10 @@ textarea {
     @apply text-rose-600;
   }
 
+  .pos-recovery-development-hint {
+    @apply max-w-xl rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold leading-5 text-amber-900;
+  }
+
   .pos-lock-screen {
     @apply flex min-h-[620px] w-full flex-col items-center justify-between gap-8 rounded-md border border-line bg-ink px-6 py-10 text-center text-white shadow-soft transition hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-mint/30;
   }
@@ -4059,8 +4067,59 @@ textarea {
     @apply min-h-12 rounded-md bg-white px-6 py-3 font-black text-ink;
   }
 
+  .pos-pin-layout {
+    @apply grid w-full max-w-md gap-5;
+  }
+
+  .pos-pin-intro {
+    @apply grid justify-items-center gap-2;
+  }
+
+  .pos-pin-intro p,
+  .pos-pin-intro small {
+    @apply text-sm font-semibold leading-5 text-slate-500;
+  }
+
+  .pos-pin-icon {
+    @apply grid h-14 w-14 place-items-center rounded-md bg-mint/10 text-mint;
+  }
+
   .pos-pin-form {
-    @apply grid w-full max-w-sm gap-3;
+    @apply grid w-full gap-3;
+  }
+
+  .pos-pin-dots {
+    @apply flex min-h-8 items-center justify-center gap-2;
+  }
+
+  .pos-pin-dots span {
+    @apply h-4 w-4 rounded-full border-2 border-slate-300 bg-white;
+  }
+
+  .pos-pin-dots span.required {
+    @apply border-slate-500;
+  }
+
+  .pos-pin-dots span.filled {
+    @apply border-ink bg-ink;
+  }
+
+  .pos-pin-keypad {
+    @apply grid grid-cols-3 gap-2;
+  }
+
+  .pos-pin-keypad button {
+    @apply grid min-h-16 place-items-center rounded-md border border-line bg-white text-xl font-black text-ink shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
+    touch-action: manipulation;
+  }
+
+  .pos-pin-keypad button.utility {
+    @apply bg-slate-100 text-sm text-slate-600;
+  }
+
+  .pos-pin-unlock,
+  .pos-pin-cancel {
+    @apply min-h-12 justify-center;
   }
 
   .pos-pin-form label,
@@ -4070,10 +4129,6 @@ textarea {
   .pos-cash-entry label,
   .pos-payment-method label {
     @apply grid gap-1.5 text-left text-sm font-bold text-slate-600;
-  }
-
-  .pos-pin-form input {
-    @apply h-16 text-center text-3xl tracking-[0.5em];
   }
 
   .pos-home-grid {
@@ -4652,6 +4707,10 @@ textarea {
       padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
     }
 
+    .pos-enterprise-register.pin-active {
+      padding-bottom: 0;
+    }
+
     .pos-workflow-topline {
       position: sticky;
       top: 0;
@@ -4725,6 +4784,50 @@ textarea {
       padding-bottom: calc(1rem + env(safe-area-inset-bottom));
       padding-left: calc(1rem + env(safe-area-inset-left));
       box-shadow: none;
+    }
+
+    .pos-pin-screen {
+      justify-content: flex-start;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-top: 0.75rem;
+    }
+
+    .pos-pin-layout {
+      max-width: 360px;
+      gap: 0.75rem;
+    }
+
+    .pos-pin-intro {
+      grid-template-columns: auto minmax(0, 1fr);
+      justify-items: start;
+      gap: 0.25rem 0.75rem;
+      text-align: left;
+    }
+
+    .pos-pin-intro small,
+    .pos-pin-intro .pos-alert {
+      grid-column: 1 / -1;
+    }
+
+    .pos-pin-icon {
+      grid-row: 1;
+      height: 48px;
+      width: 48px;
+    }
+
+    .pos-pin-intro h2 {
+      font-size: 1.25rem;
+      line-height: 1.5rem;
+    }
+
+    .pos-pin-keypad button {
+      min-height: 56px;
+    }
+
+    .pos-pin-dots span {
+      height: 14px;
+      width: 14px;
     }
 
     .pos-workflow-header {
@@ -5062,7 +5165,6 @@ textarea {
       min-height: 52px;
     }
 
-    .pos-pin-form input,
     .pos-setup-fields input,
     .pos-setup-fields textarea,
     .pos-modifier-instructions textarea {
@@ -5226,6 +5328,57 @@ textarea {
       border-inline: 0;
       border-radius: 0;
       box-shadow: none;
+    }
+
+    .pos-pin-screen {
+      padding: 0.5rem;
+      padding-right: calc(0.5rem + env(safe-area-inset-right));
+      padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+      padding-left: calc(0.5rem + env(safe-area-inset-left));
+    }
+
+    .pos-pin-layout {
+      max-width: 760px;
+      grid-template-columns: minmax(200px, 0.8fr) minmax(300px, 1fr);
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .pos-pin-intro {
+      justify-items: start;
+      text-align: left;
+    }
+
+    .pos-pin-intro h2 {
+      font-size: 1.5rem;
+      line-height: 1.75rem;
+    }
+
+    .pos-pin-form {
+      grid-template-columns: 1fr 1fr;
+      gap: 0.375rem;
+    }
+
+    .pos-pin-dots,
+    .pos-pin-keypad {
+      grid-column: 1 / -1;
+    }
+
+    .pos-pin-dots {
+      min-height: 24px;
+    }
+
+    .pos-pin-keypad {
+      gap: 0.375rem;
+    }
+
+    .pos-pin-keypad button {
+      min-height: 44px;
+    }
+
+    .pos-pin-unlock,
+    .pos-pin-cancel {
+      min-height: 44px;
     }
 
     .pos-home-grid {

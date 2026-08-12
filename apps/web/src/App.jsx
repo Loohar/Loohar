@@ -3216,8 +3216,8 @@ function PosChunkFallback({ restaurantName = "Restaurant" }) {
   return (
     <section className="pos-boot-screen" aria-live="polite" aria-busy="true">
       <div className="pos-boot-mark"><Store size={30} /></div>
-      <h2>Preparing {restaurantName} POS</h2>
-      <p>Loading register screens.</p>
+      <h2>Loading register screens...</h2>
+      <p>Opening {restaurantName} POS.</p>
       <div className="pos-boot-lines" aria-hidden="true"><span /><span /><span /></div>
     </section>
   );
@@ -7815,6 +7815,34 @@ const POS_MENU_STATUS = Object.freeze({
   ERROR: "ERROR",
   ENTITLEMENT_DENIED: "ENTITLEMENT_DENIED"
 });
+const POS_STARTUP_TIMEOUT_MS = 8000;
+
+function posPerformanceNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function recordPosStartupTiming(name, startedAt) {
+  if (!import.meta.env?.DEV) return;
+  const durationMs = Math.max(0, Math.round(posPerformanceNow() - startedAt));
+  globalThis.__LOOHAR_POS_STARTUP_TIMINGS__ = {
+    ...(globalThis.__LOOHAR_POS_STARTUP_TIMINGS__ || {}),
+    [name]: durationMs
+  };
+  globalThis.console?.debug?.("[Loohar POS startup]", name, `${durationMs}ms`);
+}
+
+function isPosConnectionFailure(error) {
+  const code = String(error?.payload?.code || error?.code || "");
+  const status = Number(error?.status || error?.payload?.status || 0);
+  return code === "API_REQUEST_TIMEOUT"
+    || (!status && ["AbortError", "NetworkError", "TimeoutError", "TypeError"].includes(String(error?.name || "")));
+}
+
+function posStartupFailureMessage(error) {
+  return isPosConnectionFailure(error)
+    ? "The register could not reach the server. Check your connection and try again."
+    : error?.message || "The register could not finish starting. Retry safely.";
+}
 
 function emptyPosMenuState() {
   return {
@@ -8075,6 +8103,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [lastOrder, setLastOrder] = useState(null);
   const [lastOrderReceiptKind, setLastOrderReceiptKind] = useState("guest");
   const [loading, setLoading] = useState(false);
+  const [startupStage, setStartupStage] = useState("Connecting to register...");
+  const [startupConnectionFailed, setStartupConnectionFailed] = useState(false);
+  const [connectionDegraded, setConnectionDegraded] = useState(false);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -8093,6 +8124,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [modifierInstructions, setModifierInstructions] = useState("");
   const [modifierError, setModifierError] = useState("");
   const inflightLoadRef = useRef(null);
+  const startupAbortRef = useRef(null);
+  const inflightOrderListsRef = useRef(null);
   const posMenuSequenceRef = useRef(0);
   const acceptedPosMenuSequenceRef = useRef(0);
   const loadedOnceRef = useRef(false);
@@ -8147,8 +8180,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   async function loadPos(options = {}) {
     if (!apiOnline || !token || !posBasePath) return;
-    if (inflightLoadRef.current) return inflightLoadRef.current;
+    if (inflightLoadRef.current && !startupAbortRef.current?.signal.aborted) return inflightLoadRef.current;
+    if (startupAbortRef.current?.signal.aborted) inflightLoadRef.current = null;
     posPerformanceMark("pos-route-start");
+    const startupStartedAt = posPerformanceNow();
     const requestSequence = posMenuSequenceRef.current + 1;
     posMenuSequenceRef.current = requestSequence;
     const requestId = `${restaurantKey || "restaurant"}:${requestSequence}:${Date.now()}`;
@@ -8162,37 +8197,37 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       error: null
     }));
     if (!options.silent) setLoading(true);
+    setStartupStage("Connecting to register...");
+    setStartupConnectionFailed(false);
     setError("");
-    inflightLoadRef.current = (async () => {
+    const controller = new globalThis.AbortController();
+    startupAbortRef.current = controller;
+    const startupRequest = (async () => {
+      const configStartedAt = posPerformanceNow();
+      const configPromise = posApi("/config", { signal: controller.signal, timeoutMs: POS_STARTUP_TIMEOUT_MS })
+        .then((payload) => {
+          recordPosStartupTiming("registerDeviceShiftMs", configStartedAt);
+          recordPosStartupTiming("restaurantLocationMs", configStartedAt);
+          recordPosStartupTiming("paymentReadinessMs", configStartedAt);
+          return payload;
+        });
+      const menuStartedAt = posPerformanceNow();
+      const menuOutcomePromise = posApi("/menu", {
+        signal: controller.signal,
+        timeoutMs: POS_STARTUP_TIMEOUT_MS,
+        headers: { "x-loohar-pos-request-id": requestId }
+      }).then(
+        (payload) => {
+          recordPosStartupTiming("menuModifierMs", menuStartedAt);
+          return { payload, error: null };
+        },
+        (menuError) => ({ payload: null, error: menuError })
+      );
       try {
-        let configPayload;
-        let menuPayload;
-        try {
-          const bootstrapPayload = await posApi("/bootstrap", { headers: { "x-loohar-pos-request-id": requestId } });
-          configPayload = bootstrapPayload.config;
-          menuPayload = bootstrapPayload.menu;
-        } catch (bootstrapError) {
-          const status = Number(bootstrapError?.status || bootstrapError?.payload?.status || 0);
-          if (![404, 405].includes(status)) throw bootstrapError;
-          [configPayload, menuPayload] = await Promise.all([
-            posApi("/config"),
-            posApi("/menu", { headers: { "x-loohar-pos-request-id": requestId } })
-          ]);
-        }
+        setStartupStage("Loading register...");
+        const configPayload = await configPromise;
+        if (controller.signal.aborted) return;
         posPerformanceMark("pos-config-ready");
-        posPerformanceMark("pos-menu-ready");
-        if (requestSequence < acceptedPosMenuSequenceRef.current) {
-          debugPosMenu("stale-response-rejected", { requestSequence, acceptedSequence: acceptedPosMenuSequenceRef.current });
-          return;
-        }
-        const normalizedMenu = normalizePosMenuPayload(menuPayload);
-        const expectedRestaurantId = configPayload?.restaurant?.id || restaurantId || user?.restaurantId || "";
-        if (normalizedMenu.tenantId && expectedRestaurantId && normalizedMenu.tenantId !== expectedRestaurantId) {
-          const staleError = new Error("Stale POS menu response was rejected.");
-          staleError.code = "POS_MENU_TENANT_MISMATCH";
-          throw staleError;
-        }
-        acceptedPosMenuSequenceRef.current = requestSequence;
         setConfig(configPayload);
         setLocationId((current) => current || configPayload.device?.locationId || configPayload.locations?.[0]?.id || "");
         setDeviceForm((current) => ({
@@ -8202,28 +8237,6 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           cardPaymentsEnabled: configPayload.device?.cardPaymentsEnabled ?? current.cardPaymentsEnabled,
           locationId: configPayload.device?.locationId || current.locationId || configPayload.locations?.[0]?.id || ""
         }));
-        setPosMenuState((current) => {
-          const nextStatus = normalizedMenu.itemCount > 0 ? POS_MENU_STATUS.SUCCESS : POS_MENU_STATUS.EMPTY;
-          return {
-            ...current,
-            status: nextStatus,
-            categories: normalizedMenu.categories,
-            lastSuccessfulCategories: normalizedMenu.categories,
-            itemCount: normalizedMenu.itemCount,
-            lastSuccessfulItemCount: normalizedMenu.itemCount,
-            menuVersion: normalizedMenu.menuVersion,
-            tenantId: normalizedMenu.tenantId,
-            locationId: normalizedMenu.locationId,
-            availabilitySummary: normalizedMenu.availabilitySummary,
-            menuDiagnostics: normalizedMenu.menuDiagnostics,
-            acceptedSequence: requestSequence,
-            requestId,
-            loadedAt: normalizedMenu.generatedAt,
-            error: null,
-            refreshError: null
-          };
-        });
-        debugPosMenu("response-accepted", { requestSequence, requestId, itemCount: normalizedMenu.itemCount, menuVersion: normalizedMenu.menuVersion });
         if (configPayload.device?.id) {
           setDeviceId((current) => current === configPayload.device.id ? current : configPayload.device.id);
           if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
@@ -8238,12 +8251,73 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           });
         }
         loadedOnceRef.current = true;
+        setConnectionDegraded(false);
         posPerformanceMark("pos-interactive");
-        posPerformanceMeasure("pos-auth-duration", "pos-route-start", "pos-config-ready");
-        posPerformanceMeasure("pos-config-duration", "pos-route-start", "pos-config-ready");
-        posPerformanceMeasure("pos-menu-duration", "pos-route-start", "pos-menu-ready");
-        posPerformanceMeasure(kioskOnly ? "kiosk-interactive-duration" : "pos-interactive-duration", "pos-route-start", "pos-interactive");
+        recordPosStartupTiming("criticalRegisterReadyMs", startupStartedAt);
+
+        setStartupStage("Loading menu...");
+        const menuOutcome = await menuOutcomePromise;
+        if (controller.signal.aborted) return;
+        if (menuOutcome.error) {
+          const menuError = menuOutcome.error;
+          const entitlementDenied = isPosEntitlementDenied(menuError);
+          setPosMenuState((current) => {
+            const canKeepLastMenu = current.lastSuccessfulCategories.length > 0 && !entitlementDenied;
+            return {
+              ...current,
+              status: entitlementDenied ? POS_MENU_STATUS.ENTITLEMENT_DENIED : canKeepLastMenu ? POS_MENU_STATUS.STALE : POS_MENU_STATUS.ERROR,
+              categories: canKeepLastMenu ? current.lastSuccessfulCategories : current.categories,
+              itemCount: canKeepLastMenu ? current.lastSuccessfulItemCount : current.itemCount,
+              error: menuError,
+              refreshError: canKeepLastMenu ? menuError : null,
+              requestId,
+              requestSequence
+            };
+          });
+          setConnectionDegraded(isPosConnectionFailure(menuError));
+          setError(menuError);
+          debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(menuError), message: menuError?.message });
+          return;
+        }
+        if (requestSequence < acceptedPosMenuSequenceRef.current) {
+          debugPosMenu("stale-response-rejected", { requestSequence, acceptedSequence: acceptedPosMenuSequenceRef.current });
+          return;
+        }
+        const normalizedMenu = normalizePosMenuPayload(menuOutcome.payload);
+        const expectedRestaurantId = configPayload?.restaurant?.id || restaurantId || user?.restaurantId || "";
+        if (normalizedMenu.tenantId && expectedRestaurantId && normalizedMenu.tenantId !== expectedRestaurantId) {
+          const staleError = new Error("Stale POS menu response was rejected.");
+          staleError.code = "POS_MENU_TENANT_MISMATCH";
+          throw staleError;
+        }
+        acceptedPosMenuSequenceRef.current = requestSequence;
+        setPosMenuState((current) => ({
+          ...current,
+          status: normalizedMenu.itemCount > 0 ? POS_MENU_STATUS.SUCCESS : POS_MENU_STATUS.EMPTY,
+          categories: normalizedMenu.categories,
+          lastSuccessfulCategories: normalizedMenu.categories,
+          itemCount: normalizedMenu.itemCount,
+          lastSuccessfulItemCount: normalizedMenu.itemCount,
+          menuVersion: normalizedMenu.menuVersion,
+          tenantId: normalizedMenu.tenantId,
+          locationId: normalizedMenu.locationId,
+          availabilitySummary: normalizedMenu.availabilitySummary,
+          menuDiagnostics: normalizedMenu.menuDiagnostics,
+          acceptedSequence: requestSequence,
+          requestId,
+          loadedAt: normalizedMenu.generatedAt,
+          error: null,
+          refreshError: null
+        }));
+        setConnectionDegraded(false);
+        setStartupStage("Ready");
+        posPerformanceMark("pos-menu-ready");
+        recordPosStartupTiming("menuReadyMs", startupStartedAt);
+        debugPosMenu("response-accepted", { requestSequence, requestId, itemCount: normalizedMenu.itemCount, menuVersion: normalizedMenu.menuVersion });
       } catch (posError) {
+        controller.abort();
+        await menuOutcomePromise;
+        if (startupAbortRef.current !== controller && posError?.name === "AbortError") return;
         const entitlementDenied = isPosEntitlementDenied(posError);
         setPosMenuState((current) => {
           const canKeepLastMenu = current.lastSuccessfulCategories.length > 0 && !entitlementDenied;
@@ -8259,19 +8333,28 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           };
         });
         debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(posError), message: posError?.message });
+        const connectionFailed = isPosConnectionFailure(posError);
+        setStartupConnectionFailed(connectionFailed);
+        setConnectionDegraded(connectionFailed);
         setError(posError);
-        if (!loadedOnceRef.current) dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_FAILED, payload: { message: posError?.message } });
+        if (!loadedOnceRef.current) dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_FAILED, payload: { message: posStartupFailureMessage(posError) } });
       } finally {
         setLoading(false);
-        inflightLoadRef.current = null;
+        if (startupAbortRef.current === controller) startupAbortRef.current = null;
+        if (inflightLoadRef.current === startupRequest) inflightLoadRef.current = null;
       }
     })();
-    return inflightLoadRef.current;
+    inflightLoadRef.current = startupRequest;
+    return startupRequest;
   }
 
   useEffect(() => {
     if (!fingerprint) return;
     loadPos({ silent: loadedOnceRef.current });
+    return () => {
+      startupAbortRef.current?.abort();
+      startupAbortRef.current = null;
+    };
   }, [apiOnline, token, posBasePath, fingerprint]);
 
   useEffect(() => {
@@ -8369,12 +8452,16 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const hasHiddenPosMenuItems = !normalizedSearch && posMenuState.status !== POS_MENU_STATUS.ERROR && hiddenPosMenuItems > 0 && posMenuItemCount === 0;
   const posEmptyTitle = normalizedSearch
     ? "No matching POS items"
+    : posMenuState.status === POS_MENU_STATUS.INITIAL_LOADING
+      ? "Loading POS menu"
     : posMenuState.status === POS_MENU_STATUS.ERROR
       ? "POS menu unavailable"
       : hasHiddenPosMenuItems
         ? hiddenPosMenuItems === 1 ? "Menu item exists but is not published to POS." : "Menu items exist but are not published to POS."
         : "No POS menu items";
-  const posEmptyDetail = posMenuState.status === POS_MENU_STATUS.ERROR
+  const posEmptyDetail = posMenuState.status === POS_MENU_STATUS.INITIAL_LOADING
+    ? "Menu items will appear as soon as the live menu is ready."
+    : posMenuState.status === POS_MENU_STATUS.ERROR
     ? "The register could not load a live menu. Retry the POS refresh before taking orders."
     : hasHiddenPosMenuItems
       ? "Make the item available and keep its category active, then refresh the register."
@@ -8811,14 +8898,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     event.preventDefault();
     setSaving("unlock");
     setPinError("");
+    const pinStartedAt = posPerformanceNow();
     try {
-      const payload = await posApi("/unlock", { method: "POST", body: { pin: cashierPin } });
+      const payload = await posApi("/unlock", { method: "POST", body: { pin: cashierPin }, timeoutMs: POS_STARTUP_TIMEOUT_MS });
+      recordPosStartupTiming("pinVerificationMs", pinStartedAt);
       if (!payload.posSessionToken) throw new Error("The register did not receive an authorized POS session.");
       rememberPosSession(payload.posSessionToken);
       setCashierPin("");
       setPinLockedUntil(null);
       dispatchWorkflow({ type: POS_EVENT.UNLOCK_SUCCESS, payload: { unlockedBy: payload.employee, unlockedAt: payload.unlockedAt } });
-      await loadOrderLists(payload.posSessionToken);
+      recordPosStartupTiming("pinToRegisterHomeMs", pinStartedAt);
+      void loadOrderLists(payload.posSessionToken);
     } catch (posError) {
       setCashierPin("");
       setPinLockedUntil(posError?.payload?.lockedUntil || null);
@@ -8831,18 +8921,25 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   async function loadOrderLists(sessionOverride = null) {
     if (!activeDevice?.id) return;
-    try {
-      const [openPayload, recentPayload, heldPayload] = await Promise.all([
-        posApi("/open-orders", {}, sessionOverride),
-        posApi("/recent-orders", {}, sessionOverride),
-        posApi("/held-orders", {}, sessionOverride)
-      ]);
-      setOpenOrders(openPayload.orders || []);
-      setRecentOrders(recentPayload.orders || []);
-      setHeldOrders(heldPayload.heldOrders || []);
-    } catch (posError) {
-      setError(posError);
-    }
+    if (inflightOrderListsRef.current) return inflightOrderListsRef.current;
+    const request = (async () => {
+      try {
+        const [openPayload, recentPayload, heldPayload] = await Promise.all([
+          posApi("/open-orders", {}, sessionOverride),
+          posApi("/recent-orders", {}, sessionOverride),
+          posApi("/held-orders", {}, sessionOverride)
+        ]);
+        setOpenOrders(openPayload.orders || []);
+        setRecentOrders(recentPayload.orders || []);
+        setHeldOrders(heldPayload.heldOrders || []);
+      } catch (posError) {
+        setError(posError);
+      } finally {
+        if (inflightOrderListsRef.current === request) inflightOrderListsRef.current = null;
+      }
+    })();
+    inflightOrderListsRef.current = request;
+    return request;
   }
 
   function resetCurrentOrder() {
@@ -8935,6 +9032,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   const effectiveWorkflow = !apiOnline ? POS_WORKFLOW.OFFLINE : workflow.value;
+  const registerOnline = apiOnline && !connectionDegraded;
+  const initialConnectionUnavailable = !apiOnline && !loadedOnceRef.current;
   const restaurantForPos = config?.restaurant || profile;
   const savingAction = Boolean(saving);
   const registerControlOpensSettings = ownerOperator && effectiveWorkflow === POS_WORKFLOW.LOCKED;
@@ -8949,14 +9048,26 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     returnHome();
   };
   const restaurantDashboardHref = restaurantKey ? `/restaurant/${restaurantKey}/dashboard` : "/restaurant";
+  const pinScreenActive = [POS_WORKFLOW.CASHIER_AUTHENTICATION, POS_WORKFLOW.MANAGER_OVERRIDE].includes(effectiveWorkflow);
   let workflowScreen;
 
   switch (effectiveWorkflow) {
     case POS_WORKFLOW.BOOTING:
-      workflowScreen = <PosBootScreen restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />;
+      workflowScreen = <PosBootScreen restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} stage={startupStage} />;
       break;
     case POS_WORKFLOW.OFFLINE:
-      workflowScreen = <PosOfflineScreen hasDraft={cart.length > 0} onRetry={() => loadPos()} />;
+      workflowScreen = (
+        <PosOfflineScreen
+          hasDraft={cart.length > 0}
+          title={initialConnectionUnavailable ? "Unable to connect to Loohar POS server." : "Register is offline"}
+          message={initialConnectionUnavailable ? "Check the connection and retry." : ""}
+          developmentHint={initialConnectionUnavailable && import.meta.env.DEV ? "For local testing, keep this iPhone on the same Wi-Fi as the development Mac, then retry." : ""}
+          onRetry={() => {
+            window.dispatchEvent(new globalThis.Event("loohar:api-health-retry"));
+            if (apiOnline) void loadPos();
+          }}
+        />
+      );
       break;
     case POS_WORKFLOW.LOCKED:
       workflowScreen = (
@@ -8964,7 +9075,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           restaurant={restaurantForPos}
           device={activeDevice}
           shift={activeShift}
-          online={apiOnline}
+          online={registerOnline}
           now={now}
           onBegin={() => dispatchWorkflow({ type: POS_EVENT.BEGIN_UNLOCK })}
         />
@@ -9186,8 +9297,11 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     default:
       workflowScreen = (
         <RecoveryScreen
+          title={startupConnectionFailed ? "Unable to connect to Loohar POS server." : "Register recovery"}
           message={workflow.context.message || error?.message || (typeof error === "string" ? error : "")}
-          onRetry={() => { dispatchWorkflow({ type: POS_EVENT.RECOVER }); loadPos(); }}
+          developmentHint={startupConnectionFailed && import.meta.env.DEV ? "For local testing, keep this iPhone on the same Wi-Fi as the development Mac, then retry." : ""}
+          retrying={loading}
+          onRetry={() => { dispatchWorkflow({ type: POS_EVENT.RECOVER }); void loadPos(); }}
           onLock={lockRegister}
         />
       );
@@ -9196,7 +9310,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   return (
     <Suspense fallback={<PosChunkFallback restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />}>
-      <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""}`}>
+      <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""} ${pinScreenActive ? "pin-active" : ""}`}>
       <div className="pos-workflow-topline">
         <div className="pos-mobile-brand" aria-label={`${restaurantForPos?.name || restaurantForPos?.businessName || "Restaurant"} mobile POS`}>
           <span>Loohar</span>
@@ -9204,7 +9318,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         </div>
         <CashierBadge user={workflow.context.unlockedBy || user} />
         <div className="pos-workflow-status">
-          <span className={apiOnline ? "online" : "offline"}>{apiOnline ? "Online" : "Offline"}</span>
+          <span className={registerOnline ? "online" : connectionDegraded ? "degraded" : "offline"}>{registerOnline ? "Online" : connectionDegraded ? "Degraded" : "Offline"}</span>
           <span className="pos-workflow-register-label">{activeDevice?.name || "Register not configured"}</span>
           <span className="pos-workflow-shift-label">{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
         </div>
@@ -9224,7 +9338,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         </div>
       </div>
 
-      {error && ![POS_WORKFLOW.CASHIER_AUTHENTICATION, POS_WORKFLOW.PAYMENT_SELECTION, POS_WORKFLOW.PAYMENT_FAILED].includes(effectiveWorkflow) ? (
+      {error && ![POS_WORKFLOW.CASHIER_AUTHENTICATION, POS_WORKFLOW.PAYMENT_SELECTION, POS_WORKFLOW.PAYMENT_FAILED, POS_WORKFLOW.RECOVERY].includes(effectiveWorkflow) ? (
         <PosNotice error={error} user={user} onRetry={() => loadPos()} subscriptionHref={subscriptionHref} />
       ) : null}
       {notice ? <div className="success-box" role="status">{notice}</div> : null}
@@ -13455,12 +13569,13 @@ export default function App() {
     let timerId;
     let inFlight = false;
 
-    async function probeApiHealth() {
+    async function probeApiHealth(force = false) {
       if (cancelled || inFlight) return;
       inFlight = true;
       let nextOnline = false;
+      const healthStartedAt = posPerformanceNow();
       try {
-        await checkApiHealth();
+        await checkApiHealth({ force });
         nextOnline = true;
         if (!cancelled) {
           setApiOnline(true);
@@ -13472,6 +13587,7 @@ export default function App() {
           setApiMode("DEMO");
         }
       } finally {
+        if (/^\/restaurant\/[^/]+\/(?:pos|kiosk)\/?$/.test(initialPath)) recordPosStartupTiming("apiHealthMs", healthStartedAt);
         inFlight = false;
         if (!cancelled) {
           timerId = window.setTimeout(probeApiHealth, nextOnline ? 30000 : 5000);
@@ -13481,17 +13597,26 @@ export default function App() {
 
     function retryApiHealthNow() {
       if (timerId) window.clearTimeout(timerId);
-      probeApiHealth();
+      probeApiHealth(true);
+    }
+
+    function noteBrowserOffline() {
+      setApiOnline(false);
+      setApiMode("DEMO");
     }
 
     probeApiHealth();
     window.addEventListener("focus", retryApiHealthNow);
     window.addEventListener("online", retryApiHealthNow);
+    window.addEventListener("offline", noteBrowserOffline);
+    window.addEventListener("loohar:api-health-retry", retryApiHealthNow);
     return () => {
       cancelled = true;
       if (timerId) window.clearTimeout(timerId);
       window.removeEventListener("focus", retryApiHealthNow);
       window.removeEventListener("online", retryApiHealthNow);
+      window.removeEventListener("offline", noteBrowserOffline);
+      window.removeEventListener("loohar:api-health-retry", retryApiHealthNow);
     };
   }, []);
 
@@ -13610,7 +13735,10 @@ export default function App() {
         }
       }
     }
-    verifySession();
+    const sessionStartedAt = posPerformanceNow();
+    void verifySession().finally(() => {
+      if (/^\/restaurant\/[^/]+\/(?:pos|kiosk)\/?$/.test(initialPath)) recordPosStartupTiming("authenticationSessionMs", sessionStartedAt);
+    });
     return () => {
       cancelled = true;
     };
