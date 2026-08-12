@@ -144,7 +144,7 @@ assert.match(posDirectAddConfigurationError({ ...requiredItem, customizationMode
 const addToCartBlock = app.slice(app.indexOf("function addToCart(item)"), app.indexOf("function openModifierDialog(item)"));
 assert.ok(addToCartBlock.includes("posModifierConfigurationError(item)"), "POS tap path should guard invalid required modifier configuration");
 assert.ok(addToCartBlock.includes("shouldOpenCustomization(item)"), "POS tap path should use the canonical customization decision");
-assert.ok(addToCartBlock.includes("addConfiguredItemToCart(item, { selections: posDefaultModifierSelections(item) })"), "simple POS item should direct-add through the existing cart path");
+assert.ok(addToCartBlock.includes("item.posDefaultModifierSelections ?? posDefaultModifierSelections(item)"), "simple POS item should direct-add through the prepared cart path");
 
 assert.ok(app.includes("quantity: 1"), "new direct-add line should add exactly one item");
 assert.ok(app.includes("quantity: line.quantity + 1"), "repeated direct-add should increment existing quantity");

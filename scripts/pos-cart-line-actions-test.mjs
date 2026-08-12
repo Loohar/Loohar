@@ -175,17 +175,18 @@ assert.equal(editState.value, POS_WORKFLOW.ORDER_ENTRY, "payment Back should ret
 assert.deepEqual([simpleLine, configurableLine], [simpleLine, configurableLine], "Pay and Back should not mutate cart state");
 
 const addConfiguredBlock = app.slice(app.indexOf("function addConfiguredItemToCart"), app.indexOf("function adjustQuantity"));
-const payBlock = app.slice(app.indexOf("async function payCurrentOrder"), app.indexOf("async function completeSuccessfulTransaction"));
+const payBlock = app.slice(app.indexOf("function payCurrentOrder"), app.indexOf("async function completeSuccessfulTransaction"));
 const successBlock = app.slice(app.indexOf("async function completeSuccessfulTransaction"), app.indexOf("async function sendCurrentOrderToKitchen"));
 const finishBlock = app.slice(app.indexOf("function finishPaidOrder"), app.indexOf("function beginNewOrder"));
 assert.ok(addConfiguredBlock.includes("replacePosCartLineConfiguration") && addConfiguredBlock.includes("setQuote(null)"), "modified lines should replace in place and invalidate stale quotes");
 assert.ok(addConfiguredBlock.includes("void calculateQuote(updatedCart)"), "modified lines should request a fresh server-authoritative quote");
-assert.ok(payBlock.includes("await calculateQuote()") && payBlock.includes("POS_EVENT.SELECT_PAYMENT"), "Pay should quote before entering the existing payment flow");
+assert.ok(payBlock.indexOf("POS_EVENT.SELECT_PAYMENT") < payBlock.indexOf("void calculateQuote()"), "Pay should navigate immediately while the authoritative quote loads");
+assert.ok(screens.includes("Preparing the server-verified total...") && screens.includes("!quoteReady || !canAcceptCash"), "payment controls should remain disabled until the authoritative quote is ready");
 assert.ok(successBlock.includes("setPaymentResult({ success: true") && successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), "successful payment should show confirmation and change before resetting");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should clear the cart and return to Register Home");
 assert.ok(screens.includes("canModifyPosItem") && screens.includes("Modify ${line.name}"), "Modify should render only for meaningfully configurable cart lines");
 assert.ok(screens.includes("Repeat ${line.name}") && screens.includes('title="Remove item"'), "cart lines should expose Repeat and a compact accessible delete icon");
 assert.ok(styles.includes(".pos-entry-cart-actions") && styles.includes("overflow-y-auto") && styles.includes(".pos-entry-cart-footer-actions"), "cart lines should scroll while the Pay footer remains outside the scroll region");
-assert.ok(app.includes("disabled={posModifierValidationErrors(customizingItem, modifierSelections).length > 0}"), "required modifier validation should disable Add and Update");
+assert.ok(app.includes("disabled={modifierSelectionErrors.length > 0}"), "required modifier validation should disable Add and Update");
 
 console.log("pos-cart-line-actions-test passed (streamlined cart and payment behaviors).");

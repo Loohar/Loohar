@@ -33,7 +33,8 @@ assert.ok(screens.includes('saving ? "Processing..." : "Complete cash payment"')
 
 assert.ok(cashBlock.includes("lastOrder ? null : (quote || await calculateQuote())"), "cash completion should reuse the quote created before payment selection");
 assert.ok(cashBlock.includes("refreshAfterSubmit: false"), "cash order submission should skip the broad restaurant refresh");
-assert.ok(submitBlock.includes("if (refreshAfterSubmit) await onRefresh?.()"), "non-payment order submission should preserve its existing refresh behavior");
+assert.ok(submitBlock.includes("if (refreshAfterSubmit) void loadOrderLists()"), "non-payment submission should refresh only POS order state in the background");
+assert.equal(submitBlock.includes("onRefresh"), false, "POS submission should not trigger the broad restaurant dashboard refresh");
 assert.equal(cashBlock.match(/calculateQuote\(/g)?.length, 1, "cash completion should have only a fallback quote call");
 
 const cashRequestIndex = cashBlock.indexOf('await posApi("/payments/cash"');
@@ -42,7 +43,8 @@ assert.ok(cashRequestIndex >= 0 && successIndex > cashRequestIndex, "Payment Com
 assert.equal(cashBlock.includes("await completeSuccessfulTransaction"), false, "success rendering should not wait for reconciliation");
 assert.equal(successBlock.includes("loadPos("), false, "Payment Complete should not block on POS bootstrap refresh");
 assert.equal(successBlock.includes("loadOrderLists("), false, "Payment Complete should not block on order-list reconciliation");
-assert.ok(finishBlock.includes("void Promise.all([loadPos({ silent: true }), loadOrderLists()])"), "Done should launch reconciliation after returning home");
+assert.ok(finishBlock.includes("void Promise.all([refreshPosConfig(), loadOrderLists()])"), "Done should reconcile config and order state without reloading the menu");
+assert.equal(finishBlock.includes("loadPos("), false, "Done should preserve the accepted menu for the next customer");
 
 assert.ok(posSession.includes("req.posSessionDevice = device"), "validated POS middleware should expose its device result for reuse");
 assert.ok(posRoute.includes("sessionDevice: req.posSessionDevice"), "cash settlement should reuse the already validated session device");

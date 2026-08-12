@@ -143,8 +143,30 @@ export function canModifyPosItem(item = {}) {
     || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode);
 }
 
-export function posDefaultModifierSelections(item = {}) {
-  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+export function posMenuInteractionMetadata(item = {}) {
+  const configurationError = posModifierConfigurationError(item);
+  const mode = posCustomizationMode(item);
+  const modifierGroups = configurationError ? [] : normalizePosModifierGroups(item);
+  const opensCustomization = !configurationError && mode !== POS_CUSTOMIZATION_MODE.NONE && (
+    modifierGroups.length > 0 || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode)
+  );
+  const defaultSelections = posDefaultModifierSelections(item, modifierGroups);
+  const directAddErrors = opensCustomization ? [] : posModifierGroupValidationErrors(modifierGroups, defaultSelections);
+  return {
+    configurationError,
+    modifierGroups,
+    defaultSelections,
+    directAddConfigurationError: directAddErrors.length
+      ? `${item.name || "This item"} needs a default modifier selection before No customization can be used.`
+      : "",
+    canModify: !configurationError && (modifierGroups.length > 0 || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode)),
+    opensCustomization
+  };
+}
+
+export function posDefaultModifierSelections(item = {}, preparedGroups = null) {
+  const groups = preparedGroups ?? normalizePosModifierGroups(item);
+  return Object.fromEntries(groups.map((group) => [
     group.id,
     group.options
       .filter((option) => option.isDefault)
@@ -154,22 +176,24 @@ export function posDefaultModifierSelections(item = {}) {
 }
 
 export function posDirectAddConfigurationError(item = {}) {
-  if (shouldOpenCustomization(item)) return "";
-  const errors = posModifierValidationErrors(item, posDefaultModifierSelections(item));
-  if (!errors.length) return "";
-  return `${item.name || "This item"} needs a default modifier selection before No customization can be used.`;
+  return posMenuInteractionMetadata(item).directAddConfigurationError;
 }
 
-export function posSelectionsFromOptionIds(item = {}, optionIds = []) {
+export function posSelectionsFromOptionIds(item = {}, optionIds = [], preparedGroups = null) {
   const selected = new Set(optionIds || []);
-  return Object.fromEntries(normalizePosModifierGroups(item).map((group) => [
+  const groups = preparedGroups ?? normalizePosModifierGroups(item);
+  return Object.fromEntries(groups.map((group) => [
     group.id,
     group.options.filter((option) => selected.has(option.id)).map((option) => option.id)
   ]));
 }
 
 export function posModifierValidationErrors(item = {}, selections = {}) {
-  return normalizePosModifierGroups(item).flatMap((group) => {
+  return posModifierGroupValidationErrors(normalizePosModifierGroups(item), selections);
+}
+
+export function posModifierGroupValidationErrors(groups = [], selections = {}) {
+  return groups.flatMap((group) => {
     const count = (selections[group.id] || []).length;
     const minimum = group.required ? Math.max(1, numeric(group.minSelect, 0)) : numeric(group.minSelect, 0);
     const maximum = Math.max(1, numeric(group.maxSelect, 1));

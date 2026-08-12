@@ -77,7 +77,7 @@ for (const label of ["Order total", "Amount paid", "Amount due", "Exact cash", "
   assert.ok(paymentScreen.includes(label), `cash payment screen should include ${label}`);
 }
 assert.equal(paymentScreen.includes("Card or wallet"), false, "unfinished card and wallet payment controls should remain hidden");
-assert.ok(paymentScreen.includes("disabled={!canAcceptCash || !tender.covered || saving}"), "insufficient cash should disable settlement");
+assert.ok(paymentScreen.includes("disabled={!quoteReady || !canAcceptCash || !tender.covered || saving}"), "unverified totals and insufficient cash should disable settlement");
 assert.ok(screens.includes('success ? "Done" : "Try another method"'), "cash confirmation should require Done before returning home");
 
 const cashService = sectionBetween(posService, "export async function cashPayment", "export async function cardPaymentIntent");

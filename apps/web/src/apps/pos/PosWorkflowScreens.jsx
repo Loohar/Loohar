@@ -27,6 +27,7 @@ import {
   WifiOff,
   X
 } from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
 import { applyPosPinKey, isPosPinSubmittable, POS_PIN_MAX_LENGTH, POS_PIN_MIN_LENGTH } from "./pinKeypad.js";
 import {
   applyCashKey,
@@ -308,7 +309,7 @@ export function NewOrderSetupScreen({
 
 export function OrderEntryScreen({
   items,
-  menuItems,
+  menuItemById,
   categories,
   selectedCategory,
   setSelectedCategory,
@@ -334,12 +335,26 @@ export function OrderEntryScreen({
   saving,
   emptyTitle,
   emptyDetail,
-  onImageError
+  onImageError,
+  onImageLoad,
+  onFirstRender,
+  onFirstMenuRender
 }) {
-  const menuItemById = new Map((menuItems || items).map((item) => [item.id, item]));
+  const firstRenderReportedRef = useRef(false);
+  const firstMenuReportedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (firstRenderReportedRef.current) return;
+    firstRenderReportedRef.current = true;
+    onFirstRender?.();
+  }, [onFirstRender]);
+  useLayoutEffect(() => {
+    if (firstMenuReportedRef.current || !items.length) return;
+    firstMenuReportedRef.current = true;
+    onFirstMenuRender?.();
+  }, [items.length, onFirstMenuRender]);
   const selectedLine = cart.find((line) => line.cartLineId === selectedCartLineId) || null;
   const selectedItem = selectedLine ? menuItemById.get(selectedLine.menuItemId) : null;
-  const selectedLineCanModify = canModifyPosItem(selectedItem);
+  const selectedLineCanModify = selectedItem?.posCanModify ?? canModifyPosItem(selectedItem);
   const runLineAction = (event, action) => {
     event.stopPropagation();
     action();
@@ -363,7 +378,7 @@ export function OrderEntryScreen({
           </div>
           <div className="pos-entry-categories" aria-label="Menu categories"><button type="button" className={selectedCategory === "all" ? "active" : ""} onClick={() => setSelectedCategory("all")}>All</button>{categories.map((category) => <button type="button" className={selectedCategory === category.id ? "active" : ""} onClick={() => setSelectedCategory(category.id)} key={category.id}>{category.name}</button>)}</div>
           <div className="pos-entry-menu-scroll">
-            {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{shouldOpenCustomization(item) ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
+            {items.length ? <div className="pos-entry-items">{items.map((item) => <button type="button" onClick={() => onAdd(item)} key={item.id}>{item.imageUrl ? <img src={item.imageUrl} alt="" width="72" height="72" loading="lazy" decoding="async" onLoad={() => onImageLoad?.(item.id)} onError={onImageError} /> : <span className="pos-entry-item-fallback"><Store size={22} /></span>}<span className="pos-entry-item-copy"><strong>{item.name}</strong><small>{item.categoryName || "Menu"}</small></span><b>{money(item.priceCents)}</b>{(item.posOpensCustomization ?? shouldOpenCustomization(item)) ? <em className="pos-entry-customize-badge">Customize</em> : null}</button>)}</div> : <div className="empty-state"><Store size={28} /><strong>{emptyTitle}</strong><span>{emptyDetail}</span></div>}
           </div>
           {selectedLine ? (
             <div className="pos-entry-action-dock" aria-label={`Actions for ${selectedLine.name}`}>
@@ -383,7 +398,7 @@ export function OrderEntryScreen({
           <div className="pos-entry-cart-lines" role="listbox" aria-label="Cart items">
             {cart.length ? cart.map((line) => {
               const menuItem = menuItemById.get(line.menuItemId);
-              const canModify = canModifyPosItem(menuItem);
+              const canModify = menuItem?.posCanModify ?? canModifyPosItem(menuItem);
               return (
                 <article className={selectedCartLineId === line.cartLineId ? "selected" : ""} key={line.cartLineId} role="option" tabIndex="0" aria-selected={selectedCartLineId === line.cartLineId} onClick={() => activateCartLine(line, menuItem, canModify)} onKeyDown={(event) => {
                   if (event.target !== event.currentTarget || !["Enter", " "].includes(event.key)) return;
@@ -437,6 +452,7 @@ export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onE
 }
 
 export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash }) {
+  const quoteReady = Boolean(quote?.id);
   const total = Number(quote?.totalCents || 0);
   const tenderedCents = cashTenderInputToCents(amountReceived) ?? 0;
   const tender = cashTenderSummary(total, tenderedCents);
@@ -451,18 +467,19 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
     <section className="pos-workflow-screen">
       <PosScreenHeader eyebrow="Checkout" title="Cash payment" detail="Enter the cash received and complete the sale." onBack={onBack} />
       {error ? <div className="pos-alert" role="alert">{error}</div> : null}
+      {!quoteReady ? <div className="pos-menu-state refreshing" role="status">Preparing the server-verified total...</div> : null}
       <div className="pos-cash-totals" aria-label="Cash payment totals">
-        <div><span>Order total</span><strong>{money(total)}</strong></div>
+        <div><span>Order total</span><strong>{quoteReady ? money(total) : "..."}</strong></div>
         <div><span>Amount paid</span><strong>{money(0)}</strong></div>
-        <div><span>Amount due</span><strong>{money(total)}</strong></div>
+        <div><span>Amount due</span><strong>{quoteReady ? money(total) : "..."}</strong></div>
       </div>
       <div className="pos-cash-workspace">
         <div className="pos-cash-entry">
           <div className="pos-cash-entry-head"><Banknote size={28} /><div><span>Tender type</span><strong>Cash</strong></div></div>
-          <label><span>Cash received</span><input type="text" inputMode="decimal" autoComplete="off" value={amountReceived} onChange={(event) => updateAmount(event.target.value)} placeholder="0.00" aria-label="Cash received" /></label>
+          <label><span>Cash received</span><input type="text" inputMode="decimal" autoComplete="off" value={amountReceived} onChange={(event) => updateAmount(event.target.value)} placeholder="0.00" aria-label="Cash received" disabled={!quoteReady} /></label>
           <div className="pos-cash-quick-actions">
-            <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(total))}>Exact cash</button>
-            {quickAmounts.map((amount) => <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(amount))} key={amount}>{money(amount)}</button>)}
+            <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(total))} disabled={!quoteReady}>Exact cash</button>
+            {quickAmounts.map((amount) => <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(amount))} disabled={!quoteReady} key={amount}>{money(amount)}</button>)}
           </div>
           <dl className="pos-cash-breakdown">
             <div><dt>Cash tendered</dt><dd>{money(tender.tenderedCents)}</dd></div>
@@ -471,11 +488,11 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
           </dl>
         </div>
         <div className="pos-cash-keypad" aria-label="Cash amount keypad">
-          {keypadRows.flat().map((key) => <button type="button" onClick={() => enterKey(key)} key={key}>{key}</button>)}
-          <button className="backspace" type="button" onClick={() => enterKey("backspace")} aria-label="Backspace"><Delete size={22} />Backspace</button>
-          <button className="clear" type="button" onClick={() => enterKey("clear")}><X size={20} />Clear</button>
+          {keypadRows.flat().map((key) => <button type="button" onClick={() => enterKey(key)} disabled={!quoteReady} key={key}>{key}</button>)}
+          <button className="backspace" type="button" onClick={() => enterKey("backspace")} aria-label="Backspace" disabled={!quoteReady}><Delete size={22} />Backspace</button>
+          <button className="clear" type="button" onClick={() => enterKey("clear")} disabled={!quoteReady}><X size={20} />Clear</button>
         </div>
-        <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
+        <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!quoteReady || !canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
         {!canAcceptCash ? <small className="pos-cash-disabled-reason">{cashDisabledReason || "Cash is not available on this register."}</small> : null}
       </div>
     </section>

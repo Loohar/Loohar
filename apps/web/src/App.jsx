@@ -28,7 +28,7 @@ import {
   Users,
   X
 } from "lucide-react";
-import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   POS_EVENT,
   POS_WORKFLOW,
@@ -45,8 +45,8 @@ import {
   posCustomizationMode,
   posDefaultModifierSelections,
   posDirectAddConfigurationError,
+  posModifierGroupValidationErrors,
   posModifierConfigurationError,
-  posModifierValidationErrors,
   posSelectionsFromOptionIds,
   shouldOpenCustomization,
   togglePosModifierSelection
@@ -58,6 +58,7 @@ import {
   repeatPosCartLine,
   replacePosCartLineConfiguration
 } from "./apps/pos/cart.js";
+import { filterPosMenuItems, preparePosMenuItems } from "./apps/pos/menuPerformance.js";
 import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { isPrivateNetworkHost } from "./shared/networkHost.js";
@@ -7797,14 +7798,6 @@ function PosNotice({ error, user, onRetry, subscriptionHref }) {
   );
 }
 
-function itemCategoryId(item) {
-  return item.categoryId || item.category?.id || "";
-}
-
-function itemCategoryName(item) {
-  return item.categoryName || item.category?.name || "Menu";
-}
-
 const POS_MENU_STATUS = Object.freeze({
   IDLE: "IDLE",
   INITIAL_LOADING: "INITIAL_LOADING",
@@ -7823,12 +7816,21 @@ function posPerformanceNow() {
 
 function recordPosStartupTiming(name, startedAt) {
   if (!import.meta.env?.DEV) return;
-  const durationMs = Math.max(0, Math.round(posPerformanceNow() - startedAt));
+  recordPosPerformanceMetric(name, posPerformanceNow() - startedAt);
+}
+
+function recordPosPerformanceMetric(name, value) {
+  if (!import.meta.env?.DEV) return;
+  const durationMs = Math.max(0, Math.round(Number(value) || 0));
   globalThis.__LOOHAR_POS_STARTUP_TIMINGS__ = {
     ...(globalThis.__LOOHAR_POS_STARTUP_TIMINGS__ || {}),
     [name]: durationMs
   };
-  globalThis.console?.debug?.("[Loohar POS startup]", name, `${durationMs}ms`);
+  globalThis.__LOOHAR_POS_PERFORMANCE__ = {
+    ...(globalThis.__LOOHAR_POS_PERFORMANCE__ || {}),
+    [name]: durationMs
+  };
+  globalThis.console?.debug?.("[Loohar POS perf]", name, name.endsWith("Count") ? durationMs : `${durationMs}ms`);
 }
 
 function isPosConnectionFailure(error) {
@@ -7928,8 +7930,8 @@ function posCartLineId() {
   return `cart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function selectedPosModifierRows(item = {}, selections = {}) {
-  return normalizePosModifierGroups(item).flatMap((group) => {
+function selectedPosModifierRows(item = {}, selections = {}, modifierGroups = null) {
+  return (modifierGroups || normalizePosModifierGroups(item)).flatMap((group) => {
     const selectedIds = new Set(selections[group.id] || []);
     return group.options
       .filter((option) => selectedIds.has(option.id))
@@ -8071,7 +8073,7 @@ function RestaurantKioskShell({ apiOnline, apiMode, token, user, restaurantSlug,
   );
 }
 
-function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile = {}, onRefresh, kioskOnly = false }) {
+function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile = {}, kioskOnly = false }) {
   const restaurantKey = restaurantSlug || profile.slug || user?.restaurantSlug || restaurantId;
   const posBasePath = restaurantKey ? `/api/restaurants/${restaurantKey}/pos` : "";
   const deviceStorageKey = restaurantKey ? `loohar-pos-device-id:${restaurantKey}` : "loohar-pos-device-id";
@@ -8125,7 +8127,15 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [modifierError, setModifierError] = useState("");
   const inflightLoadRef = useRef(null);
   const startupAbortRef = useRef(null);
+  const inflightConfigRefreshRef = useRef(null);
   const inflightOrderListsRef = useRef(null);
+  const startupStartedAtRef = useRef(0);
+  const menuRequestCountRef = useRef(0);
+  const renderedMenuVersionRef = useRef("");
+  const pendingInteractionRef = useRef(new Map());
+  const orderSequenceRef = useRef(0);
+  const orderEntryStartedAtRef = useRef(0);
+  const menuImageIdsRef = useRef(new Set());
   const posMenuSequenceRef = useRef(0);
   const acceptedPosMenuSequenceRef = useRef(0);
   const loadedOnceRef = useRef(false);
@@ -8178,12 +8188,73 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     }
   }
 
+  function applyPosConfig(configPayload, options = {}) {
+    setConfig(configPayload);
+    setLocationId((current) => current || configPayload.device?.locationId || configPayload.locations?.[0]?.id || "");
+    setDeviceForm((current) => ({
+      ...current,
+      name: configPayload.device?.name || current.name,
+      deviceType: configPayload.device?.deviceType || current.deviceType,
+      cardPaymentsEnabled: configPayload.device?.cardPaymentsEnabled ?? current.cardPaymentsEnabled,
+      locationId: configPayload.device?.locationId || current.locationId || configPayload.locations?.[0]?.id || ""
+    }));
+    if (configPayload.device?.id) {
+      setDeviceId((current) => current === configPayload.device.id ? current : configPayload.device.id);
+      if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
+    }
+    if (options.bootstrap) {
+      dispatchWorkflow({
+        type: POS_EVENT.BOOTSTRAP_READY,
+        payload: {
+          hasDevice: Boolean(configPayload.device?.id),
+          pinConfigured: Boolean(configPayload.pinStatus?.configured)
+        }
+      });
+    }
+    setConnectionDegraded(false);
+  }
+
+  async function refreshPosConfig() {
+    if (!apiOnline || !token || !posBasePath) return null;
+    if (inflightConfigRefreshRef.current) return inflightConfigRefreshRef.current;
+    const request = posApi("/config", { timeoutMs: POS_STARTUP_TIMEOUT_MS })
+      .then((payload) => {
+        applyPosConfig(payload);
+        return payload;
+      })
+      .catch((posError) => {
+        setConnectionDegraded(isPosConnectionFailure(posError));
+        setError(posError);
+        throw posError;
+      })
+      .finally(() => {
+        if (inflightConfigRefreshRef.current === request) inflightConfigRefreshRef.current = null;
+      });
+    inflightConfigRefreshRef.current = request;
+    return request;
+  }
+
+  function startPosInteraction(name) {
+    if (!import.meta.env?.DEV) return;
+    pendingInteractionRef.current.set(name, posPerformanceNow());
+  }
+
+  useLayoutEffect(() => {
+    if (!import.meta.env?.DEV || pendingInteractionRef.current.size === 0) return;
+    const renderedAt = posPerformanceNow();
+    for (const [name, startedAt] of pendingInteractionRef.current) {
+      recordPosPerformanceMetric(name, renderedAt - startedAt);
+    }
+    pendingInteractionRef.current.clear();
+  });
+
   async function loadPos(options = {}) {
     if (!apiOnline || !token || !posBasePath) return;
     if (inflightLoadRef.current && !startupAbortRef.current?.signal.aborted) return inflightLoadRef.current;
     if (startupAbortRef.current?.signal.aborted) inflightLoadRef.current = null;
     posPerformanceMark("pos-route-start");
     const startupStartedAt = posPerformanceNow();
+    startupStartedAtRef.current = startupStartedAt;
     const requestSequence = posMenuSequenceRef.current + 1;
     posMenuSequenceRef.current = requestSequence;
     const requestId = `${restaurantKey || "restaurant"}:${requestSequence}:${Date.now()}`;
@@ -8207,11 +8278,15 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       const configPromise = posApi("/config", { signal: controller.signal, timeoutMs: POS_STARTUP_TIMEOUT_MS })
         .then((payload) => {
           recordPosStartupTiming("registerDeviceShiftMs", configStartedAt);
+          recordPosStartupTiming("registerMs", configStartedAt);
+          recordPosStartupTiming("shiftMs", configStartedAt);
           recordPosStartupTiming("restaurantLocationMs", configStartedAt);
           recordPosStartupTiming("paymentReadinessMs", configStartedAt);
           return payload;
         });
       const menuStartedAt = posPerformanceNow();
+      menuRequestCountRef.current += 1;
+      recordPosPerformanceMetric("menuApiRequestCount", menuRequestCountRef.current);
       const menuOutcomePromise = posApi("/menu", {
         signal: controller.signal,
         timeoutMs: POS_STARTUP_TIMEOUT_MS,
@@ -8219,6 +8294,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       }).then(
         (payload) => {
           recordPosStartupTiming("menuModifierMs", menuStartedAt);
+          recordPosStartupTiming("menuRequestMs", menuStartedAt);
           return { payload, error: null };
         },
         (menuError) => ({ payload: null, error: menuError })
@@ -8228,32 +8304,12 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         const configPayload = await configPromise;
         if (controller.signal.aborted) return;
         posPerformanceMark("pos-config-ready");
-        setConfig(configPayload);
-        setLocationId((current) => current || configPayload.device?.locationId || configPayload.locations?.[0]?.id || "");
-        setDeviceForm((current) => ({
-          ...current,
-          name: configPayload.device?.name || current.name,
-          deviceType: configPayload.device?.deviceType || current.deviceType,
-          cardPaymentsEnabled: configPayload.device?.cardPaymentsEnabled ?? current.cardPaymentsEnabled,
-          locationId: configPayload.device?.locationId || current.locationId || configPayload.locations?.[0]?.id || ""
-        }));
-        if (configPayload.device?.id) {
-          setDeviceId((current) => current === configPayload.device.id ? current : configPayload.device.id);
-          if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, configPayload.device.id);
-        }
-        if (!loadedOnceRef.current) {
-          dispatchWorkflow({
-            type: POS_EVENT.BOOTSTRAP_READY,
-            payload: {
-              hasDevice: Boolean(configPayload.device?.id),
-              pinConfigured: Boolean(configPayload.pinStatus?.configured)
-            }
-          });
-        }
+        applyPosConfig(configPayload, { bootstrap: !loadedOnceRef.current });
         loadedOnceRef.current = true;
-        setConnectionDegraded(false);
         posPerformanceMark("pos-interactive");
         recordPosStartupTiming("criticalRegisterReadyMs", startupStartedAt);
+        recordPosPerformanceMetric("kdsRealtimeInitializationMs", 0);
+        globalThis.requestAnimationFrame?.(() => recordPosStartupTiming("firstPosRenderMs", startupStartedAt));
 
         setStartupStage("Loading menu...");
         const menuOutcome = await menuOutcomePromise;
@@ -8283,7 +8339,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           debugPosMenu("stale-response-rejected", { requestSequence, acceptedSequence: acceptedPosMenuSequenceRef.current });
           return;
         }
+        const normalizationStartedAt = posPerformanceNow();
         const normalizedMenu = normalizePosMenuPayload(menuOutcome.payload);
+        recordPosPerformanceMetric("menuNormalizationMs", posPerformanceNow() - normalizationStartedAt);
         const expectedRestaurantId = configPayload?.restaurant?.id || restaurantId || user?.restaurantId || "";
         if (normalizedMenu.tenantId && expectedRestaurantId && normalizedMenu.tenantId !== expectedRestaurantId) {
           const staleError = new Error("Stale POS menu response was rejected.");
@@ -8414,16 +8472,34 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const categoriesForRegister = useMemo(() => (
     posMenuState.categories.length ? posMenuState.categories : posMenuState.lastSuccessfulCategories
   ), [posMenuState.categories, posMenuState.lastSuccessfulCategories]);
-  const itemsForRegister = useMemo(() => categoriesForRegister.flatMap((category) => (
-    category.items || []
-  ).map((item) => ({ ...item, categoryName: category.name, categoryId: category.id }))), [categoriesForRegister]);
-  const normalizedSearch = searchQuery.trim().toLowerCase();
-  const visibleItems = itemsForRegister.filter((item) => {
-    const matchesCategory = selectedCategory === "all" || itemCategoryId(item) === selectedCategory;
-    if (!matchesCategory) return false;
-    if (!normalizedSearch) return true;
-    return [item.name, itemCategoryName(item), item.sku, item.searchAliases].filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch);
-  });
+  const itemsForRegister = useMemo(() => {
+    const startedAt = posPerformanceNow();
+    const preparedItems = preparePosMenuItems(categoriesForRegister);
+    recordPosPerformanceMetric("menuPreparationMs", posPerformanceNow() - startedAt);
+    if (startupStartedAtRef.current) recordPosStartupTiming("modifierMetadataReadyMs", startupStartedAtRef.current);
+    return preparedItems;
+  }, [categoriesForRegister]);
+  const menuItemById = useMemo(() => new Map(itemsForRegister.map((item) => [item.id, item])), [itemsForRegister]);
+  const normalizedSearch = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
+  const visibleItems = useMemo(() => {
+    const startedAt = posPerformanceNow();
+    const filteredItems = filterPosMenuItems(itemsForRegister, selectedCategory, normalizedSearch);
+    recordPosPerformanceMetric("menuFilterComputationMs", posPerformanceNow() - startedAt);
+    return filteredItems;
+  }, [itemsForRegister, selectedCategory, normalizedSearch]);
+  const customizingModifierGroups = useMemo(() => (
+    customizingItem?.posModifierGroups || (customizingItem ? normalizePosModifierGroups(customizingItem) : [])
+  ), [customizingItem]);
+  const modifierSelectionErrors = useMemo(() => (
+    posModifierGroupValidationErrors(customizingModifierGroups, modifierSelections)
+  ), [customizingModifierGroups, modifierSelections]);
+  useLayoutEffect(() => {
+    if (![POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)) return;
+    if (!posMenuState.menuVersion || renderedMenuVersionRef.current === posMenuState.menuVersion) return;
+    renderedMenuVersionRef.current = posMenuState.menuVersion;
+    recordPosStartupTiming("fullMenuRenderedMs", startupStartedAtRef.current);
+    recordPosStartupTiming("fullInteractiveReadyMs", startupStartedAtRef.current);
+  }, [posMenuState.status, posMenuState.menuVersion, itemsForRegister]);
   useEffect(() => {
     if (selectedCategory === "all") return;
     if (!categoriesForRegister.some((category) => category.id === selectedCategory)) {
@@ -8435,8 +8511,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const firstCashDrawer = config?.cashDrawers?.[0];
   const currentCashDrawer = config?.cashDrawers?.find((drawer) => drawer.id === activeShift?.cashDrawerId) || firstCashDrawer;
   const canAcceptCash = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.deviceType === "MAIN_TERMINAL" && activeShift?.status === "OPEN" && currentCashDrawer?.status === "OPEN" && (config?.permissions || []).includes("POS_ACCEPT_CASH"));
-  const cartTotalCents = cart.reduce((sum, line) => sum + (line.priceCents || 0) * line.quantity, 0);
-  const cartItemCount = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const { cartTotalCents, cartItemCount } = useMemo(() => cart.reduce((summary, line) => ({
+    cartTotalCents: summary.cartTotalCents + (line.priceCents || 0) * line.quantity,
+    cartItemCount: summary.cartItemCount + line.quantity
+  }), { cartTotalCents: 0, cartItemCount: 0 }), [cart]);
   const cashDisabledReason = !activeDevice
     ? "Register this device before accepting payments."
     : activeDevice.deviceType !== "MAIN_TERMINAL"
@@ -8468,28 +8546,30 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       : ownerOperator ? "Add available menu items in Menu & Catalog, then refresh the register." : "POS menu items are not available. Contact your manager.";
 
   function addToCart(item) {
-    const configurationError = posModifierConfigurationError(item);
+    startPosInteraction("cartResponseMs");
+    const configurationError = item.posConfigurationError ?? posModifierConfigurationError(item);
     if (configurationError) {
       setError(configurationError);
       return;
     }
-    const opensCustomization = shouldOpenCustomization(item);
+    const opensCustomization = item.posOpensCustomization ?? shouldOpenCustomization(item);
     if (opensCustomization) {
       openModifierDialog(item);
       return;
     }
-    const directAddError = posDirectAddConfigurationError(item);
+    const directAddError = item.posDirectAddConfigurationError ?? posDirectAddConfigurationError(item);
     if (directAddError) {
       setError(directAddError);
       return;
     }
-    addConfiguredItemToCart(item, { selections: posDefaultModifierSelections(item) });
+    addConfiguredItemToCart(item, { selections: item.posDefaultModifierSelections ?? posDefaultModifierSelections(item) });
   }
 
   function openModifierDialog(item, cartLine = null) {
+    startPosInteraction("modifierOpenResponseMs");
     const defaults = cartLine
-      ? posSelectionsFromOptionIds(item, posLineModifierOptionIds(cartLine))
-      : posDefaultModifierSelections(item);
+      ? posSelectionsFromOptionIds(item, posLineModifierOptionIds(cartLine), item.posModifierGroups)
+      : item.posDefaultModifierSelections ?? posDefaultModifierSelections(item);
     setCustomizingItem(item);
     setEditingCartLineId(cartLine?.cartLineId || "");
     setModifierSelections(defaults);
@@ -8502,8 +8582,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     const line = typeof cartLineOrId === "object"
       ? cartLineOrId
       : cart.find((candidate) => candidate.cartLineId === cartLineOrId);
-    const item = menuItem || itemsForRegister.find((candidate) => candidate.id === line?.menuItemId);
-    if (!line || !item || !canModifyPosItem(item)) {
+    const item = menuItem || menuItemById.get(line?.menuItemId);
+    if (!line || !item || !(item.posCanModify ?? canModifyPosItem(item))) {
       setError("This item has no customizable options.");
       return;
     }
@@ -8520,20 +8600,23 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   function toggleModifierSelection(group, option) {
+    startPosInteraction("modifierSelectionResponseMs");
     setModifierError("");
     setModifierSelections((current) => togglePosModifierSelection(current, group, option.id));
   }
 
   function addConfiguredItemToCart(item = customizingItem, options = {}) {
     if (!item?.id) return;
+    startPosInteraction("configuredItemResponseMs");
     const selections = options.selections || modifierSelections;
     const specialInstructions = options.specialInstructions ?? modifierInstructions;
-    const validationErrors = posModifierValidationErrors(item, selections);
+    const modifierGroups = item.posModifierGroups || normalizePosModifierGroups(item);
+    const validationErrors = posModifierGroupValidationErrors(modifierGroups, selections);
     if (validationErrors.length) {
       setModifierError(validationErrors[0]);
       return;
     }
-    const modifiers = selectedPosModifierRows(item, selections);
+    const modifiers = selectedPosModifierRows(item, selections, modifierGroups);
     const modifierSelectionsPayload = canonicalPosModifierSelections(selections);
     const optionIds = modifierSelectionsPayload.map((selection) => selection.modifierOptionId);
     const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
@@ -8573,16 +8656,19 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   }
 
   function adjustQuantity(cartLineId, delta) {
+    startPosInteraction("quantityResponseMs");
     setQuote(null);
     setCart((current) => adjustPosCartLineQuantity(current, cartLineId, delta));
   }
 
   function repeatCartLine(cartLineId) {
+    startPosInteraction("repeatResponseMs");
     setQuote(null);
     setCart((current) => repeatPosCartLine(current, cartLineId));
   }
 
   function removeCartLine(cartLineId) {
+    startPosInteraction("deleteResponseMs");
     setQuote(null);
     setSelectedCartLineId((selected) => nextPosCartLineSelectionAfterRemoval(cart, cartLineId, selected));
     setCart((current) => removePosCartLine(current, cartLineId));
@@ -8607,7 +8693,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setDeviceId(payload.device.id);
       if (typeof window !== "undefined") window.localStorage.setItem(deviceStorageKey, payload.device.id);
       setNotice("POS device registered for this restaurant.");
-      await loadPos();
+      await refreshPosConfig();
       dispatchWorkflow({
         type: POS_EVENT.BOOTSTRAP_READY,
         payload: { hasDevice: true, pinConfigured: Boolean(config?.pinStatus?.configured || newCashierPin) }
@@ -8632,7 +8718,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         }
       });
       setNotice("POS shift opened.");
-      await loadPos();
+      await refreshPosConfig();
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8651,7 +8737,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         body: { closingCashCents: currentCashDrawer?.currentBalanceCents || openingCashCents }
       });
       setNotice("POS shift closed.");
-      await loadPos();
+      await refreshPosConfig();
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8720,8 +8806,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setCart([]);
       setQuote(null);
       setNotice("Order held for later.");
-      await loadPos();
       dispatchWorkflow({ type: POS_EVENT.HOLD_ORDER });
+      void loadOrderLists();
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8751,7 +8837,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         setQuote(null);
       }
       setNotice("Order sent to the kitchen queue.");
-      if (refreshAfterSubmit) await onRefresh?.();
+      if (refreshAfterSubmit) void loadOrderLists();
       return payload.order;
     } catch (posError) {
       setError(posError);
@@ -8826,7 +8912,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       setExitPin("");
       setNotice(enabled ? "Kiosk mode enabled for this device." : "Kiosk mode exited.");
       if (!enabled) setShowKioskExit(false);
-      await loadPos();
+      await refreshPosConfig();
     } catch (posError) {
       setError(posError);
     } finally {
@@ -8836,15 +8922,14 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function hydrateHeldOrder(session) {
     const lines = session.cartJson?.lineItems || [];
-    const itemById = new Map(itemsForRegister.map((item) => [item.id, item]));
     setOrderType(session.orderType || "WALK_IN");
     setCustomer(normalizePosCustomer(session.customerJson));
     setTableNumber(String(session.customerJson?.tableNumber || ""));
     setSelectedCartLineId("");
     setCart(lines.map((line) => {
-      const item = itemById.get(line.menuItemId) || {};
+      const item = menuItemById.get(line.menuItemId) || {};
       const optionIds = posLineModifierOptionIds(line);
-      const selections = posSelectionsFromOptionIds(item, optionIds);
+      const selections = posSelectionsFromOptionIds(item, optionIds, item.posModifierGroups);
       const modifiers = line.modifiers || selectedPosModifierRows(item, selections);
       const modifierPriceCents = modifiers.reduce((sum, option) => sum + Number(option.priceCents || 0), 0);
       return {
@@ -8963,13 +9048,13 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     clearPosOrderDraft(restaurantKey);
   }
 
-  async function payCurrentOrder() {
-    const activeQuote = await calculateQuote();
-    if (activeQuote) {
-      setAmountReceived("");
-      setPaymentResult(null);
-      dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT });
-    }
+  function payCurrentOrder() {
+    if (!cart.length) return;
+    startPosInteraction("payNavigationResponseMs");
+    setAmountReceived("");
+    setPaymentResult(null);
+    dispatchWorkflow({ type: POS_EVENT.SELECT_PAYMENT });
+    if (!quote) void calculateQuote();
   }
 
   async function completeSuccessfulTransaction(order, changeDueCents = 0, drawerRequest = null) {
@@ -9001,15 +9086,76 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
     dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
     posPerformanceMark("cash-payment-reconciliation-start");
-    void Promise.all([loadPos({ silent: true }), loadOrderLists()]).finally(() => {
+    void Promise.all([refreshPosConfig(), loadOrderLists()]).catch(() => null).finally(() => {
       posPerformanceMark("cash-payment-reconciliation-end");
       posPerformanceMeasure("cash-payment-reconciliation-duration", "cash-payment-reconciliation-start", "cash-payment-reconciliation-end");
     });
   }
 
   function beginNewOrder() {
+    orderSequenceRef.current += 1;
+    menuImageIdsRef.current = new Set();
+    startPosInteraction("registerHomeToNewOrderMs");
     resetCurrentOrder();
     dispatchWorkflow({ type: POS_EVENT.OPEN_NEW_ORDER });
+  }
+
+  function startOrderEntry() {
+    orderEntryStartedAtRef.current = posPerformanceNow();
+    startPosInteraction("orderEntryShellResponseMs");
+    dispatchWorkflow({ type: POS_EVENT.START_ORDER });
+  }
+
+  function reportOrderEntryRender(kind) {
+    if (!import.meta.env?.DEV || !orderEntryStartedAtRef.current) return;
+    const orderNumber = Math.max(1, orderSequenceRef.current);
+    const duration = posPerformanceNow() - orderEntryStartedAtRef.current;
+    if (kind === "shell") {
+      recordPosPerformanceMetric("orderEntryShellMs", duration);
+      recordPosPerformanceMetric(`order${orderNumber}EntryShellMs`, duration);
+    } else if (kind === "menu") {
+      recordPosPerformanceMetric("firstMenuRenderMs", duration);
+      recordPosPerformanceMetric(`order${orderNumber}FirstMenuRenderMs`, duration);
+      if ([POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)) {
+        recordPosPerformanceMetric(`order${orderNumber}FullMenuReadyMs`, duration);
+      }
+    }
+  }
+
+  function reportMenuImageLoad(itemId) {
+    if (!import.meta.env?.DEV || !itemId || menuImageIdsRef.current.has(itemId)) return;
+    menuImageIdsRef.current.add(itemId);
+    recordPosPerformanceMetric("menuImagesLoadedCount", menuImageIdsRef.current.size);
+    if (menuImageIdsRef.current.size === 1 && orderEntryStartedAtRef.current) {
+      recordPosPerformanceMetric("firstMenuImageMs", posPerformanceNow() - orderEntryStartedAtRef.current);
+    }
+  }
+
+  function selectMenuCategory(value) {
+    startPosInteraction("categoryResponseMs");
+    setSelectedCategory(value);
+  }
+
+  function updateMenuSearch(value) {
+    startPosInteraction("searchResponseMs");
+    setSearchQuery(value);
+  }
+
+  function setCartLineSelection(value) {
+    startPosInteraction("cartLineSelectionResponseMs");
+    setSelectedCartLineId(value);
+  }
+
+  function setCartOpen(value) {
+    startPosInteraction("cartOpenResponseMs");
+    setMobileCartOpen(value);
+  }
+
+  function clearCurrentCart() {
+    startPosInteraction("cartResponseMs");
+    setCart([]);
+    setSelectedCartLineId("");
+    setQuote(null);
   }
 
   function returnHome() {
@@ -9132,7 +9278,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           orderFieldPolicy={config?.orderFieldPolicy || {}}
           locationId={locationId}
           setLocationId={(value) => { setLocationId(value); setQuote(null); }}
-          onStart={() => dispatchWorkflow({ type: POS_EVENT.START_ORDER })}
+          onStart={startOrderEntry}
           onBack={returnHome}
         />
       );
@@ -9142,26 +9288,26 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       workflowScreen = (
         <OrderEntryScreen
           items={visibleItems}
-          menuItems={itemsForRegister}
+          menuItemById={menuItemById}
           categories={categoriesForRegister}
           selectedCategory={selectedCategory}
-          setSelectedCategory={setSelectedCategory}
+          setSelectedCategory={selectMenuCategory}
           searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
+          setSearchQuery={updateMenuSearch}
           cart={cart}
           selectedCartLineId={selectedCartLineId}
-          setSelectedCartLineId={setSelectedCartLineId}
+          setSelectedCartLineId={setCartLineSelection}
           cartItemCount={cartItemCount}
           cartTotalCents={cartTotalCents}
           mobileCartOpen={mobileCartOpen}
-          setMobileCartOpen={setMobileCartOpen}
+          setMobileCartOpen={setCartOpen}
           onAdd={addToCart}
           onRepeat={repeatCartLine}
           onIncrease={(cartLineId) => adjustQuantity(cartLineId, 1)}
           onDecrease={(cartLineId) => adjustQuantity(cartLineId, -1)}
           onModify={modifyCartLine}
           onRemove={removeCartLine}
-          onClear={() => { setCart([]); setSelectedCartLineId(""); setQuote(null); }}
+          onClear={clearCurrentCart}
           onPay={payCurrentOrder}
           onHold={holdOrder}
           onHome={returnHome}
@@ -9169,6 +9315,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           emptyTitle={posEmptyTitle}
           emptyDetail={posEmptyDetail}
           onImageError={handleSafeImageError}
+          onImageLoad={reportMenuImageLoad}
+          onFirstRender={() => reportOrderEntryRender("shell")}
+          onFirstMenuRender={() => reportOrderEntryRender("menu")}
         />
       );
       break;
@@ -9361,7 +9510,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             </div>
             <div className="pos-modifier-scroll">
               <div className="pos-modifier-groups">
-                {normalizePosModifierGroups(customizingItem).map((group) => {
+                {customizingModifierGroups.map((group) => {
                   const selectedIds = modifierSelections[group.id] || [];
                   const maximum = Math.max(1, Number(group.maxSelect || 1));
                   const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
@@ -9390,7 +9539,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
             </div>
             <div className="pos-modifier-actions">
               <button className="button-muted justify-center" type="button" onClick={closeModifierDialog}>Cancel</button>
-              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()} disabled={posModifierValidationErrors(customizingItem, modifierSelections).length > 0}>{editingCartLineId ? "Update item" : "Add to order"}</button>
+              <button className="button-primary justify-center" type="button" onClick={() => addConfiguredItemToCart()} disabled={modifierSelectionErrors.length > 0}>{editingCartLineId ? "Update item" : "Add to order"}</button>
             </div>
           </div>
         </div>
@@ -11094,7 +11243,6 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
           restaurantId={restaurantId}
           restaurantSlug={profile.slug || initialSlug || user?.restaurantSlug || ""}
           profile={profile}
-          onRefresh={loadRestaurant}
         />
       </RestaurantPageComponent>
     );

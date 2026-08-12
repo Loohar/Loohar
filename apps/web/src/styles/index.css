@@ -4262,7 +4262,7 @@ textarea {
   }
 
   .pos-entry-items > button {
-    @apply relative grid min-h-[124px] grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30;
+    @apply relative grid min-h-[124px] grid-cols-[72px_minmax(0,1fr)] items-center gap-3 rounded-md border border-line bg-white p-3 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-mint focus:outline-none focus:ring-2 focus:ring-mint/30 active:scale-[0.99];
   }
 
   .pos-entry-items img,
