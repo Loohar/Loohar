@@ -79,7 +79,7 @@ const successBlock = app.slice(app.indexOf("async function completeSuccessfulTra
 const finishBlock = app.slice(app.indexOf("function finishPaidOrder"), app.indexOf("function beginNewOrder"));
 assert.equal(cashBlock.includes("lastOrder ||"), true, "payment retry should reuse the committed order and avoid duplicate Kitchen tickets");
 assert.equal(cashBlock.match(/submitOrder\(/g)?.length, 1, "cash flow should commit/send the order only once");
-assert.equal(successBlock.includes("setPaymentResult({ success: true"), true, "successful payment should preserve the active order while change is visible");
+assert.equal(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true"), true, "successful payment should preserve the active order while change is visible");
 assert.equal(successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), true, "successful payment should enter the confirmation state");
 assert.equal(finishBlock.includes("resetCurrentOrder()"), true, "Done should clear the active cart");
 assert.equal(finishBlock.includes("POS_EVENT.HOME"), true, "Done should return to Register Home");

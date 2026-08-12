@@ -31,11 +31,12 @@ assert.ok(cashBlock.indexOf("if (cashPaymentInFlightRef.current) return") < cash
 assert.ok(cashBlock.includes("cashPaymentInFlightRef.current = false"), "the cash submission lock should release after success or failure");
 assert.ok(screens.includes('saving ? "Processing..." : "Complete cash payment"'), "cash payment should show immediate processing feedback");
 
-assert.ok(cashBlock.includes("lastOrder ? null : (quote || await calculateQuote())"), "cash completion should reuse the quote created before payment selection");
+assert.ok(cashBlock.includes("lastOrder ? null : (quote || await calculateQuote(cart, { trackCashPayment: true }))"), "cash completion should reuse the quote created before payment selection");
 assert.ok(cashBlock.includes("refreshAfterSubmit: false"), "cash order submission should skip the broad restaurant refresh");
 assert.ok(submitBlock.includes("if (refreshAfterSubmit) void loadOrderLists()"), "non-payment submission should refresh only POS order state in the background");
 assert.equal(submitBlock.includes("onRefresh"), false, "POS submission should not trigger the broad restaurant dashboard refresh");
 assert.equal(cashBlock.match(/calculateQuote\(/g)?.length, 1, "cash completion should have only a fallback quote call");
+assert.ok(cashBlock.includes("cashPaymentRequestCountRef.current += 1"), "cash completion should count each authoritative request");
 
 const cashRequestIndex = cashBlock.indexOf('await posApi("/payments/cash"');
 const successIndex = cashBlock.indexOf("completeSuccessfulTransaction(");
@@ -43,6 +44,7 @@ assert.ok(cashRequestIndex >= 0 && successIndex > cashRequestIndex, "Payment Com
 assert.equal(cashBlock.includes("await completeSuccessfulTransaction"), false, "success rendering should not wait for reconciliation");
 assert.equal(successBlock.includes("loadPos("), false, "Payment Complete should not block on POS bootstrap refresh");
 assert.equal(successBlock.includes("loadOrderLists("), false, "Payment Complete should not block on order-list reconciliation");
+assert.ok(app.includes("<PaymentProcessingScreen") && !app.slice(app.indexOf("case POS_WORKFLOW.PAYMENT_PROCESSING"), app.indexOf("case POS_WORKFLOW.PAYMENT_SUCCESS")).includes("PosBootScreen"), "payment processing should never render the register bootstrap screen");
 assert.ok(finishBlock.includes("void Promise.all([refreshPosConfig(), loadOrderLists()])"), "Done should reconcile config and order state without reloading the menu");
 assert.equal(finishBlock.includes("loadPos("), false, "Done should preserve the accepted menu for the next customer");
 

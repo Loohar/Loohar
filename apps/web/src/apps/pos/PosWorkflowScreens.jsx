@@ -451,7 +451,13 @@ export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onE
   );
 }
 
-export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash }) {
+export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash, onFirstRender }) {
+  const firstRenderReportedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (firstRenderReportedRef.current) return;
+    firstRenderReportedRef.current = true;
+    onFirstRender?.();
+  }, [onFirstRender]);
   const quoteReady = Boolean(quote?.id);
   const total = Number(quote?.totalCents || 0);
   const tenderedCents = cashTenderInputToCents(amountReceived) ?? 0;
@@ -499,13 +505,39 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
   );
 }
 
-export function PaymentResultScreen({ success, order, changeDueCents, message, onComplete, onRetry }) {
+export function PaymentProcessingScreen({ order, amountReceivedCents = 0, onFirstRender }) {
+  const firstRenderReportedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (firstRenderReportedRef.current) return;
+    firstRenderReportedRef.current = true;
+    onFirstRender?.();
+  }, [onFirstRender]);
+  return (
+    <section className="pos-centered-screen pos-payment-processing" role="status" aria-live="polite" aria-busy="true">
+      <Banknote size={52} />
+      <h2>Processing payment...</h2>
+      <p>Confirming this cash transaction securely.</p>
+      <dl className="pos-payment-summary">
+        <div><dt>Order</dt><dd>{order?.orderNumber || "Current order"}</dd></div>
+        <div><dt>Cash received</dt><dd>{money(amountReceivedCents)}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
+export function PaymentResultScreen({ success, order, changeDueCents, amountPaidCents = 0, cashTenderedCents = 0, paymentMethod = "Cash", message, onComplete, onRetry, onFirstRender }) {
+  const firstRenderReportedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (firstRenderReportedRef.current) return;
+    firstRenderReportedRef.current = true;
+    onFirstRender?.();
+  }, [onFirstRender]);
   return (
     <section className={`pos-centered-screen pos-payment-result ${success ? "success" : "failure"}`} role="status">
       {success ? <CheckCircle2 size={52} /> : <CreditCard size={52} />}
       <h2>{success ? "Payment complete" : "Payment needs attention"}</h2>
       <p>{message || (success ? `${order?.orderNumber || "Order"} is ready for its final receipt.` : "No payment was recorded. Choose a payment method and try again.")}</p>
-      {success ? <p className="pos-change-callout">Change due <strong>{money(changeDueCents)}</strong></p> : null}
+      {success ? <><dl className="pos-payment-summary"><div><dt>Order</dt><dd>{order?.orderNumber || order?.id || "Order"}</dd></div><div><dt>Payment method</dt><dd>{paymentMethod}</dd></div><div><dt>Cash received</dt><dd>{money(cashTenderedCents)}</dd></div><div><dt>Amount paid</dt><dd>{money(amountPaidCents)}</dd></div></dl><p className="pos-change-callout">Change due <strong>{money(changeDueCents)}</strong></p></> : null}
       <button className="button-primary" type="button" onClick={success ? onComplete : onRetry}>{success ? "Done" : "Try another method"}</button>
     </section>
   );

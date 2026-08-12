@@ -4596,6 +4596,30 @@ textarea {
     @apply block text-3xl;
   }
 
+  .pos-payment-processing {
+    @apply gap-3;
+  }
+
+  .pos-payment-processing > svg {
+    @apply text-mint;
+  }
+
+  .pos-payment-summary {
+    @apply grid w-full max-w-sm gap-2 rounded-md border border-line bg-white p-4 text-left shadow-soft;
+  }
+
+  .pos-payment-summary > div {
+    @apply flex items-center justify-between gap-4;
+  }
+
+  .pos-payment-summary dt {
+    @apply text-sm font-semibold text-slate-500;
+  }
+
+  .pos-payment-summary dd {
+    @apply text-right font-black text-ink;
+  }
+
   .pos-shift-card {
     @apply mt-6 flex items-start gap-4;
   }

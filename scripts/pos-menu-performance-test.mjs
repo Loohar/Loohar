@@ -39,7 +39,8 @@ assert.ok(app.includes("const menuItemById = useMemo"), "menu item lookup should
 assert.ok(app.includes("preparePosMenuItems(categoriesForRegister)"), "modifier capability and search metadata should be prepared once per accepted menu");
 assert.ok(app.includes("item.posDefaultModifierSelections ?? posDefaultModifierSelections(item)"), "direct-add should reuse prepared default modifier selections");
 assert.ok(app.includes("posModifierGroupValidationErrors(customizingModifierGroups, modifierSelections)"), "modifier selection should reuse prepared groups instead of sorting metadata per render");
-assert.ok(payCurrentOrder.indexOf("POS_EVENT.SELECT_PAYMENT") < payCurrentOrder.indexOf("if (!quote) void calculateQuote()"), "Pay should navigate immediately before server quote completion");
+assert.ok(payCurrentOrder.indexOf("POS_EVENT.SELECT_PAYMENT") < payCurrentOrder.indexOf("globalThis.requestAnimationFrame(() => globalThis.setTimeout(requestQuote, 0))"), "Pay should paint before starting server quote work");
+assert.ok(app.includes('recordPosPerformanceMetric("payTransitionApiRequestCount", payTransitionRequestCountRef.current)'), "Pay transition should report its pre-render API request count");
 assert.ok(screens.includes("Preparing the server-verified total...") && screens.includes("disabled={!quoteReady}"), "payment controls should remain disabled until the authoritative quote is ready");
 assert.ok(screens.includes('loading="lazy"') && screens.includes('decoding="async"') && screens.includes('width="72" height="72"'), "menu images should load lazily without shifting item layout");
 assert.equal(workspace.includes("io("), false, "POS workspace should not create duplicate Socket.IO clients or KDS listeners");

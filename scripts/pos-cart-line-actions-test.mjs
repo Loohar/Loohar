@@ -180,9 +180,9 @@ const successBlock = app.slice(app.indexOf("async function completeSuccessfulTra
 const finishBlock = app.slice(app.indexOf("function finishPaidOrder"), app.indexOf("function beginNewOrder"));
 assert.ok(addConfiguredBlock.includes("replacePosCartLineConfiguration") && addConfiguredBlock.includes("setQuote(null)"), "modified lines should replace in place and invalidate stale quotes");
 assert.ok(addConfiguredBlock.includes("void calculateQuote(updatedCart)"), "modified lines should request a fresh server-authoritative quote");
-assert.ok(payBlock.indexOf("POS_EVENT.SELECT_PAYMENT") < payBlock.indexOf("void calculateQuote()"), "Pay should navigate immediately while the authoritative quote loads");
+assert.ok(payBlock.indexOf("POS_EVENT.SELECT_PAYMENT") < payBlock.indexOf("globalThis.requestAnimationFrame(() => globalThis.setTimeout(requestQuote, 0))"), "Pay should paint before the authoritative quote request starts");
 assert.ok(screens.includes("Preparing the server-verified total...") && screens.includes("!quoteReady || !canAcceptCash"), "payment controls should remain disabled until the authoritative quote is ready");
-assert.ok(successBlock.includes("setPaymentResult({ success: true") && successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), "successful payment should show confirmation and change before resetting");
+assert.ok(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true") && successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), "successful payment should show confirmation and change before resetting");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should clear the cart and return to Register Home");
 assert.ok(screens.includes("canModifyPosItem") && screens.includes("Modify ${line.name}"), "Modify should render only for meaningfully configurable cart lines");
 assert.ok(screens.includes("Repeat ${line.name}") && screens.includes('title="Remove item"'), "cart lines should expose Repeat and a compact accessible delete icon");

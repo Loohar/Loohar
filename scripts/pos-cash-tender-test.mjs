@@ -99,7 +99,7 @@ const acceptCashBlock = sectionBetween(app, "async function acceptCashPayment", 
 const successBlock = sectionBetween(app, "async function completeSuccessfulTransaction", "async function sendCurrentOrderToKitchen");
 const finishBlock = sectionBetween(app, "function finishPaidOrder", "function beginNewOrder");
 assert.equal(acceptCashBlock.match(/submitOrder\(/g)?.length, 1, "cash retry should not create a duplicate order or KDS ticket");
-assert.ok(successBlock.includes("setPaymentResult({ success: true") && !successBlock.includes("resetCurrentOrder()"), "change should remain visible before cart reset");
+assert.ok(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true") && !successBlock.includes("resetCurrentOrder()"), "change should remain visible before cart reset");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should clear temporary state and return Register Home");
 assert.equal(acceptCashBlock.includes("resetCurrentOrder()"), false, "failed cash settlement should preserve the cart for retry");
 
