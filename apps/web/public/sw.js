@@ -1,5 +1,6 @@
 const CACHE_NAME = "loohar-pwa-shell-v5";
 const OFFLINE_URL = "/offline.html";
+const NETWORK_ONLY_PATHS = ["/api/", "/health"];
 const APP_SHELL_URLS = [
   "/",
   "/driver",
@@ -30,7 +31,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.pathname.startsWith("/api/")) {
+  const networkOnly = NETWORK_ONLY_PATHS.some((path) => url.pathname === path || url.pathname.startsWith(path));
+  if (event.request.method !== "GET" || networkOnly) {
     event.respondWith(fetch(event.request));
     return;
   }

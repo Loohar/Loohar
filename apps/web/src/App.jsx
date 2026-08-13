@@ -60,7 +60,9 @@ import {
 } from "./apps/pos/cart.js";
 import { cashTenderInputToCents, cashTenderSummary } from "./apps/pos/cashTender.js";
 import { filterPosMenuItems, preparePosMenuItems } from "./apps/pos/menuPerformance.js";
-import { api, API_ORIGIN, checkApiHealth } from "./lib/api.js";
+import { POS_CONFIG_STATE, POS_CONNECTION_STATE, posStartupDisplay } from "./apps/pos/startupReliability.js";
+import { api, API_ORIGIN, checkApiHealthWithRetry } from "./lib/api.js";
+import { retryTransientRequest } from "./lib/networkRequest.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { isPrivateNetworkHost } from "./shared/networkHost.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
@@ -3119,7 +3121,7 @@ function RestaurantAppShell({ children, user, restaurantSlug = "", activePage = 
             <strong>{pageInfo.title}</strong>
           </div>
           <div className="restaurant-shell-topbar-actions">
-            <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill>
+            {safePage !== "pos" ? <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live API" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill> : null}
             {authChecking ? <StatusPill tone="neutral">Session check</StatusPill> : null}
             {publicWebsitePath ? <a className="restaurant-shell-icon-link" href={publicWebsitePath} target="_blank" rel="noreferrer" aria-label="Open public restaurant website"><Store size={18} /></a> : null}
             <button className="restaurant-shell-icon-link" type="button" onClick={onLogout} aria-label="Log out"><LogOut size={18} /></button>
@@ -7811,6 +7813,7 @@ const POS_MENU_STATUS = Object.freeze({
   ENTITLEMENT_DENIED: "ENTITLEMENT_DENIED"
 });
 const POS_STARTUP_TIMEOUT_MS = 8000;
+const POS_STARTUP_ATTEMPT_TIMEOUT_MS = 3000;
 
 function posPerformanceNow() {
   return globalThis.performance?.now?.() ?? Date.now();
@@ -7839,6 +7842,10 @@ function isPosConnectionFailure(error) {
   const code = String(error?.payload?.code || error?.code || "");
   const status = Number(error?.status || error?.payload?.status || 0);
   return code === "API_REQUEST_TIMEOUT"
+    || status === 408
+    || status === 425
+    || status === 429
+    || status >= 500
     || (!status && ["AbortError", "NetworkError", "TimeoutError", "TypeError"].includes(String(error?.name || "")));
 }
 
@@ -8063,19 +8070,18 @@ function RestaurantKioskShell({ apiOnline, apiMode, token, user, restaurantSlug,
       <header className="pos-kiosk-topbar">
         <LooharPlatformBrand size="compact" href="/" />
         <div className="pos-kiosk-topbar-actions">
-          <StatusPill tone={apiOnline ? "good" : apiMode === "CHECKING" ? "neutral" : "warn"}>{apiOnline ? "Live POS" : apiMode === "CHECKING" ? "Checking API" : "Offline"}</StatusPill>
           {ownerOperator ? <a className="button-muted" href={restaurantPagePath(profile.slug, "pos")}><CreditCard size={16} />Owner POS</a> : null}
           <button className="button-muted" type="button" onClick={onLogout}><LogOut size={16} />Logout</button>
         </div>
       </header>
       <main className="pos-kiosk-main">
-        <RestaurantPosWorkspace apiOnline={apiOnline} token={token} user={user} restaurantId={user?.restaurantId} restaurantSlug={profile.slug} profile={profile} kioskOnly />
+        <RestaurantPosWorkspace apiOnline={apiOnline} apiMode={apiMode} token={token} user={user} restaurantId={user?.restaurantId} restaurantSlug={profile.slug} profile={profile} kioskOnly />
       </main>
     </div>
   );
 }
 
-function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaurantSlug, profile = {}, kioskOnly = false }) {
+function RestaurantPosWorkspace({ apiOnline, apiMode, token, user, restaurantId, restaurantSlug, profile = {}, kioskOnly = false }) {
   const restaurantKey = restaurantSlug || profile.slug || user?.restaurantSlug || restaurantId;
   const posBasePath = restaurantKey ? `/api/restaurants/${restaurantKey}/pos` : "";
   const deviceStorageKey = restaurantKey ? `loohar-pos-device-id:${restaurantKey}` : "loohar-pos-device-id";
@@ -8097,6 +8103,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [fingerprint, setFingerprint] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [config, setConfig] = useState(null);
+  const [configState, setConfigState] = useState(POS_CONFIG_STATE.LOADING);
   const [posMenuState, setPosMenuState] = useState(() => emptyPosMenuState());
   const [heldOrders, setHeldOrders] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -8109,7 +8116,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
   const [loading, setLoading] = useState(false);
   const [startupStage, setStartupStage] = useState("Connecting to register...");
   const [startupConnectionFailed, setStartupConnectionFailed] = useState(false);
-  const [connectionDegraded, setConnectionDegraded] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -8197,6 +8204,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   function applyPosConfig(configPayload, options = {}) {
     setConfig(configPayload);
+    setConfigState(POS_CONFIG_STATE.READY);
     setLocationId((current) => current || configPayload.device?.locationId || configPayload.locations?.[0]?.id || "");
     setDeviceForm((current) => ({
       ...current,
@@ -8218,19 +8226,22 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         }
       });
     }
-    setConnectionDegraded(false);
+    setConnectionFailed(false);
   }
 
   async function refreshPosConfig() {
     if (!apiOnline || !token || !posBasePath) return null;
     if (inflightConfigRefreshRef.current) return inflightConfigRefreshRef.current;
+    if (!config) setConfigState(POS_CONFIG_STATE.LOADING);
     const request = posApi("/config", { timeoutMs: POS_STARTUP_TIMEOUT_MS })
       .then((payload) => {
         applyPosConfig(payload);
         return payload;
       })
       .catch((posError) => {
-        setConnectionDegraded(isPosConnectionFailure(posError));
+        const failedToConnect = isPosConnectionFailure(posError);
+        setConnectionFailed(failedToConnect);
+        if (!config) setConfigState(POS_CONFIG_STATE.ERROR);
         setError(posError);
         throw posError;
       })
@@ -8277,12 +8288,17 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     if (!options.silent) setLoading(true);
     setStartupStage("Connecting to register...");
     setStartupConnectionFailed(false);
+    setConnectionFailed(false);
+    if (!config) setConfigState(POS_CONFIG_STATE.LOADING);
     setError("");
     const controller = new globalThis.AbortController();
     startupAbortRef.current = controller;
     const startupRequest = (async () => {
       const configStartedAt = posPerformanceNow();
-      const configPromise = posApi("/config", { signal: controller.signal, timeoutMs: POS_STARTUP_TIMEOUT_MS })
+      const configPromise = retryTransientRequest(
+        () => posApi("/config", { signal: controller.signal, timeoutMs: POS_STARTUP_ATTEMPT_TIMEOUT_MS }),
+        { signal: controller.signal, shouldRetry: isPosConnectionFailure }
+      )
         .then((payload) => {
           recordPosStartupTiming("registerDeviceShiftMs", configStartedAt);
           recordPosStartupTiming("registerMs", configStartedAt);
@@ -8294,11 +8310,14 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
       const menuStartedAt = posPerformanceNow();
       menuRequestCountRef.current += 1;
       recordPosPerformanceMetric("menuApiRequestCount", menuRequestCountRef.current);
-      const menuOutcomePromise = posApi("/menu", {
-        signal: controller.signal,
-        timeoutMs: POS_STARTUP_TIMEOUT_MS,
-        headers: { "x-loohar-pos-request-id": requestId }
-      }).then(
+      const menuOutcomePromise = retryTransientRequest(
+        () => posApi("/menu", {
+          signal: controller.signal,
+          timeoutMs: POS_STARTUP_ATTEMPT_TIMEOUT_MS,
+          headers: { "x-loohar-pos-request-id": requestId }
+        }),
+        { signal: controller.signal, shouldRetry: isPosConnectionFailure }
+      ).then(
         (payload) => {
           recordPosStartupTiming("menuModifierMs", menuStartedAt);
           recordPosStartupTiming("menuRequestMs", menuStartedAt);
@@ -8337,7 +8356,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
               requestSequence
             };
           });
-          setConnectionDegraded(isPosConnectionFailure(menuError));
+          setConnectionFailed(isPosConnectionFailure(menuError));
           setError(menuError);
           debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(menuError), message: menuError?.message });
           return;
@@ -8374,7 +8393,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
           error: null,
           refreshError: null
         }));
-        setConnectionDegraded(false);
+        setConnectionFailed(false);
         setStartupStage("Ready");
         posPerformanceMark("pos-menu-ready");
         recordPosStartupTiming("menuReadyMs", startupStartedAt);
@@ -8400,7 +8419,8 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         debugPosMenu("response-error", { requestSequence, requestId, code: posMenuErrorCode(posError), message: posError?.message });
         const connectionFailed = isPosConnectionFailure(posError);
         setStartupConnectionFailed(connectionFailed);
-        setConnectionDegraded(connectionFailed);
+        setConnectionFailed(connectionFailed);
+        if (!config) setConfigState(POS_CONFIG_STATE.ERROR);
         setError(posError);
         if (!loadedOnceRef.current) dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_FAILED, payload: { message: posStartupFailureMessage(posError) } });
       } finally {
@@ -8417,7 +8437,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     if (!fingerprint) return;
     if (!apiOnline) return;
     if (loadedOnceRef.current) {
-      setConnectionDegraded(false);
+      setConnectionFailed(false);
       return;
     }
     loadPos({ silent: loadedOnceRef.current });
@@ -8429,7 +8449,7 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
 
   useEffect(() => {
     if (!apiOnline) {
-      setConnectionDegraded(true);
+      setConnectionFailed(true);
       if (!loadedOnceRef.current) {
         rememberPosSession("");
         dispatchWorkflow({ type: POS_EVENT.API_OFFLINE });
@@ -9259,9 +9279,10 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
     navigateInApp(`${restaurantBasePath}/orders/${encodeURIComponent(order.id)}/receipt?kind=guest`);
   }
 
-  const effectiveWorkflow = !apiOnline && !loadedOnceRef.current ? POS_WORKFLOW.OFFLINE : workflow.value;
-  const registerOnline = apiOnline && !connectionDegraded;
-  const initialConnectionUnavailable = !apiOnline && !loadedOnceRef.current;
+  const connectionDisplay = posStartupDisplay({ apiMode, apiOnline, configState, connectionFailed, device: activeDevice, shift: activeShift });
+  const effectiveWorkflow = connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE && !loadedOnceRef.current ? POS_WORKFLOW.OFFLINE : workflow.value;
+  const registerOnline = connectionDisplay.isOnline;
+  const initialConnectionUnavailable = connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE && !loadedOnceRef.current;
   const restaurantForPos = config?.restaurant || profile;
   const savingAction = Boolean(saving);
   const registerControlOpensSettings = ownerOperator && effectiveWorkflow === POS_WORKFLOW.LOCKED;
@@ -9560,9 +9581,9 @@ function RestaurantPosWorkspace({ apiOnline, token, user, restaurantId, restaura
         </div>
         <CashierBadge user={workflow.context.unlockedBy || user} />
         <div className="pos-workflow-status">
-          <span className={registerOnline ? "online" : connectionDegraded ? "degraded" : "offline"}>{registerOnline ? "Online" : connectionDegraded ? "Degraded" : "Offline"}</span>
-          <span className="pos-workflow-register-label">{activeDevice?.name || "Register not configured"}</span>
-          <span className="pos-workflow-shift-label">{activeShift?.status === "OPEN" ? "Shift open" : "Shift closed"}</span>
+          <span className={connectionDisplay.connectionClass}>{connectionDisplay.connectionLabel}</span>
+          <span className="pos-workflow-register-label">{connectionDisplay.registerLabel}</span>
+          <span className="pos-workflow-shift-label">{connectionDisplay.shiftLabel}</span>
         </div>
         <div className="pos-workflow-topline-actions">
           {!kioskLocked ? <a className="icon-button pos-mobile-dashboard-link" href={restaurantDashboardHref} aria-label="Return to restaurant dashboard"><LayoutDashboard size={18} /></a> : null}
@@ -9983,7 +10004,7 @@ function DriverAppDownloadPage() {
   );
 }
 
-function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = "dashboard" }) {
+function RestaurantApp({ apiOnline, apiMode, token, user, initialSlug = "", activePage = "dashboard" }) {
   const [routeRestaurantId, setRouteRestaurantId] = useState("");
   const restaurantId = initialSlug || user?.restaurantSlug || routeRestaurantId || user?.restaurantId || "";
   const initialProfile = useMemo(
@@ -11331,6 +11352,7 @@ function RestaurantApp({ apiOnline, token, user, initialSlug = "", activePage = 
       <RestaurantPageComponent>
         <RestaurantPosWorkspace
           apiOnline={apiOnline}
+          apiMode={apiMode}
           token={token}
           user={user}
           restaurantId={restaurantId}
@@ -13816,7 +13838,7 @@ export default function App() {
       let nextOnline = false;
       const healthStartedAt = posPerformanceNow();
       try {
-        await checkApiHealth({ force });
+        await checkApiHealthWithRetry({ force });
         nextOnline = true;
         if (!cancelled) {
           setApiOnline(true);
@@ -14133,7 +14155,7 @@ export default function App() {
         ? <Redirecting to={restaurantOnboardingPathFor(user, restaurantSlug)} />
         : restaurantPage === "kitchen"
           ? <KitchenApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantShellSlug} />
-          : <RestaurantApp apiOnline={apiOnline} token={token} user={user} initialSlug={restaurantSlug} activePage={restaurantPage} />;
+          : <RestaurantApp apiOnline={apiOnline} apiMode={apiMode} token={token} user={user} initialSlug={restaurantSlug} activePage={restaurantPage} />;
     if (apiMode === "CHECKING" || (apiOnline && authChecking)) return <AppLoadingState />;
     if (legacyRestaurantRedirect) return <Redirecting to={legacyRestaurantRedirect} />;
     if (!canOpenRestaurant) {

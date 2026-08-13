@@ -1,5 +1,5 @@
 import { clearSession, getAccessToken, getRefreshToken, getSessionRevision, storeSession } from "../shared/auth.js";
-import { API_HEALTH_TIMEOUT_MS, DEFAULT_API_TIMEOUT_MS, fetchWithTimeout } from "./networkRequest.js";
+import { API_HEALTH_TIMEOUT_MS, DEFAULT_API_TIMEOUT_MS, fetchWithTimeout, retryTransientRequest } from "./networkRequest.js";
 
 const isDev = import.meta.env.DEV;
 const localDevApiOrigin = [("http" + ":"), "", ("local" + "host")].join("/") + ":5001";
@@ -7,19 +7,11 @@ const localApiUrl = `${localDevApiOrigin}/api`;
 const defaultApiUrl = "/api";
 const runtimeDefaultApiUrl = isDev ? localApiUrl : defaultApiUrl;
 const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || runtimeDefaultApiUrl;
-const legacyRenderHost = ["loohar-api", "onrender", "com"].join(".");
-const apiCustomDomain = ["api", "loohar", "com"].join(".");
-const configuredApiUrl =
-  import.meta.env.PROD && (rawConfiguredApiUrl.includes(legacyRenderHost) || rawConfiguredApiUrl.includes(apiCustomDomain))
-    ? defaultApiUrl
-    : rawConfiguredApiUrl;
+const configuredApiUrl = import.meta.env.PROD ? defaultApiUrl : rawConfiguredApiUrl;
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
-const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || (isDev ? `${localDevApiOrigin}/health` : "");
-const configuredApiHealthUrl =
-  import.meta.env.PROD && (rawConfiguredApiHealthUrl.includes(legacyRenderHost) || rawConfiguredApiHealthUrl.includes(apiCustomDomain))
-    ? "/health"
-    : rawConfiguredApiHealthUrl;
+const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || (isDev ? `${localDevApiOrigin}/health` : "/health");
+const configuredApiHealthUrl = import.meta.env.PROD ? "/health" : rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
 const inflightRequests = new Map();
 let refreshPromise = null;
@@ -185,7 +177,7 @@ async function runApiHealthProbe() {
   const inferredCandidates = API_URL.endsWith("/api")
     ? [`${API_URL}/health`, `${API_ORIGIN}/health`]
     : [`${API_URL}/api/health`, `${API_URL}/health`];
-  const candidates = [...new Set(API_HEALTH_URL ? [API_HEALTH_URL, ...inferredCandidates] : inferredCandidates)];
+  const candidates = [...new Set(API_HEALTH_URL ? [API_HEALTH_URL] : inferredCandidates)];
   const deadline = Date.now() + API_HEALTH_TIMEOUT_MS;
   let lastError;
   for (const url of candidates) {
@@ -193,7 +185,11 @@ async function runApiHealthProbe() {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) throw lastError || new Error("API health check timed out.");
       const response = await fetchWithTimeout(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } }, Math.min(3000, remainingMs));
-      if (!response.ok) throw new Error(`Health check failed with ${response.status}`);
+      if (!response.ok) {
+        const error = new Error(`Health check failed with ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
       const payload = await response.json();
       return payload;
     } catch (error) {
@@ -231,6 +227,25 @@ export async function checkApiHealth(options = {}) {
     });
   healthState.promise = probe;
   return probe;
+}
+
+function isTransientHealthFailure(error) {
+  const status = Number(error?.status || 0);
+  return !status || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export async function checkApiHealthWithRetry(options = {}) {
+  const force = Boolean(options.force);
+  return retryTransientRequest(
+    (attempt) => checkApiHealth({ force: force || attempt > 1 }),
+    {
+      attempts: options.attempts ?? 3,
+      delaysMs: options.delaysMs,
+      signal: options.signal,
+      shouldRetry: isTransientHealthFailure,
+      onRetry: options.onRetry
+    }
+  );
 }
 
 export function resetApiHealthCache() {

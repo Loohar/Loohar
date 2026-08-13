@@ -59,7 +59,7 @@ assert.equal(success.includes("resetCurrentOrder()"), false, "success should kee
 assert.equal(cash.includes("resetCurrentOrder()"), false, "a failed payment should preserve the cart and committed order for retry");
 assert.ok(finish.includes("resetCurrentOrder()") && finish.includes("POS_EVENT.HOME"), "Done should preserve the established return-home behavior");
 
-assert.ok(app.includes("!apiOnline && !loadedOnceRef.current ? POS_WORKFLOW.OFFLINE : workflow.value"), "only initial startup should be replaced by the offline screen");
+assert.ok(app.includes("connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE && !loadedOnceRef.current ? POS_WORKFLOW.OFFLINE : workflow.value"), "only an authoritative initial OFFLINE state should replace the startup workflow");
 assert.ok(initialLoadEffect.includes("if (loadedOnceRef.current)") && initialLoadEffect.indexOf("if (loadedOnceRef.current)") < initialLoadEffect.indexOf("loadPos("), "health recovery should not bootstrap an active register again");
 assert.ok(healthEffect.includes("if (!loadedOnceRef.current)") && healthEffect.includes("POS_EVENT.API_OFFLINE"), "global health loss should preserve an already-loaded workflow while marking it degraded");
 

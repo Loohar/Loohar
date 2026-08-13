@@ -83,7 +83,7 @@ assert.equal(manifest.orientation, "any", "installed POS should support portrait
 assert.ok(manifest.shortcuts?.some((shortcut) => shortcut.url === "/restaurant/login"), "manifest should expose the secure restaurant POS entry point");
 assert.ok(indexHtml.includes("viewport-fit=cover") && indexHtml.includes("apple-mobile-web-app-capable"), "document metadata should support iOS standalone safe areas");
 assert.ok(main.includes('startsWith("/restaurant")') && main.includes('navigator.serviceWorker.register("/sw.js")'), "restaurant POS should reuse the existing service worker");
-assert.ok(serviceWorker.includes('url.pathname.startsWith("/api/")') && serviceWorker.includes("fetch(event.request)"), "service worker must keep all API and payment requests network-only");
+assert.ok(serviceWorker.includes("NETWORK_ONLY_PATHS") && serviceWorker.includes('"/api/"') && serviceWorker.includes("fetch(event.request)"), "service worker must keep all API and payment requests network-only");
 const serviceWorkers = readdirSync(join(root, "apps/web/public")).filter((name) => /^(sw|service-worker)\./i.test(name));
 assert.deepEqual(serviceWorkers, ["sw.js"], "PWA enhancement should not create a duplicate service worker");
 assert.ok(existsSync(join(root, "apps/web/public/manifest.json")), "existing manifest should remain the single PWA manifest");
