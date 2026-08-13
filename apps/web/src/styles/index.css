@@ -4761,6 +4761,7 @@ textarea {
     }
 
     .pos-cashier-badge,
+    .pos-workflow-location-label,
     .pos-workflow-shift-label {
       display: none;
     }

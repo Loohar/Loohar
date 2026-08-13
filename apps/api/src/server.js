@@ -25,7 +25,7 @@ import { authorizeNetOrdersWebhookRouter, authorizeNetPlatformWebhookRouter, str
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
-import { refreshSchemaCompatibility } from "./utils/schemaCompatibility.js";
+import { refreshSchemaCompatibility, schemaCompatibilitySnapshot } from "./utils/schemaCompatibility.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
 import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
@@ -169,10 +169,11 @@ app.use((req, res, next) => {
 });
 
 const baseHealthPayload = { service: "api", platform: process.env.PLATFORM_NAME || "Loohar", domain: process.env.PLATFORM_DOMAIN || "loohar.com" };
-async function healthHandler(req, res) {
-  const schema = await refreshSchemaCompatibility();
+function healthHandler(req, res) {
+  const schema = schemaCompatibilitySnapshot();
   const ok = Boolean(schema.ok);
   res.status(ok ? 200 : 503).json({ ok, ...baseHealthPayload, schema });
+  void refreshSchemaCompatibility();
 }
 app.get("/health", healthHandler);
 app.get("/api/health", healthHandler);
@@ -203,6 +204,7 @@ app.use(notFound);
 app.use(errorHandler);
 
 const port = Number(process.env.PORT || 5001);
+await refreshSchemaCompatibility({ force: true });
 server.listen(port, () => {
   console.log(`API listening on port ${port}`);
   console.log("CORS allowed origins:", configuredCorsOrigins.join(", "));

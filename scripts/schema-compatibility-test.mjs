@@ -27,11 +27,14 @@ assertCheck(includesAll(schemaCompatibility, [
   "TenantEntitlementSimulation",
   "MISSING_RESTAURANT_TENANT_CLASSIFICATION_COLUMN",
   "MISSING_REQUIRED_PRISMA_MIGRATION",
-  "schemaCompatibilitySnapshot"
-]), "Schema compatibility guard checks the tenant-classification migration and required database objects");
+  "schemaCompatibilitySnapshot",
+  "state.promise"
+]), "Schema compatibility guard checks required database objects and deduplicates concurrent refreshes");
 
 assertCheck(includesAll(server, [
   "refreshSchemaCompatibility",
+  "schemaCompatibilitySnapshot",
+  "await refreshSchemaCompatibility({ force: true })",
   "res.status(ok ? 200 : 503)",
   "app.get(\"/health\", healthHandler)",
   "app.get(\"/api/health\", healthHandler)"

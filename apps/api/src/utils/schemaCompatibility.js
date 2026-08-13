@@ -11,7 +11,8 @@ const CHECK_TTL_MS = 15_000;
 const state = {
   checkedAt: null,
   ok: false,
-  issues: [{ code: "SCHEMA_NOT_CHECKED", message: "Database schema compatibility has not been checked yet." }]
+  issues: [{ code: "SCHEMA_NOT_CHECKED", message: "Database schema compatibility has not been checked yet." }],
+  promise: null
 };
 
 function publicIssue(issue) {
@@ -36,9 +37,11 @@ export async function refreshSchemaCompatibility({ force = false } = {}) {
   if (!force && state.checkedAt && now - new Date(state.checkedAt).getTime() < CHECK_TTL_MS) {
     return schemaCompatibilitySnapshot();
   }
+  if (state.promise) return state.promise;
 
-  const issues = [];
-  try {
+  const check = (async () => {
+    const issues = [];
+    try {
     const columnRows = await prisma.$queryRaw`
       SELECT column_name, udt_name
       FROM information_schema.columns
@@ -153,26 +156,33 @@ export async function refreshSchemaCompatibility({ force = false } = {}) {
         });
       }
     }
-  } catch (error) {
-    issues.push({
-      code: "SCHEMA_COMPATIBILITY_CHECK_FAILED",
-      message: "Database schema compatibility could not be verified."
-    });
-    console.error("Schema compatibility check failed.", {
-      code: error?.code,
-      message: error?.message
-    });
-  }
+    } catch (error) {
+      issues.push({
+        code: "SCHEMA_COMPATIBILITY_CHECK_FAILED",
+        message: "Database schema compatibility could not be verified."
+      });
+      console.error("Schema compatibility check failed.", {
+        code: error?.code,
+        message: error?.message
+      });
+    }
 
-  state.checkedAt = new Date().toISOString();
-  state.ok = issues.length === 0;
-  state.issues = issues;
-  if (!state.ok) {
-    console.error("Database schema is not compatible with this API build.", {
-      requiredMigration: REQUIRED_MIGRATION,
-      requiredMigrations: REQUIRED_MIGRATIONS,
-      issues: state.issues.map(publicIssue)
-    });
+    state.checkedAt = new Date().toISOString();
+    state.ok = issues.length === 0;
+    state.issues = issues;
+    if (!state.ok) {
+      console.error("Database schema is not compatible with this API build.", {
+        requiredMigration: REQUIRED_MIGRATION,
+        requiredMigrations: REQUIRED_MIGRATIONS,
+        issues: state.issues.map(publicIssue)
+      });
+    }
+    return schemaCompatibilitySnapshot();
+  })();
+  state.promise = check;
+  try {
+    return await check;
+  } finally {
+    if (state.promise === check) state.promise = null;
   }
-  return schemaCompatibilitySnapshot();
 }

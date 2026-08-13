@@ -86,17 +86,17 @@ assert.deepEqual(await recovered.json(), { status: "ok" }, "retry should recover
 assert.equal(recoveryCalls, 2, "retry should issue exactly one new request");
 globalThis.fetch = originalFetch;
 
-assert.ok(apiClient.includes("API_HEALTH_TIMEOUT_MS = 3000") || read("apps/web/src/lib/networkRequest.js").includes("API_HEALTH_TIMEOUT_MS = 3000"), "each API health attempt should use a bounded production-safe timeout");
+assert.ok(apiClient.includes("API_HEALTH_TIMEOUT_MS = 4000") || read("apps/web/src/lib/networkRequest.js").includes("API_HEALTH_TIMEOUT_MS = 4000"), "each API health attempt should allow a legitimate 2-3 second response while remaining bounded");
 assert.ok(app.includes("const POS_STARTUP_TIMEOUT_MS = 8000"), "critical POS startup should have an eight-second request limit");
-assert.ok(app.includes("const POS_STARTUP_ATTEMPT_TIMEOUT_MS = 3000"), "retryable startup attempts should fail within the hard startup window");
-assert.ok(app.includes("const configPromise = retryTransientRequest(") && app.includes('() => posApi("/config"') && app.includes("const menuOutcomePromise = retryTransientRequest(") && app.includes('() => posApi("/menu"'), "register config and menu should start concurrently with independent bounded retry policies");
+assert.ok(app.includes("const POS_STARTUP_ATTEMPT_TIMEOUT_MS = 4000"), "retryable startup attempts should allow a legitimate 2-3 second response within the hard startup window");
+assert.ok(app.includes("const configPromise = shouldLoadConfig ? retryTransientRequest(") && app.includes('() => posApi("/config"') && app.includes("const menuOutcomePromise = shouldLoadMenu ? retryTransientRequest(") && app.includes('() => posApi("/menu"'), "register config and menu should start concurrently with independent bounded retry policies");
 assert.ok(app.indexOf("const configPromise") < app.indexOf("await configPromise") && app.indexOf("const menuOutcomePromise") < app.indexOf("await configPromise"), "independent startup requests should launch before awaiting critical config");
 assert.ok(app.includes("if (inflightLoadRef.current && !startupAbortRef.current?.signal.aborted) return inflightLoadRef.current"), "startup retries should share one active in-flight initialization");
 assert.ok(app.includes("inflightLoadRef.current === startupRequest"), "an aborted startup should not clear a newer Retry request");
 assert.ok(app.includes("startupAbortRef.current?.abort()"), "POS startup should cancel abandoned requests");
-assert.ok(app.includes('setStartupStage("Loading register...")') && app.includes('setStartupStage("Loading menu...")') && app.includes('setStartupStage("Ready")'), "startup should expose useful progress stages");
+assert.ok(app.includes('shouldLoadConfig ? "Loading register..." : "Loading menu..."') && app.includes('setStartupStage("Loading menu...")') && app.includes('setStartupStage("Ready")'), "startup should expose useful progress stages");
 assert.ok(app.includes("Unable to connect to Loohar POS server."), "API failure should show the required recovery title");
-assert.ok(app.includes('new globalThis.Event("loohar:api-health-retry")') && app.includes("checkApiHealthWithRetry({ force })"), "Retry should request a fresh authoritative API health probe");
+assert.ok(app.includes('new globalThis.Event("loohar:api-health-retry")') && app.includes("await checkApiHealthWithRetry({"), "Retry should request a fresh authoritative API health probe");
 assert.ok(serviceWorker.includes("NETWORK_ONLY_PATHS") && serviceWorker.includes('"/api/"') && serviceWorker.includes('"/health"') && serviceWorker.includes("fetch(event.request)"), "service worker must never serve cached API or health responses");
 assert.ok(!app.slice(app.indexOf("function RestaurantPosWorkspace"), app.indexOf("function RestaurantReceiptPreviewPage")).includes("io("), "POS workspace should not create duplicate sockets or KDS listeners");
 

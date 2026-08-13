@@ -184,7 +184,7 @@ async function runApiHealthProbe() {
     try {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) throw lastError || new Error("API health check timed out.");
-      const response = await fetchWithTimeout(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } }, Math.min(3000, remainingMs));
+      const response = await fetchWithTimeout(url, { credentials: "include", cache: "no-store", headers: { "Content-Type": "application/json" } }, remainingMs);
       if (!response.ok) {
         const error = new Error(`Health check failed with ${response.status}`);
         error.status = response.status;
@@ -239,8 +239,8 @@ export async function checkApiHealthWithRetry(options = {}) {
   return retryTransientRequest(
     (attempt) => checkApiHealth({ force: force || attempt > 1 }),
     {
-      attempts: options.attempts ?? 3,
-      delaysMs: options.delaysMs,
+      attempts: options.attempts ?? 2,
+      delaysMs: options.delaysMs || [250],
       signal: options.signal,
       shouldRetry: isTransientHealthFailure,
       onRetry: options.onRetry

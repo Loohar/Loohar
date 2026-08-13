@@ -31,7 +31,7 @@ const cash = sectionBetween(app, "async function acceptCashPayment", "function o
 const success = sectionBetween(app, "async function completeSuccessfulTransaction", "async function sendCurrentOrderToKitchen");
 const finish = sectionBetween(app, "function finishPaidOrder", "function beginNewOrder");
 const processingCase = sectionBetween(app, "case POS_WORKFLOW.PAYMENT_PROCESSING", "case POS_WORKFLOW.PAYMENT_SUCCESS");
-const initialLoadEffect = sectionBetween(app, "useEffect(() => {\n    if (!fingerprint) return;", "useEffect(() => {\n    if (!apiOnline)");
+const initialLoadEffect = sectionBetween(app, "useEffect(() => {\n    if (!fingerprint || !deviceIdentityReady || !authReady) return;", "useEffect(() => {\n    if (!apiOnline)");
 const healthEffect = sectionBetween(app, "useEffect(() => {\n    if (!apiOnline)", "useEffect(() => {\n    const timer = window.setInterval");
 
 assert.ok(pay.indexOf("POS_EVENT.SELECT_PAYMENT") < pay.indexOf("globalThis.requestAnimationFrame(() => globalThis.setTimeout(requestQuote, 0))"), "Pay should paint the Cash Payment screen before quote networking begins");
@@ -59,7 +59,7 @@ assert.equal(success.includes("resetCurrentOrder()"), false, "success should kee
 assert.equal(cash.includes("resetCurrentOrder()"), false, "a failed payment should preserve the cart and committed order for retry");
 assert.ok(finish.includes("resetCurrentOrder()") && finish.includes("POS_EVENT.HOME"), "Done should preserve the established return-home behavior");
 
-assert.ok(app.includes("connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE && !loadedOnceRef.current ? POS_WORKFLOW.OFFLINE : workflow.value"), "only an authoritative initial OFFLINE state should replace the startup workflow");
+assert.ok(app.includes("connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE ? POS_WORKFLOW.OFFLINE : workflow.value"), "a final authoritative OFFLINE state should block financial screens without destroying the underlying workflow");
 assert.ok(initialLoadEffect.includes("if (loadedOnceRef.current)") && initialLoadEffect.indexOf("if (loadedOnceRef.current)") < initialLoadEffect.indexOf("loadPos("), "health recovery should not bootstrap an active register again");
 assert.ok(healthEffect.includes("if (!loadedOnceRef.current)") && healthEffect.includes("POS_EVENT.API_OFFLINE"), "global health loss should preserve an already-loaded workflow while marking it degraded");
 

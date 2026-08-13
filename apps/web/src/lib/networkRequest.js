@@ -1,5 +1,5 @@
 export const DEFAULT_API_TIMEOUT_MS = 15000;
-export const API_HEALTH_TIMEOUT_MS = 3000;
+export const API_HEALTH_TIMEOUT_MS = 4000;
 export const STARTUP_RETRY_DELAYS_MS = Object.freeze([200, 500]);
 
 function requestAbortError(signal) {
