@@ -205,5 +205,9 @@ assert.ok(styles.includes("@media (min-width: 640px) and (max-width: 932px) and 
 assert.ok(serviceWorker.includes("NETWORK_ONLY_PATHS") && serviceWorker.includes('"/health"'));
 pass(23, "iPhone portrait/landscape contracts and network-only health remain intact");
 
-assert.deepEqual(passed, Array.from({ length: 23 }, (_, index) => index + 1));
-console.log("pos-production-startup-connectivity-test passed (23/23 zero-flap reliability cases).\n");
+assert.ok(apiClient.includes("const configuredApiUrl = rawConfiguredApiUrl;"));
+assert.ok(apiClient.includes("const configuredApiHealthUrl = rawConfiguredApiHealthUrl;"));
+pass(24, "preview builds honor explicit staging API and health endpoints");
+
+assert.deepEqual(passed, Array.from({ length: 24 }, (_, index) => index + 1));
+console.log("pos-production-startup-connectivity-test passed (24/24 zero-flap reliability cases).\n");
