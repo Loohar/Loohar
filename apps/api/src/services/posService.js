@@ -2114,19 +2114,25 @@ export async function reconcilePosOfflineCashTransaction({
       restaurantId,
       employeeUserId: user.id,
       deviceId: validated.terminalId,
-      cashDrawerId: validated.cashDrawerId,
-      ...(validated.locationId ? { locationId: validated.locationId } : { locationId: null })
+      cashDrawerId: validated.cashDrawerId
     },
     include: { cashDrawer: true }
   });
+  const effectiveShiftLocationId = shift?.locationId || sessionDevice?.locationId || null;
   if (
     !shift
+    || effectiveShiftLocationId !== validated.locationId
+    || shift.cashDrawer?.restaurantId !== restaurantId
+    || (shift.cashDrawer?.locationId && shift.cashDrawer.locationId !== validated.locationId)
     || shift.openedAt > completedAt
     || (shift.closedAt && shift.closedAt < completedAt)
     || !shift.cashDrawer
   ) {
     throw posOfflineError("The cached shift was not valid when this offline cash sale completed.", "POS_OFFLINE_SHIFT_INVALID", 409);
   }
+  // Older open shifts can predate a terminal's location assignment. The signed
+  // transaction and authenticated terminal remain authoritative for that null scope.
+  const settlementShift = shift.locationId ? shift : { ...shift, locationId: validated.locationId };
   const cashDrawer = shift.cashDrawer;
   let reconciliation;
   let canonical;
@@ -2220,7 +2226,7 @@ export async function reconcilePosOfflineCashTransaction({
         user,
         order: orderResult.order,
         device: sessionDevice,
-        shift,
+        shift: settlementShift,
         cashDrawer,
         settlement: validated.settlement,
         cashTender
@@ -2299,7 +2305,7 @@ export async function reconcilePosOfflineCashTransaction({
     canonical,
     user,
     device: sessionDevice,
-    shift,
+    shift: settlementShift,
     cashDrawer,
     settlement: validated.settlement
   });

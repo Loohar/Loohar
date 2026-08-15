@@ -497,6 +497,9 @@ router.post("/:restaurantId/pos/offline/reconcile", posOfflineReconcileLimiter, 
     });
     res.status(result.duplicate ? 200 : 201).json(result);
   } catch (error) {
+    if (String(error?.code || "").startsWith("POS_OFFLINE_")) {
+      return res.status(error.status || 422).json({ error: error.message, code: error.code });
+    }
     next(error);
   }
 });

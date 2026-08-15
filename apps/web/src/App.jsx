@@ -78,7 +78,7 @@ import {
   savePosOfflineInitialization,
   updatePosOfflineTransaction
 } from "./apps/pos/offlineStorage.js";
-import { posOfflineRetryDelayMs, runPosOfflineSyncBatch } from "./apps/pos/offlineSync.js";
+import { posOfflineRetryDelayMs, runPosOfflineSyncBatch, shouldRetryPosOfflineLocationlessShiftFailure } from "./apps/pos/offlineSync.js";
 import {
   POS_CONFIG_STATE,
   POS_CONNECTION_STATE,
@@ -96,6 +96,7 @@ import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStored
 import { isPrivateNetworkHost } from "./shared/networkHost.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
+import { POS_OFFLINE_SYNC_STATUS } from "../../shared/posOfflinePricing.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -8334,7 +8335,18 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       setOfflineSyncing(true);
       window.clearTimeout(offlineRetryTimerRef.current);
       await recoverInterruptedPosOfflineTransactions(offlineStorageRegisterKey);
-      const records = await listPosOfflineTransactions(offlineStorageRegisterKey, { unsyncedOnly: true });
+      let records = await listPosOfflineTransactions(offlineStorageRegisterKey, { unsyncedOnly: true });
+      const locationlessShiftFailures = records.filter(shouldRetryPosOfflineLocationlessShiftFailure);
+      for (const record of locationlessShiftFailures) {
+        await updatePosOfflineTransaction(record.localTransactionId, {
+          syncStatus: POS_OFFLINE_SYNC_STATUS.FAILED_RETRYABLE,
+          lastSyncError: "Retrying after terminal location compatibility update.",
+          lastSyncErrorCode: "POS_OFFLINE_LOCATION_SCOPE_RETRY"
+        });
+      }
+      if (locationlessShiftFailures.length) {
+        records = await listPosOfflineTransactions(offlineStorageRegisterKey, { unsyncedOnly: true });
+      }
       const result = await runPosOfflineSyncBatch({
         records,
         maxTransactions: 10,

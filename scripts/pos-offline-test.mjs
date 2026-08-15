@@ -12,7 +12,11 @@ import {
   posOfflineInitializationUsable
 } from "../apps/web/src/apps/pos/offlinePricing.js";
 import { posOfflineRegisterKey } from "../apps/web/src/apps/pos/offlineStorage.js";
-import { classifyPosOfflineSyncError, runPosOfflineSyncBatch } from "../apps/web/src/apps/pos/offlineSync.js";
+import {
+  classifyPosOfflineSyncError,
+  runPosOfflineSyncBatch,
+  shouldRetryPosOfflineLocationlessShiftFailure
+} from "../apps/web/src/apps/pos/offlineSync.js";
 
 const root = process.cwd();
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -223,6 +227,16 @@ const expiredSession = new Error("unlock again");
 expiredSession.status = 401;
 expiredSession.code = "POS_SESSION_EXPIRED";
 assert.equal(classifyPosOfflineSyncError(expiredSession).retryable, true, "expired sessions should retry after a secure unlock");
+assert.equal(shouldRetryPosOfflineLocationlessShiftFailure({
+  syncStatus: POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW,
+  lastSyncErrorCode: "POS_OFFLINE_SYNC_FAILED",
+  lastSyncError: "The cached shift was not valid when this offline cash sale completed."
+}), true, "the exact pre-fix locationless-shift failure should retry once after the compatibility fix");
+assert.equal(shouldRetryPosOfflineLocationlessShiftFailure({
+  syncStatus: POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW,
+  lastSyncErrorCode: "POS_OFFLINE_LOCATION_MISMATCH",
+  lastSyncError: "location conflict"
+}), false, "unrelated permanent location conflicts must remain in review");
 
 assert.ok(storageSource.includes('database.createObjectStore(TRANSACTION_STORE, { keyPath: "localTransactionId" })'), "one IndexedDB record should own the complete local transaction");
 assert.ok(storageSource.includes('store.createIndex("idempotencyKey", "idempotencyKey", { unique: true })'), "local idempotency keys should be unique");
@@ -248,7 +262,9 @@ assert.ok(taxProfileMigration.includes('CREATE TABLE "LocationTaxProfile"'), "lo
 assert.ok(taxProfileMigration.includes('CONSTRAINT "LocationTaxProfile_taxRateBps_check"'), "database must reject invalid synchronized tax rates");
 assert.equal(taxProfileMigration.includes('DEFAULT 825'), false, "location tax profile migration must not install the staging rate as a default");
 assert.ok(route.includes('router.post("/:restaurantId/pos/offline/reconcile"') && route.includes("requirePosSession"), "one authenticated reconciliation route should control replay");
+assert.ok(route.includes('json({ error: error.message, code: error.code })'), "offline reconciliation must return stable server error codes to the retry classifier");
 assert.ok(service.includes("validatePosOfflinePricingSnapshot") && service.includes("verifyPosOfflineConfigurationProof") && service.includes("verifyPosOfflineMenuItemProof"), "server should verify signed configuration, menu, tax, and arithmetic");
+assert.ok(service.includes("effectiveShiftLocationId = shift?.locationId || sessionDevice?.locationId") && service.includes("shift.cashDrawer?.locationId && shift.cashDrawer.locationId !== validated.locationId"), "legacy null-scoped shifts must inherit only their authenticated terminal location while conflicting drawer scopes fail closed");
 assert.ok(service.includes("prisma.locationTaxProfile.findFirst") && service.includes("locationId: device.locationId"), "signed offline initialization must select the terminal location's active tax profile");
 assert.ok(service.includes("configurationProof.taxConfiguration.configurationVersion !== transaction.taxSnapshot?.profileVersion"), "reconciliation must verify the signed tax profile version");
 assert.ok(service.includes("createPosOrderTransaction") && service.includes("settleCashOrderTransaction"), "reconciliation should reuse canonical order and cash services");

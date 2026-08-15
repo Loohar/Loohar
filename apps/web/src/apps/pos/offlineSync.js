@@ -1,5 +1,13 @@
 import { POS_OFFLINE_SYNC_STATUS } from "../../../../shared/posOfflinePricing.js";
 
+const LEGACY_LOCATIONLESS_SHIFT_ERROR = "The cached shift was not valid when this offline cash sale completed.";
+
+export function shouldRetryPosOfflineLocationlessShiftFailure(record) {
+  return record?.syncStatus === POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW
+    && record?.lastSyncErrorCode === "POS_OFFLINE_SYNC_FAILED"
+    && record?.lastSyncError === LEGACY_LOCATIONLESS_SHIFT_ERROR;
+}
+
 export function classifyPosOfflineSyncError(error) {
   const status = Number(error?.status || error?.payload?.status || 0);
   const code = String(error?.payload?.code || error?.code || "POS_OFFLINE_SYNC_FAILED");
