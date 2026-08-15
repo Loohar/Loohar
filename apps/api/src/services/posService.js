@@ -5,6 +5,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
+import { assemblePosMenuCategories } from "./posMenuReadModel.js";
 import { requestCashDrawerOpen } from "./posHardwareService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
 import { signPosSessionToken } from "../utils/tokens.js";
@@ -91,11 +92,16 @@ const POS_CUSTOMER_FIELDS = new Set([
   "eventDateTime",
   "headcount"
 ]);
-const POS_RESTAURANT_INCLUDE = {
-  locations: { where: { active: true }, orderBy: { createdAt: "asc" } },
-  deliveryZones: { where: { active: true }, orderBy: { createdAt: "asc" } },
-  merchantAccounts: true
-};
+const POS_DEVICE_TOUCH_INTERVAL_MS = 60 * 1000;
+
+async function recordPosTiming(timings, name, operation) {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    if (timings) timings[name] = Number((performance.now() - startedAt).toFixed(1));
+  }
+}
 
 export function httpError(message, status = 400, details = {}) {
   const error = new Error(message);
@@ -382,22 +388,39 @@ function randomReceiptNumber(prefix = "R") {
 export async function resolveRestaurantForPos(identifier, user) {
   const restaurantIdentifier = String(identifier || "").trim();
   if (!restaurantIdentifier) throw httpError("Restaurant slug or id is required.", 400, { code: "POS_RESTAURANT_IDENTIFIER_REQUIRED" });
-  let restaurant = await prisma.restaurant.findUnique({
-    where: { id: restaurantIdentifier },
-    include: POS_RESTAURANT_INCLUDE
-  });
-  if (!restaurant) {
-    restaurant = await prisma.restaurant.findUnique({
-      where: { slug: restaurantIdentifier },
-      include: POS_RESTAURANT_INCLUDE
-    });
+  const matchesAuthenticatedTenant = Boolean(user?.restaurantId) && (
+    restaurantIdentifier === user.restaurantId || restaurantIdentifier === user.restaurantSlug
+  );
+  const restaurantQuery = matchesAuthenticatedTenant
+    ? prisma.restaurant.findUnique({ where: { id: user.restaurantId } })
+    : prisma.restaurant.findFirst({
+        where: { OR: [{ id: restaurantIdentifier }, { slug: restaurantIdentifier }] }
+      });
+  const knownRestaurantId = matchesAuthenticatedTenant ? user.restaurantId : null;
+  let restaurant;
+  let locations;
+  let deliveryZones;
+  if (knownRestaurantId) {
+    [restaurant, locations, deliveryZones] = await Promise.all([
+      restaurantQuery,
+      prisma.restaurantLocation.findMany({ where: { restaurantId: knownRestaurantId, active: true }, orderBy: { createdAt: "asc" } }),
+      prisma.deliveryZone.findMany({ where: { restaurantId: knownRestaurantId, active: true }, orderBy: { createdAt: "asc" } })
+    ]);
+  } else {
+    restaurant = await restaurantQuery;
+    if (restaurant) {
+      [locations, deliveryZones] = await Promise.all([
+        prisma.restaurantLocation.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
+        prisma.deliveryZone.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } })
+      ]);
+    }
   }
   if (!restaurant) throw httpError("Restaurant not found.", 404, { code: "POS_RESTAURANT_NOT_FOUND" });
   if (!ACTIVE_RESTAURANT_STATUSES.has(restaurant.status)) throw httpError("Restaurant is not active.", 403, { code: "POS_RESTAURANT_INACTIVE", restaurantStatus: restaurant.status });
   if (user?.role === "SUPER_ADMIN") throw httpError("Super admin cannot operate a tenant POS register.", 403, { code: "POS_SUPER_ADMIN_DENIED" });
   if (!POS_ROLES.has(user?.role)) throw httpError("POS access is limited to restaurant staff.", 403, { code: "POS_ROLE_DENIED", role: user?.role || null });
   if (!user?.restaurantId || user.restaurantId !== restaurant.id) throw httpError("Tenant access denied.", 403, { code: "POS_TENANT_MISMATCH" });
-  return restaurant;
+  return { ...restaurant, locations: locations || [], deliveryZones: deliveryZones || [] };
 }
 
 export async function assertPosFeature(restaurantId, method = "GET") {
@@ -415,6 +438,23 @@ export async function getUserPosPermissions(user, restaurantId) {
     if (ALL_POS_PERMISSIONS.includes(permission)) base.add(permission);
   }
   return [...base];
+}
+
+function posPermissionsForStaff(user, staffProfile) {
+  const permissions = new Set(ROLE_PERMISSIONS[user?.role] || []);
+  const staffPermissions = Array.isArray(staffProfile?.permissionsJson) ? staffProfile.permissionsJson : [];
+  for (const permission of staffPermissions) {
+    if (ALL_POS_PERMISSIONS.includes(permission)) permissions.add(permission);
+  }
+  return [...permissions];
+}
+
+function pinStatusForStaff(staff) {
+  return {
+    configured: Boolean(staff?.posPinHash),
+    lockedUntil: staff?.posPinLockedUntil || null,
+    failedAttempts: staff?.posPinFailedAttempts || 0
+  };
 }
 
 export async function assertPosPermission(user, restaurantId, permission) {
@@ -466,11 +506,7 @@ async function ensurePinStaffProfile(restaurantId, user) {
 export async function cashierPinStatus({ restaurantId, user }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
   const staff = await activeStaffProfile(restaurantId, user.id);
-  return {
-    configured: Boolean(staff?.posPinHash),
-    lockedUntil: staff?.posPinLockedUntil || null,
-    failedAttempts: staff?.posPinFailedAttempts || 0
-  };
+  return pinStatusForStaff(staff);
 }
 
 export async function setCashierPin({ restaurantId, user, pin }) {
@@ -601,10 +637,14 @@ export async function touchDevice({ restaurantId, deviceId, fingerprint }) {
     : { restaurantId, deviceFingerprintHash: fingerprintHash };
   const device = await prisma.posDevice.findFirst({ where });
   if (!device) return null;
-  return prisma.posDevice.update({
-    where: { id: device.id },
-    data: { lastSeenAt: new Date() }
-  });
+  const lastSeenAt = new Date(device.lastSeenAt || 0).getTime();
+  if (Date.now() - lastSeenAt >= POS_DEVICE_TOUCH_INTERVAL_MS) {
+    void prisma.posDevice.updateMany({
+      where: { id: device.id, restaurantId, lastSeenAt: device.lastSeenAt },
+      data: { lastSeenAt: new Date() }
+    }).catch(() => {});
+  }
+  return device;
 }
 
 async function activeInternalDevelopmentDevice(restaurantId) {
@@ -617,10 +657,11 @@ async function activeInternalDevelopmentDevice(restaurantId) {
     orderBy: { updatedAt: "desc" }
   });
   if (!device) return null;
-  return prisma.posDevice.update({
-    where: { id: device.id },
+  void prisma.posDevice.updateMany({
+    where: { id: device.id, restaurantId, lastSeenAt: device.lastSeenAt },
     data: { lastSeenAt: new Date() }
-  });
+  }).catch(() => {});
+  return device;
 }
 
 export async function requireActiveDevice({ restaurantId, deviceId, fingerprint }) {
@@ -671,24 +712,29 @@ export async function requireCashRegisterAccess({ restaurantId, user, deviceId, 
   return { device, shift, cashDrawer: shift.cashDrawer };
 }
 
-export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
-  await assertPosFeature(restaurant.id, "GET");
-  const permissions = await getUserPosPermissions(user, restaurant.id);
+export async function posConfig({ restaurant, user, deviceId, fingerprint, entitlementVerified = false, timings = null }) {
+  if (!entitlementVerified) {
+    await recordPosTiming(timings, "config-entitlement", () => assertPosFeature(restaurant.id, "GET"));
+  }
+  const [staff, initialDevice] = await recordPosTiming(timings, "config-staff-device", () => Promise.all([
+    activeStaffProfile(restaurant.id, user.id),
+    touchDevice({ restaurantId: restaurant.id, deviceId, fingerprint })
+  ]));
+  const permissions = posPermissionsForStaff(user, staff);
   if (!permissions.includes(POS_PERMISSION.ACCESS)) throw httpError("POS access denied.", 403);
-  let device = await touchDevice({ restaurantId: restaurant.id, deviceId, fingerprint });
+  let device = initialDevice;
   if (device?.status !== "ACTIVE") {
     device = null;
   }
   if (!device && restaurant.tenantClassification === "INTERNAL_DEVELOPMENT") {
     device = await activeInternalDevelopmentDevice(restaurant.id);
   }
-  const shift = await currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null });
-  const [cashDrawers, registers, devices, pinStatus] = await Promise.all([
+  const [shift, cashDrawers, registers, devices] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
+    currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null }),
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posRegister.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
-    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 }),
-    cashierPinStatus({ restaurantId: restaurant.id, user })
-  ]);
+    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 })
+  ]));
   return {
     restaurant: {
       id: restaurant.id,
@@ -705,56 +751,65 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint }) {
     cashDrawers,
     registers,
     devices,
-    pinStatus
+    pinStatus: pinStatusForStaff(staff)
   };
 }
 
-export async function posMenu(restaurantId) {
-  const [categories, restaurant] = await Promise.all([
-    prisma.menuCategory.findMany({
+export async function posMenu(restaurantId, settingsJson, timings = null) {
+  const visibleItemWhere = { restaurantId, available: true, category: { active: true } };
+  const [categories, items, groups, options, settings] = await Promise.all([
+    recordPosTiming(timings, "menu-categories", () => prisma.menuCategory.findMany({
       where: { restaurantId, active: true },
-      include: {
-        items: {
-          where: { available: true },
-          include: {
-            options: { orderBy: { sortOrder: "asc" } },
-            optionGroups: {
-              include: { options: { orderBy: { sortOrder: "asc" } } },
-              orderBy: { sortOrder: "asc" }
-            }
-          },
-          orderBy: { name: "asc" }
-        }
-      },
       orderBy: { name: "asc" }
-    }),
-    prisma.restaurant.findUnique({
-      where: { id: restaurantId },
-      select: { settingsJson: true }
-    })
+    })),
+    recordPosTiming(timings, "menu-items", () => prisma.menuItem.findMany({
+      where: visibleItemWhere,
+      orderBy: { name: "asc" }
+    })),
+    recordPosTiming(timings, "menu-groups", () => prisma.menuItemOptionGroup.findMany({
+      where: { menuItem: visibleItemWhere },
+      orderBy: { sortOrder: "asc" }
+    })),
+    recordPosTiming(timings, "menu-options", () => prisma.menuItemOption.findMany({
+      where: { menuItem: visibleItemWhere },
+      orderBy: { sortOrder: "asc" }
+    })),
+    settingsJson === undefined
+      ? recordPosTiming(timings, "menu-settings", () => prisma.restaurant.findUnique({
+          where: { id: restaurantId },
+          select: { settingsJson: true }
+        }).then((restaurant) => restaurant?.settingsJson))
+      : Promise.resolve(settingsJson)
   ]);
-  return withMenuCustomizationModes(categories, restaurant?.settingsJson);
+  const assembled = assemblePosMenuCategories({ categories, items, groups, options });
+  return withMenuCustomizationModes(assembled, settings);
 }
 
 export async function posMenuAvailabilityDiagnostics(restaurantId, categories = []) {
   const visibleItems = categories.reduce((total, category) => total + (category.items || []).length, 0);
-  const [
-    totalCategories,
-    activeCategories,
-    inactiveCategories,
-    totalItems,
-    availableItemsTotal,
-    unavailableItemsTotal,
-    activeCategoryAvailableItems
-  ] = await prisma.$transaction([
-    prisma.menuCategory.count({ where: { restaurantId } }),
-    prisma.menuCategory.count({ where: { restaurantId, active: true } }),
-    prisma.menuCategory.count({ where: { restaurantId, active: false } }),
-    prisma.menuItem.count({ where: { restaurantId } }),
-    prisma.menuItem.count({ where: { restaurantId, available: true } }),
-    prisma.menuItem.count({ where: { restaurantId, available: false } }),
-    prisma.menuItem.count({ where: { restaurantId, available: true, category: { active: true } } })
-  ]);
+  const [counts] = await prisma.$queryRaw`
+    SELECT
+      (SELECT COUNT(*)::int FROM "MenuCategory" WHERE "restaurantId" = ${restaurantId}) AS "totalCategories",
+      (SELECT COUNT(*)::int FROM "MenuCategory" WHERE "restaurantId" = ${restaurantId} AND "active" = true) AS "activeCategories",
+      (SELECT COUNT(*)::int FROM "MenuCategory" WHERE "restaurantId" = ${restaurantId} AND "active" = false) AS "inactiveCategories",
+      (SELECT COUNT(*)::int FROM "MenuItem" WHERE "restaurantId" = ${restaurantId}) AS "totalItems",
+      (SELECT COUNT(*)::int FROM "MenuItem" WHERE "restaurantId" = ${restaurantId} AND "available" = true) AS "availableItemsTotal",
+      (SELECT COUNT(*)::int FROM "MenuItem" WHERE "restaurantId" = ${restaurantId} AND "available" = false) AS "unavailableItemsTotal",
+      (SELECT COUNT(*)::int
+        FROM "MenuItem" item
+        INNER JOIN "MenuCategory" category ON category."id" = item."categoryId"
+        WHERE item."restaurantId" = ${restaurantId} AND item."available" = true AND category."active" = true
+      ) AS "activeCategoryAvailableItems"
+  `;
+  const {
+    totalCategories = 0,
+    activeCategories = 0,
+    inactiveCategories = 0,
+    totalItems = 0,
+    availableItemsTotal = 0,
+    unavailableItemsTotal = 0,
+    activeCategoryAvailableItems = 0
+  } = counts || {};
 
   let reason = "READY";
   if (visibleItems <= 0) {

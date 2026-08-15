@@ -51,7 +51,7 @@ assert.equal(restaurantRoleBlock.includes("CASHIER"), false, "cashiers should no
 for (const value of ["customizationMode", "MENU_ITEM_CUSTOMIZATION_MODES", "persistMenuItemPosSettings", "withMenuItemCustomizationMode"]) {
   assert.equal(restaurantRoutes.includes(value), true, `menu API should include ${value}`);
 }
-assert.equal(posService.includes("withMenuCustomizationModes(categories, restaurant?.settingsJson)"), true, "POS menu should receive owner customization settings");
+assert.equal(posService.includes("withMenuCustomizationModes(assembled, settings)"), true, "POS menu should receive owner customization settings");
 for (const label of ["Customization prompt", "Automatic", "Always prompt", "Optional prompt", "No customization"]) {
   assert.equal(`${app}\n${customization}`.includes(label), true, `item editor should expose ${label}`);
 }

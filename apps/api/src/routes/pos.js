@@ -31,6 +31,47 @@ import {
 
 const router = express.Router();
 
+function posRequestTimings(req) {
+  req.posRequestStartedAt ||= performance.now();
+  req.posRequestTimings ||= {};
+  return req.posRequestTimings;
+}
+
+function timedPosMiddleware(name, middleware) {
+  return (req, res, next) => {
+    const timings = posRequestTimings(req);
+    const startedAt = performance.now();
+    middleware(req, res, (error) => {
+      timings[name] = Number((performance.now() - startedAt).toFixed(1));
+      next(error);
+    });
+  };
+}
+
+async function timedPosOperation(req, name, operation) {
+  const timings = posRequestTimings(req);
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    timings[name] = Number((performance.now() - startedAt).toFixed(1));
+  }
+}
+
+function sendTimedPosJson(req, res, payload) {
+  const timings = posRequestTimings(req);
+  const serializationStartedAt = performance.now();
+  JSON.stringify(payload);
+  timings.serialization = Number((performance.now() - serializationStartedAt).toFixed(1));
+  timings.total = Number((performance.now() - req.posRequestStartedAt).toFixed(1));
+  const header = Object.entries(timings)
+    .filter(([, duration]) => Number.isFinite(duration))
+    .map(([name, duration]) => `${name};dur=${duration}`)
+    .join(", ");
+  if (header) res.setHeader("Server-Timing", header);
+  return res.json(payload);
+}
+
 const kioskExitLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   limit: 8,
@@ -97,7 +138,9 @@ function posEntitlementPayload(req) {
 
 async function buildPosMenuPayload(req, categories, requestId = req.get("x-loohar-pos-request-id") || null) {
   const summary = summarizePosMenu(categories);
-  const menuDiagnostics = await posMenuAvailabilityDiagnostics(req.resolvedRestaurantId, categories);
+  const menuDiagnostics = await timedPosOperation(req, "menu-diagnostics", () => (
+    posMenuAvailabilityDiagnostics(req.resolvedRestaurantId, categories)
+  ));
   return {
     requestId,
     generatedAt: new Date().toISOString(),
@@ -140,20 +183,37 @@ async function resolvePosContext(req, res, next) {
   }
 }
 
-router.use("/:restaurantId/pos", requireAuth, resolvePosContext, featureGuard(FEATURE.POS_REGISTER, {
+const posFeatureGuard = featureGuard(FEATURE.POS_REGISTER, {
   allowSuperAdmin: false,
   restaurantId: (req) => req.resolvedRestaurantId
-}));
+});
+
+router.use(
+  "/:restaurantId/pos",
+  timedPosMiddleware("auth", requireAuth),
+  timedPosMiddleware("tenant", resolvePosContext),
+  timedPosMiddleware("entitlement", posFeatureGuard)
+);
 
 router.get("/:restaurantId/pos/bootstrap", posReadLimiter, async (req, res, next) => {
   const startedAt = Date.now();
   const requestId = req.get("x-loohar-pos-request-id") || `pos:${Date.now()}`;
   try {
     const [config, categories] = await Promise.all([
-      posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) }),
-      posMenu(req.resolvedRestaurantId)
+      timedPosOperation(req, "config-service", () => posConfig({
+        restaurant: req.posRestaurant,
+        user: req.user,
+        ...deviceContext(req),
+        entitlementVerified: Boolean(req.entitlementDecision?.allowed),
+        timings: posRequestTimings(req)
+      })),
+      timedPosOperation(req, "menu-query", () => posMenu(
+        req.resolvedRestaurantId,
+        req.posRestaurant.settingsJson,
+        posRequestTimings(req)
+      ))
     ]);
-    res.json({
+    sendTimedPosJson(req, res, {
       requestId,
       generatedAt: new Date().toISOString(),
       performance: { serverDurationMs: Date.now() - startedAt },
@@ -167,8 +227,14 @@ router.get("/:restaurantId/pos/bootstrap", posReadLimiter, async (req, res, next
 
 router.get("/:restaurantId/pos/config", posReadLimiter, async (req, res, next) => {
   try {
-    const config = await posConfig({ restaurant: req.posRestaurant, user: req.user, ...deviceContext(req) });
-    res.json(config);
+    const config = await timedPosOperation(req, "config-service", () => posConfig({
+      restaurant: req.posRestaurant,
+      user: req.user,
+      ...deviceContext(req),
+      entitlementVerified: Boolean(req.entitlementDecision?.allowed),
+      timings: posRequestTimings(req)
+    }));
+    sendTimedPosJson(req, res, config);
   } catch (error) {
     next(error);
   }
@@ -214,8 +280,12 @@ router.post("/:restaurantId/pos/unlock", posPinLimiter, async (req, res, next) =
 
 router.get("/:restaurantId/pos/menu", posReadLimiter, async (req, res, next) => {
   try {
-    const categories = await posMenu(req.resolvedRestaurantId);
-    res.json(await buildPosMenuPayload(req, categories));
+    const categories = await timedPosOperation(req, "menu-query", () => posMenu(
+      req.resolvedRestaurantId,
+      req.posRestaurant.settingsJson,
+      posRequestTimings(req)
+    ));
+    sendTimedPosJson(req, res, await buildPosMenuPayload(req, categories));
   } catch (error) {
     next(error);
   }
