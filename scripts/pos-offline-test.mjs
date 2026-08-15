@@ -203,6 +203,8 @@ assert.ok(storageSource.includes("transactionFinished(transaction)"), "Payment C
 assert.ok(storageSource.includes("sort((left, right)"), "pending queue ordering should be deterministic after reload");
 assert.ok(app.includes("await persistPosOfflineTransaction(transaction)"), "local durable commit must finish before offline success");
 assert.ok(app.indexOf("await persistPosOfflineTransaction(transaction)") < app.indexOf("completeSuccessfulTransaction(order"), "offline Payment Complete must follow durable persistence");
+assert.equal(app.includes("!posSessionActive\n      || !offlineStorageRegisterKey"), false, "signed initialization caching must not depend on a transient unlocked session");
+assert.ok(app.includes("&& posSessionActive\n    && posOfflineInitializationUsable(offlineInitialization)"), "offline selling must still require an active in-memory POS session");
 assert.ok(app.includes("offlineMode && !offlineOperational ? POS_WORKFLOW.OFFLINE : workflow.value"), "operational offline mode must not replace the active workflow with a blocking screen");
 assert.ok(screens.includes("Card requires internet") && screens.includes("Offline cash available"), "offline tender availability should be explicit");
 assert.ok(app.includes("Pending Sync") && screens.includes("Pending Sync:"), "pending count should be visible without a reconciliation dashboard");

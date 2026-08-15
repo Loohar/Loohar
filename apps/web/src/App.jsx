@@ -8251,8 +8251,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
 
   useEffect(() => {
     if (
-      !posSessionActive
-      || !offlineStorageRegisterKey
+      !offlineStorageRegisterKey
       || !config
       || ![POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)
       || !posMenuState.menuVersion
@@ -8272,8 +8271,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       void savePosOfflineInitialization(initialization).then(() => {
         setOfflineInitialization(initialization);
       }).catch(() => null);
-    } catch {
+    } catch (offlineInitializationError) {
       // Keep the last valid initialization; incomplete live config must not replace it.
+      globalThis.console?.warn?.("[Loohar POS offline] signed initialization unavailable", offlineInitializationError?.message || "Unknown initialization error");
     }
   }, [
     config,
@@ -8283,8 +8283,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     posMenuState.locationId,
     posMenuState.menuVersion,
     posMenuState.status,
-    posMenuState.tenantId,
-    posSessionActive
+    posMenuState.tenantId
   ]);
 
   function rememberPosSession(value = "") {
