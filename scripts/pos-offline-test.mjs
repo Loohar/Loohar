@@ -257,7 +257,7 @@ assert.ok(service.includes("kdsDispatchedAt: null") && service.includes("cashDra
 assert.ok(service.includes("eventId: `pos-offline:${reconciliation.id}`"), "KDS replay identity should be deterministic");
 assert.ok(service.includes("transactionTenantId !== restaurantId") && service.includes("terminalId !== sessionDevice?.id"), "tenant and terminal isolation must be enforced server-side");
 assert.ok(stagingTaxProfileScript.includes('appEnv !== "staging"') && stagingTaxProfileScript.includes("EXPECTED_SUPABASE_PROJECT_REF"), "tax profile writer must fail closed outside the verified staging database");
-assert.ok(stagingTaxProfileScript.includes('tenantClassification !== "INTERNAL_DEVELOPMENT"'), "tax profile writer must reject real restaurant tenants");
+assert.ok(stagingTaxProfileScript.includes('required("STAGING_TAX_EXPECTED_TENANT_CLASSIFICATION")') && stagingTaxProfileScript.includes("restaurant.tenantClassification !== expectedTenantClassification"), "tax profile writer must match the exact staging tenant classification supplied at execution");
 assert.ok(stagingTaxProfileScript.includes('required("STAGING_TAX_RATE_BPS")'), "staging tax rate must be supplied as data at execution time");
 assert.equal(stagingTaxProfileScript.includes("825"), false, "the approved certification rate must not be hardcoded in the staging writer");
 

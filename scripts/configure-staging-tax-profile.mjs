@@ -54,6 +54,7 @@ if (!Number.isSafeInteger(taxRateBps) || taxRateBps < 0 || taxRateBps > 100_000)
 
 const tenantSlug = required("STAGING_TAX_TENANT_SLUG");
 const locationName = required("STAGING_TAX_LOCATION_NAME");
+const expectedTenantClassification = required("STAGING_TAX_EXPECTED_TENANT_CLASSIFICATION");
 const configurationVersion = required("STAGING_TAX_CONFIGURATION_VERSION");
 const provider = required("STAGING_TAX_PROVIDER");
 const source = required("STAGING_TAX_SOURCE");
@@ -79,9 +80,10 @@ try {
     include: { locations: { where: { active: true } } }
   });
   if (!restaurant) throw new Error("The requested staging tenant was not found.");
-  if (restaurant.tenantClassification !== "INTERNAL_DEVELOPMENT") {
-    throw new Error("The requested tenant is not classified as INTERNAL_DEVELOPMENT.");
+  if (restaurant.tenantClassification !== expectedTenantClassification) {
+    throw new Error("The requested tenant classification does not match the explicit staging expectation.");
   }
+  if (restaurant.status !== "ACTIVE") throw new Error("The requested staging tenant is not active.");
   const matchingLocations = restaurant.locations.filter((location) => location.name === locationName);
   if (matchingLocations.length !== 1) {
     throw new Error("The requested active staging location did not resolve uniquely.");
