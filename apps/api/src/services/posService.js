@@ -734,9 +734,18 @@ function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, tax
     timezone: restaurant.timezone || "America/Denver",
     orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
     taxConfiguration: {
+      id: taxConfiguration.id,
+      locationId: taxConfiguration.locationId,
       provider: taxConfiguration.provider,
+      source: taxConfiguration.source,
       taxRateBps: taxConfiguration.taxRateBps,
       taxInclusive: taxConfiguration.taxInclusive,
+      jurisdictionCode: taxConfiguration.jurisdictionCode,
+      jurisdictionMetadata: taxConfiguration.jurisdictionMetadata,
+      sourceMetadata: taxConfiguration.sourceMetadata,
+      effectiveAt: taxConfiguration.effectiveAt,
+      verifiedAt: taxConfiguration.verifiedAt,
+      configurationVersion: taxConfiguration.configurationVersion,
       updatedAt: taxConfiguration.updatedAt.toISOString()
     },
     deliveryFeeCents: cents(restaurant.deliveryFeeCents),
@@ -766,17 +775,41 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
   if (!device && restaurant.tenantClassification === "INTERNAL_DEVELOPMENT") {
     device = await activeInternalDevelopmentDevice(restaurant.id);
   }
-  const [shift, cashDrawers, registers, devices, taxConfiguration] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
+  const profileAsOf = new Date();
+  const [shift, cashDrawers, registers, devices, taxProfile] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
     currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null }),
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posRegister.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 }),
-    prisma.taxConfiguration.findFirst({
-      where: { restaurantId: restaurant.id, enabled: true },
-      orderBy: { updatedAt: "desc" },
-      select: { provider: true, taxRateBps: true, taxInclusive: true, enabled: true, updatedAt: true }
-    })
+    device?.locationId
+      ? prisma.locationTaxProfile.findFirst({
+          where: {
+            restaurantId: restaurant.id,
+            locationId: device.locationId,
+            enabled: true,
+            effectiveAt: { lte: profileAsOf },
+            verifiedAt: { lte: profileAsOf }
+          },
+          orderBy: [{ effectiveAt: "desc" }, { verifiedAt: "desc" }, { updatedAt: "desc" }]
+        })
+      : Promise.resolve(null)
   ]));
+  const taxConfiguration = taxProfile ? {
+    id: taxProfile.id,
+    locationId: taxProfile.locationId,
+    provider: taxProfile.provider,
+    source: taxProfile.source,
+    taxRateBps: taxProfile.taxRateBps,
+    taxInclusive: taxProfile.taxInclusive,
+    enabled: taxProfile.enabled,
+    jurisdictionCode: taxProfile.jurisdictionCode,
+    jurisdictionMetadata: taxProfile.jurisdictionJson,
+    sourceMetadata: taxProfile.sourceMetadataJson,
+    effectiveAt: taxProfile.effectiveAt.toISOString(),
+    verifiedAt: taxProfile.verifiedAt.toISOString(),
+    configurationVersion: taxProfile.configurationVersion,
+    updatedAt: taxProfile.updatedAt
+  } : null;
   const offlineReady = Boolean(
     staff
     && device?.status === "ACTIVE"
@@ -785,6 +818,11 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
     && shift.cashDrawerId
     && shift.cashDrawer?.status === "OPEN"
     && taxConfiguration?.enabled
+    && taxConfiguration.locationId === device.locationId
+    && taxConfiguration.configurationVersion
+    && taxConfiguration.source
+    && taxConfiguration.jurisdictionCode
+    && taxConfiguration.taxInclusive === false
     && permissions.includes(POS_PERMISSION.ACCEPT_CASH)
     && permissions.includes(POS_PERMISSION.SEND_TO_KITCHEN)
   );
@@ -1943,8 +1981,12 @@ function validatePosOfflineTransaction({ transaction, restaurantId, user, sessio
   }
   if (
     !configurationProof.taxConfiguration
+    || configurationProof.taxConfiguration.locationId !== locationId
     || Number(configurationProof.taxConfiguration.taxRateBps) !== Number(transaction.taxSnapshot?.taxRateBps)
     || String(configurationProof.taxConfiguration.provider || "manual") !== String(transaction.taxSnapshot?.provider || "manual")
+    || String(configurationProof.taxConfiguration.source || "") !== String(transaction.taxSnapshot?.source || "")
+    || String(configurationProof.taxConfiguration.jurisdictionCode || "") !== String(transaction.taxSnapshot?.jurisdictionCode || "")
+    || configurationProof.taxConfiguration.configurationVersion !== transaction.taxSnapshot?.profileVersion
     || transaction.taxSnapshot?.configurationVersion !== transaction.configurationVersion
   ) {
     throw posOfflineError("Offline tax does not match its signed configuration.", "POS_OFFLINE_TAX_CONFIGURATION_MISMATCH");
@@ -2135,13 +2177,19 @@ export async function reconcilePosOfflineCashTransaction({
         data: {
           orderId: orderResult.order.id,
           restaurantId,
-          provider: validated.transaction.taxSnapshot.provider || "manual",
+          provider: validated.configurationProof.taxConfiguration.provider,
           taxableAmountCents: validated.transaction.taxSnapshot.taxableAmountCents,
           taxRateBps: validated.transaction.taxSnapshot.taxRateBps,
           taxCents: validated.transaction.taxSnapshot.taxCents,
           jurisdictionJson: {
-            source: "POS_OFFLINE_V1",
-            configurationVersion: validated.transaction.configurationVersion,
+            source: validated.configurationProof.taxConfiguration.source,
+            sourceMetadata: validated.configurationProof.taxConfiguration.sourceMetadata,
+            jurisdictionCode: validated.configurationProof.taxConfiguration.jurisdictionCode,
+            jurisdictionMetadata: validated.configurationProof.taxConfiguration.jurisdictionMetadata,
+            taxProfileVersion: validated.configurationProof.taxConfiguration.configurationVersion,
+            taxProfileEffectiveAt: validated.configurationProof.taxConfiguration.effectiveAt,
+            taxProfileVerifiedAt: validated.configurationProof.taxConfiguration.verifiedAt,
+            offlineConfigurationVersion: validated.transaction.configurationVersion,
             localTransactionId: validated.localTransactionId,
             localCompletedAt: validated.transaction.completedAt,
             timezone: validated.transaction.timezone || null

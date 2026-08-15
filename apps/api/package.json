@@ -13,6 +13,7 @@
     "prisma:deploy:safe": "node ../../scripts/prisma-deploy-with-retry.mjs",
     "staging:db:identity": "node ../../scripts/staging-db-identity-check.mjs",
     "staging:db:identity:current": "node ../../scripts/staging-db-identity-check.mjs --require-schema-current",
+    "staging:tax:configure": "node ../../scripts/configure-staging-tax-profile.mjs",
     "tenant:mark-development": "node prisma/mark-development-tenant.js",
     "diagnose:development-pos": "node prisma/diagnose-development-pos.js",
     "setup:development-pos": "node prisma/setup-development-pos.js",

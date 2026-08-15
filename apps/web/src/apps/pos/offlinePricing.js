@@ -119,10 +119,19 @@ function sanitizeConfig(config = {}) {
       active: drawer.active !== false
     })),
     taxConfiguration: config.taxConfiguration ? {
+      id: string(config.taxConfiguration.id),
+      locationId: string(config.taxConfiguration.locationId),
       provider: string(config.taxConfiguration.provider || "manual", 80),
+      source: string(config.taxConfiguration.source, 120),
       taxRateBps: Number(config.taxConfiguration.taxRateBps),
       taxInclusive: Boolean(config.taxConfiguration.taxInclusive),
       enabled: config.taxConfiguration.enabled === true,
+      jurisdictionCode: string(config.taxConfiguration.jurisdictionCode, 160),
+      jurisdictionMetadata: config.taxConfiguration.jurisdictionMetadata || {},
+      sourceMetadata: config.taxConfiguration.sourceMetadata || {},
+      effectiveAt: iso(config.taxConfiguration.effectiveAt),
+      verifiedAt: iso(config.taxConfiguration.verifiedAt),
+      configurationVersion: string(config.taxConfiguration.configurationVersion, 300),
       updatedAt: iso(config.taxConfiguration.updatedAt)
     } : null,
     configurationVersion: string(config.configurationVersion, 500),
@@ -143,6 +152,15 @@ export function buildPosOfflineInitialization({ config, menu, registerKey }) {
   if (menuItems.some((item) => !item.offlinePricingProof)) throw new Error("Offline menu pricing proof is incomplete.");
   if (!safeConfig.taxConfiguration?.enabled || !Number.isSafeInteger(safeConfig.taxConfiguration.taxRateBps)) {
     throw new Error("Offline sales require a synchronized tax configuration.");
+  }
+  if (
+    safeConfig.taxConfiguration.locationId !== locationId
+    || !safeConfig.taxConfiguration.configurationVersion
+    || !safeConfig.taxConfiguration.jurisdictionCode
+    || !safeConfig.taxConfiguration.source
+    || safeConfig.taxConfiguration.taxInclusive
+  ) {
+    throw new Error("Offline sales require a verified location tax profile.");
   }
   if (!safeConfig.configurationVersion || !menu?.menuVersion || !safeConfig.offlineConfigurationProof) {
     throw new Error("Offline configuration proof is incomplete.");
@@ -187,6 +205,11 @@ export function posOfflineInitializationUsable(initialization, now = Date.now())
     && initialization.config?.permissions?.includes("POS_ACCEPT_CASH")
     && initialization.config?.permissions?.includes("POS_SEND_TO_KITCHEN")
     && initialization.config?.taxConfiguration?.enabled
+    && initialization.config.taxConfiguration.locationId === initialization.locationId
+    && initialization.config.taxConfiguration.configurationVersion
+    && initialization.config.taxConfiguration.jurisdictionCode
+    && initialization.config.taxConfiguration.source
+    && initialization.config.taxConfiguration.taxInclusive === false
     && initialization.config?.offlineConfigurationProof
     && Array.isArray(initialization.menu?.categories)
     && initialization.menu.categories.some((category) => (category.items || []).some((item) => item.available && item.offlinePricingProof))
@@ -254,6 +277,12 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
     lineItemsJson: pricing.lineItems,
     taxSnapshot: {
       provider: initialization.config.taxConfiguration.provider,
+      source: initialization.config.taxConfiguration.source,
+      locationId: initialization.config.taxConfiguration.locationId,
+      jurisdictionCode: initialization.config.taxConfiguration.jurisdictionCode,
+      profileVersion: initialization.config.taxConfiguration.configurationVersion,
+      effectiveAt: initialization.config.taxConfiguration.effectiveAt,
+      verifiedAt: initialization.config.taxConfiguration.verifiedAt,
       taxRateBps: pricing.taxRateBps,
       taxableAmountCents: pricing.taxableAmountCents,
       taxCents: pricing.taxCents,

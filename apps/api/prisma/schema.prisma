@@ -513,6 +513,7 @@ model Restaurant {
   disputes            RestaurantPaymentDispute[]
   payouts             RestaurantPayout[]
   taxConfigurations   TaxConfiguration[]
+  locationTaxProfiles LocationTaxProfile[]
   deliveryFeeRules    DeliveryFeeRule[]
   driverEarningLedger DriverEarningLedger[]
   posDevices          PosDevice[]
@@ -879,6 +880,7 @@ model RestaurantLocation {
   orderQuotes  OrderQuote[]
   orders       Order[]
   posReceipts  PosReceipt[]
+  taxProfiles  LocationTaxProfile[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 }
@@ -1479,6 +1481,30 @@ model TaxConfiguration {
   updatedAt      DateTime   @updatedAt
 
   @@unique([restaurantId, provider])
+}
+
+model LocationTaxProfile {
+  id                   String             @id @default(cuid())
+  restaurantId         String
+  locationId           String
+  provider             String
+  source               String
+  taxRateBps            Int
+  taxInclusive          Boolean            @default(false)
+  enabled               Boolean            @default(true)
+  jurisdictionCode     String
+  jurisdictionJson     Json
+  sourceMetadataJson   Json
+  effectiveAt          DateTime
+  verifiedAt           DateTime
+  configurationVersion String
+  restaurant           Restaurant         @relation(fields: [restaurantId], references: [id])
+  location             RestaurantLocation @relation(fields: [locationId], references: [id])
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@unique([restaurantId, locationId, configurationVersion])
+  @@index([restaurantId, locationId, enabled, effectiveAt])
 }
 
 model PosDevice {

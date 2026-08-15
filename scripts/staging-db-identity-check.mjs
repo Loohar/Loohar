@@ -10,7 +10,9 @@ for (const envPath of [resolve(process.cwd(), ".env"), resolve(process.cwd(), "a
 const requiredMigrations = [
   "20260724090000_development_entitlement_simulation",
   "20260802120000_enterprise_pos_workflows",
-  "20260804090000_auth_device_sessions"
+  "20260804090000_auth_device_sessions",
+  "20260815090000_pos_offline_reconciliation",
+  "20260815130000_location_tax_profiles"
 ];
 
 const expectedProjectRef = process.env.EXPECTED_SUPABASE_PROJECT_REF || process.env.STAGING_SUPABASE_PROJECT_REF || "";

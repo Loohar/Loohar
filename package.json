@@ -211,6 +211,7 @@
     "prisma:deploy:safe": "npm --workspace apps/api run prisma:deploy:safe",
     "staging:db:identity": "npm --workspace apps/api run staging:db:identity",
     "staging:db:identity:current": "npm --workspace apps/api run staging:db:identity:current",
+    "staging:tax:configure": "npm --workspace apps/api run staging:tax:configure",
     "seed": "npm --workspace apps/api run seed",
     "prisma:seed": "npm --workspace apps/api run prisma:seed"
   },

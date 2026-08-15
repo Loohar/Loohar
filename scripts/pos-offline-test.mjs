@@ -23,6 +23,8 @@ const service = read("apps/api/src/services/posService.js");
 const route = read("apps/api/src/routes/pos.js");
 const schema = read("apps/api/prisma/schema.prisma");
 const migration = read("apps/api/prisma/migrations/20260815090000_pos_offline_reconciliation/migration.sql");
+const taxProfileMigration = read("apps/api/prisma/migrations/20260815130000_location_tax_profiles/migration.sql");
+const stagingTaxProfileScript = read("scripts/configure-staging-tax-profile.mjs");
 
 function fixture({ priceCents = 1000, taxRateBps = 825 } = {}) {
   const now = new Date();
@@ -37,7 +39,22 @@ function fixture({ priceCents = 1000, taxRateBps = 825 } = {}) {
     device: { id: "terminal-1", name: "Counter", deviceType: "MAIN_TERMINAL", status: "ACTIVE", locationId: "location-1", cashDrawerId: "drawer-1" },
     shift: { id: "shift-1", status: "OPEN", employeeUserId: "user-1", deviceId: "terminal-1", locationId: "location-1", cashDrawerId: "drawer-1", openedAt: now.toISOString() },
     cashDrawers: [{ id: "drawer-1", name: "Drawer", status: "OPEN", locationId: "location-1", currentBalanceCents: 10000, active: true }],
-    taxConfiguration: { provider: "manual", taxRateBps, taxInclusive: false, enabled: true, updatedAt: now.toISOString() },
+    taxConfiguration: {
+      id: "tax-profile-1",
+      locationId: "location-1",
+      provider: "loohar-tax-sync",
+      source: "SYNTHETIC_CERTIFICATION_FIXTURE",
+      taxRateBps,
+      taxInclusive: false,
+      enabled: true,
+      jurisdictionCode: "STAGING:restaurant:main",
+      jurisdictionMetadata: { environment: "staging", synthetic: true },
+      sourceMetadata: { reference: "offline-v1-test", synthetic: true },
+      effectiveAt: now.toISOString(),
+      verifiedAt: now.toISOString(),
+      configurationVersion: "tax-profile-v1",
+      updatedAt: now.toISOString()
+    },
     configurationVersion: `config-${taxRateBps}`,
     offlineConfigurationProof: "signed-config-proof",
     offlineValidUntil: validUntil,
@@ -95,11 +112,21 @@ const { initialization } = fixture();
 assert.equal(posOfflineInitializationUsable(initialization), true, "a fully initialized open register should be offline-ready");
 assert.equal(posOfflineInitializationUsable(null), false, "an uninitialized register must not sell offline");
 assert.equal(initialization.menu.categories[0].items[0].imageUrl, undefined, "offline cache should not duplicate menu images");
+const inclusiveTaxFixture = fixture();
+inclusiveTaxFixture.config.taxConfiguration.taxInclusive = true;
+assert.throws(
+  () => buildPosOfflineInitialization({ config: inclusiveTaxFixture.config, menu: inclusiveTaxFixture.menu, registerKey: inclusiveTaxFixture.initialization.registerKey }),
+  /verified location tax profile/i,
+  "Offline v1 must fail closed for tax-inclusive profiles until inclusive arithmetic is supported"
+);
 
 const simpleQuote = calculatePosOfflineQuote({ initialization, cart: cart(), orderType: "WALK_IN", customer: {}, locationId: "location-1" });
 assert.equal(simpleQuote.subtotalCents, 1000, "simple cached item pricing should be deterministic");
 assert.equal(simpleQuote.taxCents, 83, "cached integer-cent tax should match online rounding");
 assert.equal(simpleQuote.totalCents, 1083, "cached total should include synchronized tax");
+assert.equal(simpleQuote.taxSnapshot.locationId, "location-1", "tax snapshot must be scoped to the register location");
+assert.equal(simpleQuote.taxSnapshot.profileVersion, "tax-profile-v1", "tax snapshot must retain its source profile version");
+assert.equal(simpleQuote.taxSnapshot.jurisdictionCode, "STAGING:restaurant:main", "tax snapshot must retain jurisdiction identity");
 
 const modifiedQuote = calculatePosOfflineQuote({ initialization, cart: cart({ quantity: 2, modifier: true }), orderType: "WALK_IN", customer: {}, locationId: "location-1" });
 assert.equal(modifiedQuote.subtotalCents, 2500, "modifier and quantity pricing should remain deterministic");
@@ -211,16 +238,28 @@ assert.ok(app.includes("Pending Sync") && screens.includes("Pending Sync:"), "pe
 assert.equal(app.includes("window.location.reload"), false, "offline recovery must not reload the POS");
 
 assert.ok(schema.includes("model PosOfflineReconciliation"), "server reconciliation must have a durable database record");
+assert.ok(schema.includes("model LocationTaxProfile"), "offline tax must use a first-class location profile");
+assert.ok(schema.includes("@@unique([restaurantId, locationId, configurationVersion])"), "tax profile versions must be unique per tenant location");
+assert.equal(/model LocationTaxProfile[\s\S]*?taxRateBps\s+Int\s+@default/.test(schema), false, "location tax profiles must not have a global default rate");
 assert.ok(schema.includes("@@unique([restaurantId, localTransactionId])"), "local transaction identity must be database-unique per tenant");
 assert.ok(schema.includes("@@unique([restaurantId, idempotencyKey])"), "idempotency key must be database-unique per tenant");
 assert.ok(migration.includes('CREATE UNIQUE INDEX "PosOfflineReconciliation_restaurantId_idempotencyKey_key"'), "migration must enforce idempotency in PostgreSQL");
+assert.ok(taxProfileMigration.includes('CREATE TABLE "LocationTaxProfile"'), "location tax profile migration must be additive");
+assert.ok(taxProfileMigration.includes('CONSTRAINT "LocationTaxProfile_taxRateBps_check"'), "database must reject invalid synchronized tax rates");
+assert.equal(taxProfileMigration.includes('DEFAULT 825'), false, "location tax profile migration must not install the staging rate as a default");
 assert.ok(route.includes('router.post("/:restaurantId/pos/offline/reconcile"') && route.includes("requirePosSession"), "one authenticated reconciliation route should control replay");
 assert.ok(service.includes("validatePosOfflinePricingSnapshot") && service.includes("verifyPosOfflineConfigurationProof") && service.includes("verifyPosOfflineMenuItemProof"), "server should verify signed configuration, menu, tax, and arithmetic");
+assert.ok(service.includes("prisma.locationTaxProfile.findFirst") && service.includes("locationId: device.locationId"), "signed offline initialization must select the terminal location's active tax profile");
+assert.ok(service.includes("configurationProof.taxConfiguration.configurationVersion !== transaction.taxSnapshot?.profileVersion"), "reconciliation must verify the signed tax profile version");
 assert.ok(service.includes("createPosOrderTransaction") && service.includes("settleCashOrderTransaction"), "reconciliation should reuse canonical order and cash services");
 assert.ok(service.includes("tx.orderTaxSnapshot.create") && service.includes("tx.posOfflineReconciliation.update"), "tax and canonical IDs should commit atomically");
 assert.ok(service.includes("kdsDispatchedAt: null") && service.includes("cashDrawerDispatchedAt: null"), "post-commit side effects should be database-gated");
 assert.ok(service.includes("eventId: `pos-offline:${reconciliation.id}`"), "KDS replay identity should be deterministic");
 assert.ok(service.includes("transactionTenantId !== restaurantId") && service.includes("terminalId !== sessionDevice?.id"), "tenant and terminal isolation must be enforced server-side");
+assert.ok(stagingTaxProfileScript.includes('appEnv !== "staging"') && stagingTaxProfileScript.includes("EXPECTED_SUPABASE_PROJECT_REF"), "tax profile writer must fail closed outside the verified staging database");
+assert.ok(stagingTaxProfileScript.includes('tenantClassification !== "INTERNAL_DEVELOPMENT"'), "tax profile writer must reject real restaurant tenants");
+assert.ok(stagingTaxProfileScript.includes('required("STAGING_TAX_RATE_BPS")'), "staging tax rate must be supplied as data at execution time");
+assert.equal(stagingTaxProfileScript.includes("825"), false, "the approved certification rate must not be hardcoded in the staging writer");
 
 const persistedText = JSON.stringify(transaction).toLowerCase();
 for (const forbidden of ["rawpin", "password", "cardnumber", "cvv", "database_url", "service_role", "jwt_secret"]) {
