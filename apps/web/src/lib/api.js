@@ -1,5 +1,6 @@
 import { clearSession, getAccessToken, getRefreshToken, getSessionRevision, storeSession } from "../shared/auth.js";
 import { API_HEALTH_TIMEOUT_MS, DEFAULT_API_TIMEOUT_MS, fetchWithTimeout, retryTransientRequest } from "./networkRequest.js";
+import { resolveRealtimeOrigin } from "./realtimeConfig.js";
 
 const isDev = import.meta.env.DEV;
 const localDevApiOrigin = [("http" + ":"), "", ("local" + "host")].join("/") + ":5001";
@@ -10,6 +11,11 @@ const rawConfiguredApiUrl = import.meta.env.VITE_API_URL || runtimeDefaultApiUrl
 const configuredApiUrl = rawConfiguredApiUrl;
 const API_URL = configuredApiUrl.replace(/\/+$/, "");
 const API_ORIGIN = API_URL.replace(/\/api$/, "");
+const REALTIME_ORIGIN = resolveRealtimeOrigin({
+  configuredUrl: import.meta.env.VITE_REALTIME_URL,
+  apiOrigin: API_ORIGIN,
+  development: isDev
+});
 const rawConfiguredApiHealthUrl = import.meta.env.VITE_API_HEALTH_URL || (isDev ? `${localDevApiOrigin}/health` : "/health");
 const configuredApiHealthUrl = rawConfiguredApiHealthUrl;
 const API_HEALTH_URL = configuredApiHealthUrl.replace(/\/+$/, "");
@@ -281,4 +287,4 @@ try {
   // Browser debug helper is optional.
 }
 
-export { API_URL, API_ORIGIN };
+export { API_URL, API_ORIGIN, REALTIME_ORIGIN };

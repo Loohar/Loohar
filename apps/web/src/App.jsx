@@ -71,7 +71,7 @@ import {
   posStartupDisplay,
   savePosRegisterSnapshot
 } from "./apps/pos/startupReliability.js";
-import { api, API_ORIGIN, checkApiHealthWithRetry } from "./lib/api.js";
+import { api, checkApiHealthWithRetry, REALTIME_ORIGIN } from "./lib/api.js";
 import { retryTransientRequest } from "./lib/networkRequest.js";
 import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStoredSession, storeSession } from "./shared/auth.js";
 import { isPrivateNetworkHost } from "./shared/networkHost.js";
@@ -10578,7 +10578,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     };
     loadSocketIoClient().then(({ io }) => {
       if (disposed) return;
-      socket = io(API_ORIGIN, {
+      socket = io(REALTIME_ORIGIN, {
         transports: ["websocket", "polling"],
         auth: { token, scope: "restaurant", restaurantId }
       });
@@ -12810,7 +12810,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
     let sessionEnded = false;
     loadSocketIoClient().then(({ io }) => {
       if (disposed) return;
-      socket = io(API_ORIGIN, {
+      socket = io(REALTIME_ORIGIN, {
         transports: ["websocket", "polling"],
         auth: {
           token,
