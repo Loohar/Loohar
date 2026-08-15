@@ -26,6 +26,7 @@ import {
   Truck,
   UserCog,
   Users,
+  WifiOff,
   X
 } from "lucide-react";
 import { createContext, lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
@@ -60,6 +61,24 @@ import {
 } from "./apps/pos/cart.js";
 import { cashTenderInputToCents, cashTenderSummary } from "./apps/pos/cashTender.js";
 import { filterPosMenuItems, preparePosMenuItems } from "./apps/pos/menuPerformance.js";
+import {
+  buildPosOfflineCashTransaction,
+  buildPosOfflineInitialization,
+  calculatePosOfflineQuote,
+  offlineOrderFromTransaction,
+  posOfflineInitializationUsable
+} from "./apps/pos/offlinePricing.js";
+import {
+  countUnsyncedPosOfflineTransactions,
+  listPosOfflineTransactions,
+  loadPosOfflineInitialization,
+  persistPosOfflineTransaction,
+  posOfflineRegisterKey,
+  recoverInterruptedPosOfflineTransactions,
+  savePosOfflineInitialization,
+  updatePosOfflineTransaction
+} from "./apps/pos/offlineStorage.js";
+import { posOfflineRetryDelayMs, runPosOfflineSyncBatch } from "./apps/pos/offlineSync.js";
 import {
   POS_CONFIG_STATE,
   POS_CONNECTION_STATE,
@@ -8147,6 +8166,10 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const [modifierSelections, setModifierSelections] = useState({});
   const [modifierInstructions, setModifierInstructions] = useState("");
   const [modifierError, setModifierError] = useState("");
+  const [offlineInitialization, setOfflineInitialization] = useState(null);
+  const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
+  const [offlineSyncing, setOfflineSyncing] = useState(false);
+  const [posSessionActive, setPosSessionActive] = useState(false);
   const inflightLoadRef = useRef(null);
   const startupAbortRef = useRef(null);
   const inflightConfigRefreshRef = useRef(null);
@@ -8169,6 +8192,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const inactivityTimerRef = useRef(null);
   const posSessionTokenRef = useRef("");
   const cashPaymentInFlightRef = useRef(false);
+  const offlineSyncInFlightRef = useRef(null);
+  const offlineRetryTimerRef = useRef(null);
+  const offlineRefreshPendingRef = useRef(false);
 
   useEffect(() => {
     setDeviceIdentityReady(false);
@@ -8198,9 +8224,72 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     ...(deviceId ? { "x-loohar-device-id": deviceId } : {}),
     ...(fingerprint ? { "x-loohar-device-fingerprint": fingerprint } : {})
   }), [deviceId, fingerprint]);
+  const offlineStorageRegisterKey = useMemo(() => {
+    const canonicalRestaurantId = config?.restaurant?.id || restaurantId || user?.restaurantId || "";
+    return canonicalRestaurantId && deviceId ? posOfflineRegisterKey(canonicalRestaurantId, deviceId) : "";
+  }, [config?.restaurant?.id, restaurantId, user?.restaurantId, deviceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!offlineStorageRegisterKey) {
+      setOfflineInitialization(null);
+      setPendingOfflineCount(0);
+      return undefined;
+    }
+    Promise.all([
+      loadPosOfflineInitialization(offlineStorageRegisterKey),
+      countUnsyncedPosOfflineTransactions(offlineStorageRegisterKey)
+    ]).then(([initialization, count]) => {
+      if (cancelled) return;
+      setOfflineInitialization(initialization);
+      setPendingOfflineCount(count);
+    }).catch(() => {
+      if (!cancelled) setOfflineInitialization(null);
+    });
+    return () => { cancelled = true; };
+  }, [offlineStorageRegisterKey]);
+
+  useEffect(() => {
+    if (
+      !posSessionActive
+      || !offlineStorageRegisterKey
+      || !config
+      || ![POS_MENU_STATUS.SUCCESS, POS_MENU_STATUS.EMPTY].includes(posMenuState.status)
+      || !posMenuState.menuVersion
+    ) return;
+    try {
+      const initialization = buildPosOfflineInitialization({
+        config,
+        registerKey: offlineStorageRegisterKey,
+        menu: {
+          categories: posMenuState.lastSuccessfulCategories,
+          menuVersion: posMenuState.menuVersion,
+          generatedAt: posMenuState.loadedAt,
+          tenantId: posMenuState.tenantId,
+          locationId: posMenuState.locationId
+        }
+      });
+      void savePosOfflineInitialization(initialization).then(() => {
+        setOfflineInitialization(initialization);
+      }).catch(() => null);
+    } catch {
+      // Keep the last valid initialization; incomplete live config must not replace it.
+    }
+  }, [
+    config,
+    offlineStorageRegisterKey,
+    posMenuState.lastSuccessfulCategories,
+    posMenuState.loadedAt,
+    posMenuState.locationId,
+    posMenuState.menuVersion,
+    posMenuState.status,
+    posMenuState.tenantId,
+    posSessionActive
+  ]);
 
   function rememberPosSession(value = "") {
     posSessionTokenRef.current = value;
+    setPosSessionActive(Boolean(value));
   }
 
   function lockRegister() {
@@ -8230,6 +8319,58 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       }
       throw posError;
     }
+  }
+
+  async function refreshPendingOfflineCount() {
+    if (!offlineStorageRegisterKey) return 0;
+    const count = await countUnsyncedPosOfflineTransactions(offlineStorageRegisterKey);
+    setPendingOfflineCount(count);
+    return count;
+  }
+
+  async function syncPendingOfflineTransactions() {
+    if (!apiOnline || !posSessionTokenRef.current || !offlineStorageRegisterKey) return null;
+    if (offlineSyncInFlightRef.current) return offlineSyncInFlightRef.current;
+    const request = (async () => {
+      setOfflineSyncing(true);
+      window.clearTimeout(offlineRetryTimerRef.current);
+      await recoverInterruptedPosOfflineTransactions(offlineStorageRegisterKey);
+      const records = await listPosOfflineTransactions(offlineStorageRegisterKey, { unsyncedOnly: true });
+      const result = await runPosOfflineSyncBatch({
+        records,
+        maxTransactions: 10,
+        updateRecord: async (localTransactionId, patch) => {
+          const updated = await updatePosOfflineTransaction(localTransactionId, patch);
+          if (patch.syncStatus === "SYNCED") await refreshPendingOfflineCount();
+          return updated;
+        },
+        sendRecord: (transaction) => posApi("/offline/reconcile", {
+          method: "POST",
+          timeoutMs: 20_000,
+          body: { transaction }
+        })
+      });
+      const remaining = await refreshPendingOfflineCount();
+      if (result.synced > 0 && remaining === 0) {
+        offlineRefreshPendingRef.current = true;
+        if (!cart.length) {
+          offlineRefreshPendingRef.current = false;
+          void loadPos({ silent: true });
+        }
+      }
+      if (result.retryable > 0 && apiOnline && posSessionTokenRef.current) {
+        const attempts = Math.max(1, ...records.map((record) => Number(record.syncAttempts || 0) + 1));
+        offlineRetryTimerRef.current = window.setTimeout(() => {
+          void syncPendingOfflineTransactions();
+        }, posOfflineRetryDelayMs(attempts));
+      }
+      return result;
+    })().catch(() => null).finally(() => {
+      setOfflineSyncing(false);
+      if (offlineSyncInFlightRef.current === request) offlineSyncInFlightRef.current = null;
+    });
+    offlineSyncInFlightRef.current = request;
+    return request;
   }
 
   function applyPosConfig(configPayload, options = {}) {
@@ -8537,6 +8678,21 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   }, [apiOnline, apiMode, workflow.value]);
 
   useEffect(() => {
+    if (apiOnline && posSessionActive && pendingOfflineCount > 0) {
+      void syncPendingOfflineTransactions();
+    }
+  }, [apiOnline, posSessionActive, pendingOfflineCount, offlineStorageRegisterKey]);
+
+  useEffect(() => {
+    if (!cart.length && offlineRefreshPendingRef.current && apiOnline && posSessionActive) {
+      offlineRefreshPendingRef.current = false;
+      void loadPos({ silent: true });
+    }
+  }, [cart.length, apiOnline, posSessionActive]);
+
+  useEffect(() => () => window.clearTimeout(offlineRetryTimerRef.current), []);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30000);
     return () => window.clearInterval(timer);
   }, []);
@@ -8623,7 +8779,19 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const activeShift = config?.shift;
   const firstCashDrawer = config?.cashDrawers?.[0];
   const currentCashDrawer = config?.cashDrawers?.find((drawer) => drawer.id === activeShift?.cashDrawerId) || firstCashDrawer;
-  const canAcceptCash = Boolean(activeDevice?.status === "ACTIVE" && activeDevice.deviceType === "MAIN_TERMINAL" && activeShift?.status === "OPEN" && currentCashDrawer?.status === "OPEN" && (config?.permissions || []).includes("POS_ACCEPT_CASH"));
+  const offlineCashReady = Boolean(
+    (!apiOnline || connectionFailed)
+    && posSessionActive
+    && posOfflineInitializationUsable(offlineInitialization)
+  );
+  const canAcceptCash = Boolean(
+    activeDevice?.status === "ACTIVE"
+    && activeDevice.deviceType === "MAIN_TERMINAL"
+    && activeShift?.status === "OPEN"
+    && currentCashDrawer?.status === "OPEN"
+    && (config?.permissions || []).includes("POS_ACCEPT_CASH")
+    && ((apiOnline && !connectionFailed) || offlineCashReady)
+  );
   const { cartTotalCents, cartItemCount } = useMemo(() => cart.reduce((summary, line) => ({
     cartTotalCents: summary.cartTotalCents + (line.priceCents || 0) * line.quantity,
     cartItemCount: summary.cartItemCount + line.quantity
@@ -8634,8 +8802,10 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       ? "Cash is allowed only on a main terminal."
       : !activeShift
         ? "Open a shift before accepting cash."
-        : currentCashDrawer?.status !== "OPEN"
+      : currentCashDrawer?.status !== "OPEN"
       ? "Open cash drawer required."
+      : (!apiOnline || connectionFailed) && !offlineCashReady
+        ? "Offline sales are unavailable until this register completes its first online setup."
       : "";
   const kioskLocked = Boolean(activeDevice?.kioskModeEnabled || kioskOnly);
   const posMenuItemCount = posMenuState.itemCount || countPosMenuItems(categoriesForRegister);
@@ -8866,7 +9036,19 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     setSaving("quote");
     setError("");
     setNotice("");
+    const calculateCachedQuote = () => calculatePosOfflineQuote({
+      initialization: offlineInitialization,
+      cart: lines,
+      orderType,
+      customer: { ...customer, tableNumber },
+      locationId: locationId || activeDevice?.locationId || null
+    });
     try {
+      if (!apiOnline || connectionFailed) {
+        const offlineQuote = calculateCachedQuote();
+        setQuote(offlineQuote);
+        return offlineQuote;
+      }
       if (options.trackCashPayment) cashPaymentRequestCountRef.current += 1;
       const payload = await posApi("/quotes", {
         method: "POST",
@@ -8886,6 +9068,17 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       setNotice("Server quote recalculated.");
       return payload.quote;
     } catch (posError) {
+      if (isPosConnectionFailure(posError) && posOfflineInitializationUsable(offlineInitialization)) {
+        try {
+          const offlineQuote = calculateCachedQuote();
+          setConnectionFailed(true);
+          setQuote(offlineQuote);
+          return offlineQuote;
+        } catch (offlineError) {
+          setError(offlineError);
+          return null;
+        }
+      }
       setError(posError);
       return null;
     } finally {
@@ -8962,11 +9155,62 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     }
   }
 
+  async function completeOfflineCashPayment({ paymentQuote, amountCents }) {
+    const transaction = buildPosOfflineCashTransaction({
+      initialization: offlineInitialization,
+      quote: paymentQuote,
+      customer,
+      orderType,
+      notes: posOperationalNotes(orderType, customer, tableNumber, notes),
+      tableNumber,
+      amountCents,
+      cashier: workflow.context.unlockedBy || user
+    });
+    await persistPosOfflineTransaction(transaction);
+    await refreshPendingOfflineCount();
+    const order = offlineOrderFromTransaction(transaction);
+    cashPaymentServerConfirmedAtRef.current = posPerformanceNow();
+    setLastOrder(order);
+    setLastOrderReceiptKind("final");
+    completeSuccessfulTransaction(order, {
+      ...transaction.paymentSnapshot,
+      offlinePendingSync: true,
+      drawerRequest: {
+        requested: false,
+        physicalOpenRequested: false,
+        hardwareStatus: "PENDING_CLOUD_SYNC"
+      }
+    });
+  }
+
   async function acceptCashPayment(amountCents) {
     if (cashPaymentInFlightRef.current) return;
+    const useOfflineCash = (!apiOnline || connectionFailed)
+      && posSessionActive
+      && posOfflineInitializationUsable(offlineInitialization);
+    if (useOfflineCash && lastOrder?.id && !lastOrder.offlinePendingSync) {
+      setError("Reconnect before settling an order that already exists in the cloud.");
+      return;
+    }
     const paymentQuote = lastOrder ? null : quote;
-    const orderTotalCents = Number(lastOrder?.totalCents ?? paymentQuote?.totalCents);
-    if (!lastOrder?.id && !paymentQuote?.id) {
+    let activePaymentQuote = paymentQuote;
+    if (useOfflineCash) {
+      try {
+        activePaymentQuote = calculatePosOfflineQuote({
+          initialization: offlineInitialization,
+          cart,
+          orderType,
+          customer: { ...customer, tableNumber },
+          locationId: locationId || activeDevice?.locationId || null
+        });
+        setQuote(activePaymentQuote);
+      } catch (offlineError) {
+        setError(offlineError);
+        return;
+      }
+    }
+    const orderTotalCents = Number(lastOrder?.totalCents ?? activePaymentQuote?.totalCents);
+    if (!lastOrder?.id && !activePaymentQuote?.id) {
       setError("The server-verified total is still being prepared.");
       return;
     }
@@ -8989,6 +9233,10 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     setNotice("");
     dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
     try {
+      if (useOfflineCash) {
+        await completeOfflineCashPayment({ paymentQuote: activePaymentQuote, amountCents });
+        return;
+      }
       posPerformanceMark("cash-payment-api-start");
       posPerformanceMeasure("cash-payment-pre-api-duration", "cash-payment-click", "cash-payment-api-start");
       cashPaymentRequestCountRef.current += 1;
@@ -8996,7 +9244,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
         method: "POST",
         body: {
           ...(lastOrder?.id ? { orderId: lastOrder.id } : {
-            quoteId: paymentQuote.id,
+            quoteId: activePaymentQuote.id,
             customer: { ...customer, tableNumber },
             notes: posOperationalNotes(orderType, customer, tableNumber, notes)
           }),
@@ -9231,7 +9479,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   async function completeSuccessfulTransaction(order, settlement = {}) {
     const changeDueCents = Number(settlement.changeDueCents || 0);
     const changeMessage = changeDueCents > 0 ? ` Change due ${money(changeDueCents)}.` : "";
-    const message = `Payment complete.${changeMessage}`;
+    const message = settlement.offlinePendingSync
+      ? `Payment complete.${changeMessage} Offline - pending cloud and Kitchen sync.`
+      : `Payment complete.${changeMessage}`;
     setPaymentResult({
       success: true,
       changeDueCents,
@@ -9239,9 +9489,12 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       cashTenderedCents: Number(settlement.cashTenderedCents || settlement.amountReceivedCents || 0),
       paymentMethod: "Cash",
       message,
-      drawerRequest: settlement.drawerRequest || null
+      drawerRequest: settlement.drawerRequest || null,
+      offlinePendingSync: Boolean(settlement.offlinePendingSync)
     });
-    setNotice(`${order?.orderNumber || "Order"} was paid and sent to the Kitchen.`);
+    setNotice(settlement.offlinePendingSync
+      ? `${order?.orderNumber || "Order"} was saved locally and is pending cloud and Kitchen sync.`
+      : `${order?.orderNumber || "Order"} was paid and sent to the Kitchen.`);
     dispatchWorkflow({ type: POS_EVENT.PAYMENT_SUCCEEDED, payload: { orderId: order?.id } });
     posPerformanceMark("cash-payment-complete-visible");
     posPerformanceMeasure("cash-payment-click-to-complete", "cash-payment-click", "cash-payment-complete-visible");
@@ -9265,6 +9518,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     resetCurrentOrder();
     dispatchWorkflow({ type: POS_EVENT.COMPLETE_ORDER, payload: { orderId: order?.id } });
     dispatchWorkflow({ type: POS_EVENT.HOME, payload: { completedOrderId: order?.id } });
+    if (!apiOnline || connectionFailed || order?.offlinePendingSync) return;
     posPerformanceMark("cash-payment-reconciliation-start");
     void Promise.all([refreshPosConfig(), loadOrderLists()]).catch(() => null).finally(() => {
       posPerformanceMark("cash-payment-reconciliation-end");
@@ -9385,7 +9639,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     shift: activeShift,
     lastKnownRegister
   });
-  const effectiveWorkflow = connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE ? POS_WORKFLOW.OFFLINE : workflow.value;
+  const offlineMode = connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE;
+  const offlineOperational = offlineMode && offlineCashReady;
+  const effectiveWorkflow = offlineMode && !offlineOperational ? POS_WORKFLOW.OFFLINE : workflow.value;
   const registerOnline = connectionDisplay.isOnline;
   const initialConnectionUnavailable = connectionDisplay.state === POS_CONNECTION_STATE.OFFLINE && !loadedOnceRef.current;
   const knownOfflineDetail = lastKnownRegister?.deviceName
@@ -9467,6 +9723,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onSettings={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
           onManager={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
           onLock={lockRegister}
+          offline={offlineMode}
+          pendingSyncCount={pendingOfflineCount}
+          syncing={offlineSyncing}
         />
       );
       break;
@@ -9519,6 +9778,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onPay={payCurrentOrder}
           onHold={holdOrder}
           onHome={returnHome}
+          offline={offlineMode}
           saving={savingAction}
           emptyTitle={posEmptyTitle}
           emptyDetail={posEmptyDetail}
@@ -9541,6 +9801,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onSend={sendCurrentOrderToKitchen}
           onPay={payCurrentOrder}
           onHold={holdOrder}
+          offline={offlineMode}
           saving={savingAction}
         />
       );
@@ -9558,6 +9819,8 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onBack={() => dispatchWorkflow({ type: POS_EVENT.EDIT_ORDER })}
           onCash={acceptCashPayment}
           onFirstRender={reportPaymentSelectionRender}
+          offline={offlineMode}
+          pendingSyncCount={pendingOfflineCount}
         />
       );
       break;
@@ -9678,7 +9941,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
 
   return (
     <Suspense fallback={<PosChunkFallback restaurantName={restaurantForPos?.name || restaurantForPos?.businessName} />}>
-      <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""} ${pinScreenActive ? "pin-active" : ""}`}>
+      <div className={`pos-register pos-enterprise-register ${kioskLocked ? "kiosk-active" : ""} ${pinScreenActive ? "pin-active" : ""} ${(offlineMode && offlineOperational) || pendingOfflineCount > 0 || offlineSyncing ? "offline-status-active" : ""}`}>
       <div className="pos-workflow-topline">
         <div className="pos-mobile-brand" aria-label={`${restaurantForPos?.name || restaurantForPos?.businessName || "Restaurant"} mobile POS`}>
           <span>Loohar</span>
@@ -9711,6 +9974,20 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
         <PosNotice error={error} user={user} onRetry={retryFailedPosRequests} subscriptionHref={subscriptionHref} />
       ) : null}
       {notice ? <div className="success-box" role="status">{notice}</div> : null}
+      {offlineMode && offlineOperational ? (
+        <div className="pos-offline-operation" role="status">
+          <span><WifiOff size={17} /><strong>Offline Mode</strong></span>
+          <span>Cash available</span>
+          <span>Card requires internet</span>
+          <span>{pendingOfflineCount} transaction{pendingOfflineCount === 1 ? "" : "s"} pending sync</span>
+        </div>
+      ) : null}
+      {!offlineMode && (pendingOfflineCount > 0 || offlineSyncing) ? (
+        <div className="pos-offline-operation syncing" role="status">
+          <span><RefreshCw size={17} /><strong>{offlineSyncing ? "Syncing offline sales" : "Pending Sync"}</strong></span>
+          <span>{pendingOfflineCount} remaining</span>
+        </div>
+      ) : null}
       {posMenuState.status === POS_MENU_STATUS.STALE ? <div className="pos-menu-state stale" role="status">Showing the last synced POS menu while refresh is unavailable.</div> : null}
       {posMenuState.status === POS_MENU_STATUS.REFRESHING ? <div className="pos-menu-state refreshing" role="status">Refreshing the menu in the background...</div> : null}
       {workflow.invalidTransition && import.meta.env.DEV ? <div className="pos-menu-state stale" role="status">Development warning: blocked invalid transition from {workflow.invalidTransition.from} via {workflow.invalidTransition.event}.</div> : null}

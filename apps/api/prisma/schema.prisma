@@ -524,6 +524,7 @@ model Restaurant {
   posOrderSessions    PosOrderSession[]
   orderQuotes         OrderQuote[]
   posReceipts         PosReceipt[]
+  posOfflineReconciliations PosOfflineReconciliation[]
   authSessions        AuthSession[]
   printerSettings     RestaurantPrinterSettings?
   notificationSettings RestaurantNotificationSettings?
@@ -1724,6 +1725,36 @@ model PosReceipt {
   @@unique([restaurantId, receiptNumber])
   @@index([restaurantId, orderId])
   @@index([locationId])
+}
+
+model PosOfflineReconciliation {
+  id                     String     @id @default(cuid())
+  restaurantId           String
+  locationId             String?
+  deviceId               String
+  staffId                String
+  shiftId                String
+  localTransactionId     String
+  idempotencyKey         String
+  configurationVersion   String
+  status                 String     @default("PROCESSING")
+  payloadJson            Json
+  orderId                String?
+  paymentId              String?
+  cashLedgerEntryId      String?
+  customerReceiptId      String?
+  kitchenReceiptId       String?
+  reconciledAt           DateTime?
+  kdsDispatchedAt        DateTime?
+  cashDrawerDispatchedAt DateTime?
+  restaurant             Restaurant @relation(fields: [restaurantId], references: [id])
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  @@unique([restaurantId, localTransactionId])
+  @@unique([restaurantId, idempotencyKey])
+  @@index([restaurantId, status, createdAt])
+  @@index([deviceId, createdAt])
 }
 
 model AuditLog {

@@ -63,3 +63,35 @@ export function signPosSessionToken({ userId, restaurantId, staffId, deviceId, l
 export function verifyPosSessionToken(token) {
   return jwt.verify(token, accessSecret());
 }
+
+export function signPosOfflineConfigurationProof(payload, { expiresIn = "72h" } = {}) {
+  return jwt.sign(
+    { ...payload, purpose: "POS_OFFLINE_CONFIGURATION" },
+    accessSecret(),
+    { expiresIn }
+  );
+}
+
+export function verifyPosOfflineConfigurationProof(token, options = {}) {
+  const payload = jwt.verify(token, accessSecret(), options);
+  if (payload.purpose !== "POS_OFFLINE_CONFIGURATION") {
+    throw new jwt.JsonWebTokenError("Invalid POS offline configuration proof.");
+  }
+  return payload;
+}
+
+export function signPosOfflineMenuItemProof(payload, { expiresIn = "72h" } = {}) {
+  return jwt.sign(
+    { ...payload, purpose: "POS_OFFLINE_MENU_ITEM" },
+    accessSecret(),
+    { expiresIn }
+  );
+}
+
+export function verifyPosOfflineMenuItemProof(token, options = {}) {
+  const payload = jwt.verify(token, accessSecret(), options);
+  if (payload.purpose !== "POS_OFFLINE_MENU_ITEM") {
+    throw new jwt.JsonWebTokenError("Invalid POS offline menu item proof.");
+  }
+  return payload;
+}

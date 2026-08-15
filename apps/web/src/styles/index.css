@@ -3962,6 +3962,31 @@ textarea {
     @apply flex flex-wrap items-center gap-2;
   }
 
+  .pos-offline-operation,
+  .pos-cash-connectivity,
+  .pos-home-operational-status {
+    @apply flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-950;
+  }
+
+  .pos-offline-operation > span,
+  .pos-cash-connectivity > span,
+  .pos-home-operational-status > span {
+    @apply inline-flex items-center gap-2;
+  }
+
+  .pos-offline-operation.syncing,
+  .pos-home-operational-status.syncing {
+    @apply border-sky-300 bg-sky-50 text-sky-950;
+  }
+
+  .pos-home-operational-status {
+    @apply mt-4 justify-between;
+  }
+
+  .pos-cash-connectivity {
+    @apply mt-4;
+  }
+
   .pos-cashier-badge {
     @apply inline-flex min-h-10 items-center gap-2 text-sm font-black text-ink;
   }
@@ -4523,7 +4548,7 @@ textarea {
   }
 
   .pos-cash-entry input {
-    @apply h-16 text-right text-3xl font-black tabular-nums;
+    @apply h-16 min-w-0 max-w-full box-border text-right text-3xl font-black tabular-nums;
   }
 
   .pos-cash-quick-actions {
@@ -4745,6 +4770,14 @@ textarea {
       padding-bottom: 0.5rem;
       padding-left: calc(0.65rem + env(safe-area-inset-left));
       box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+    }
+
+    .pos-offline-operation {
+      @apply gap-x-3 rounded-none border-x-0 px-3 py-1.5 text-xs;
+    }
+
+    .pos-offline-operation > span:nth-child(3) {
+      display: none;
     }
 
     .pos-mobile-brand {
@@ -5264,6 +5297,14 @@ textarea {
       padding-right: calc(0.5rem + env(safe-area-inset-right));
       padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
       padding-left: calc(0.5rem + env(safe-area-inset-left));
+    }
+
+    .offline-status-active .pos-entry-layout {
+      height: calc(100dvh - 6rem - env(safe-area-inset-top));
+    }
+
+    .pos-offline-operation {
+      @apply gap-x-3 rounded-none border-x-0 px-3 py-1 text-xs;
     }
 
     .pos-entry-menu,

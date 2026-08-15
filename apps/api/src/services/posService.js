@@ -8,7 +8,19 @@ import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomi
 import { assemblePosMenuCategories } from "./posMenuReadModel.js";
 import { requestCashDrawerOpen } from "./posHardwareService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
-import { signPosSessionToken } from "../utils/tokens.js";
+import {
+  signPosOfflineConfigurationProof,
+  signPosOfflineMenuItemProof,
+  signPosSessionToken,
+  verifyPosOfflineConfigurationProof,
+  verifyPosOfflineMenuItemProof
+} from "../utils/tokens.js";
+import {
+  POS_OFFLINE_SCHEMA_VERSION,
+  calculatePosPricingSnapshot,
+  resolvePosDeliveryPricingSnapshot,
+  validatePosOfflinePricingSnapshot
+} from "../../../shared/posOfflinePricing.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -93,6 +105,7 @@ const POS_CUSTOMER_FIELDS = new Set([
   "headcount"
 ]);
 const POS_DEVICE_TOUCH_INTERVAL_MS = 60 * 1000;
+const POS_OFFLINE_CONFIGURATION_TTL_MS = 72 * 60 * 60 * 1000;
 
 async function recordPosTiming(timings, name, operation) {
   const startedAt = performance.now();
@@ -161,25 +174,17 @@ async function loadPosOrderConfiguration(restaurantId) {
 }
 
 function resolvePosDeliveryPricing(config, orderType, body, subtotalCents) {
-  if (orderType !== "DELIVERY") return { deliveryFeeCents: 0, deliveryZone: null };
-  if (!config.deliveryZones.length) {
-    return { deliveryFeeCents: config.deliveryFeeCents, deliveryZone: null };
-  }
-  const deliveryZoneId = String(body?.deliveryZoneId || "").trim();
-  if (!deliveryZoneId) {
-    throw httpError("Select a delivery zone before continuing.", 400, { code: "POS_DELIVERY_ZONE_REQUIRED" });
-  }
-  const deliveryZone = config.deliveryZones.find((zone) => zone.id === deliveryZoneId);
-  if (!deliveryZone) {
-    throw httpError("Delivery zone is not active for this restaurant.", 400, { code: "POS_DELIVERY_ZONE_INVALID" });
-  }
-  if (subtotalCents < deliveryZone.minimumOrderCents) {
-    throw httpError("Order does not meet the delivery zone minimum.", 400, {
-      code: "POS_DELIVERY_MINIMUM_NOT_MET",
-      minimumOrderCents: deliveryZone.minimumOrderCents
+  try {
+    return resolvePosDeliveryPricingSnapshot({
+      orderType,
+      deliveryZones: config.deliveryZones,
+      defaultDeliveryFeeCents: config.deliveryFeeCents,
+      deliveryZoneId: body?.deliveryZoneId,
+      subtotalCents
     });
+  } catch (error) {
+    throw httpError(error.message, 400, { code: error.code, minimumOrderCents: error.minimumOrderCents });
   }
-  return { deliveryFeeCents: deliveryZone.deliveryFeeCents, deliveryZone };
 }
 
 async function validatePosOrderSetup({ restaurantId, orderType, customerJson, quote }) {
@@ -712,6 +717,38 @@ export async function requireCashRegisterAccess({ restaurantId, user, deviceId, 
   return { device, shift, cashDrawer: shift.cashDrawer };
 }
 
+function posOfflineConfigurationVersion(snapshot) {
+  return `offline-v1:${crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")}`;
+}
+
+function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, taxConfiguration }) {
+  return {
+    schemaVersion: POS_OFFLINE_SCHEMA_VERSION,
+    restaurantId: restaurant.id,
+    userId: staff.userId,
+    staffId: staff.id,
+    deviceId: device.id,
+    locationId: device.locationId || shift.locationId || null,
+    shiftId: shift.id,
+    cashDrawerId: shift.cashDrawerId,
+    timezone: restaurant.timezone || "America/Denver",
+    orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
+    taxConfiguration: {
+      provider: taxConfiguration.provider,
+      taxRateBps: taxConfiguration.taxRateBps,
+      taxInclusive: taxConfiguration.taxInclusive,
+      updatedAt: taxConfiguration.updatedAt.toISOString()
+    },
+    deliveryFeeCents: cents(restaurant.deliveryFeeCents),
+    deliveryZones: (restaurant.deliveryZones || []).map((zone) => ({
+      id: zone.id,
+      deliveryFeeCents: cents(zone.deliveryFeeCents),
+      minimumOrderCents: cents(zone.minimumOrderCents),
+      updatedAt: zone.updatedAt?.toISOString?.() || null
+    }))
+  };
+}
+
 export async function posConfig({ restaurant, user, deviceId, fingerprint, entitlementVerified = false, timings = null }) {
   if (!entitlementVerified) {
     await recordPosTiming(timings, "config-entitlement", () => assertPosFeature(restaurant.id, "GET"));
@@ -729,19 +766,50 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
   if (!device && restaurant.tenantClassification === "INTERNAL_DEVELOPMENT") {
     device = await activeInternalDevelopmentDevice(restaurant.id);
   }
-  const [shift, cashDrawers, registers, devices] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
+  const [shift, cashDrawers, registers, devices, taxConfiguration] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
     currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null }),
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posRegister.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
-    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 })
+    prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 }),
+    prisma.taxConfiguration.findFirst({
+      where: { restaurantId: restaurant.id, enabled: true },
+      orderBy: { updatedAt: "desc" },
+      select: { provider: true, taxRateBps: true, taxInclusive: true, enabled: true, updatedAt: true }
+    })
   ]));
+  const offlineReady = Boolean(
+    staff
+    && device?.status === "ACTIVE"
+    && device.deviceType === "MAIN_TERMINAL"
+    && shift?.status === "OPEN"
+    && shift.cashDrawerId
+    && shift.cashDrawer?.status === "OPEN"
+    && taxConfiguration?.enabled
+    && permissions.includes(POS_PERMISSION.ACCEPT_CASH)
+    && permissions.includes(POS_PERMISSION.SEND_TO_KITCHEN)
+  );
+  const offlineSnapshot = offlineReady
+    ? posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, taxConfiguration })
+    : null;
+  const configurationVersion = offlineSnapshot ? posOfflineConfigurationVersion(offlineSnapshot) : null;
+  const serverTime = new Date();
+  const offlineValidUntil = offlineReady ? new Date(serverTime.getTime() + POS_OFFLINE_CONFIGURATION_TTL_MS) : null;
+  const offlineConfigurationProof = offlineSnapshot
+    ? signPosOfflineConfigurationProof({
+        ...offlineSnapshot,
+        configurationVersion,
+        validUntil: offlineValidUntil.toISOString()
+      })
+    : null;
   return {
     restaurant: {
       id: restaurant.id,
       slug: restaurant.slug,
       name: restaurant.businessName || restaurant.name,
-      timezone: restaurant.timezone
+      timezone: restaurant.timezone,
+      deliveryFeeCents: cents(restaurant.deliveryFeeCents)
     },
+    staff: staff ? { id: staff.id, userId: staff.userId, role: staff.role } : null,
     locations: restaurant.locations,
     deliveryZones: restaurant.deliveryZones,
     orderFieldPolicy: normalizePosOrderFieldPolicy(restaurant.settingsJson),
@@ -751,8 +819,64 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
     cashDrawers,
     registers,
     devices,
-    pinStatus: pinStatusForStaff(staff)
+    pinStatus: pinStatusForStaff(staff),
+    taxConfiguration,
+    configurationVersion,
+    offlineConfigurationProof,
+    offlineValidUntil,
+    serverTime
   };
+}
+
+export function withPosOfflineMenuProofs({ restaurantId, menuVersion, categories = [] }) {
+  return categories.map((category) => ({
+    ...category,
+    items: (category.items || []).map((item) => ({
+      ...item,
+      offlinePricingProof: signPosOfflineMenuItemProof({
+        schemaVersion: POS_OFFLINE_SCHEMA_VERSION,
+        restaurantId,
+        menuVersion,
+        menuItem: {
+          id: item.id,
+          name: item.name,
+          priceCents: item.priceCents,
+          available: item.available !== false,
+          customizationMode: item.customizationMode || "AUTO",
+          sendToKitchen: item.sendToKitchen !== false,
+          options: (item.options || []).map((option) => ({
+            id: option.id,
+            menuItemId: option.menuItemId,
+            optionGroupId: option.optionGroupId || null,
+            name: option.name,
+            priceCents: option.priceCents,
+            required: Boolean(option.required),
+            isDefault: Boolean(option.isDefault),
+            sortOrder: option.sortOrder || 0
+          })),
+          optionGroups: (item.optionGroups || []).map((group) => ({
+            id: group.id,
+            menuItemId: group.menuItemId,
+            name: group.name,
+            required: Boolean(group.required),
+            minSelect: group.minSelect || 0,
+            maxSelect: group.maxSelect || 1,
+            sortOrder: group.sortOrder || 0,
+            options: (group.options || []).map((option) => ({
+              id: option.id,
+              menuItemId: option.menuItemId,
+              optionGroupId: option.optionGroupId || group.id,
+              name: option.name,
+              priceCents: option.priceCents,
+              required: Boolean(option.required),
+              isDefault: Boolean(option.isDefault),
+              sortOrder: option.sortOrder || 0
+            }))
+          }))
+        }
+      })
+    }))
+  }));
 }
 
 export async function posMenu(restaurantId, settingsJson, timings = null) {
@@ -908,10 +1032,14 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
   const subtotalCents = normalizedItems.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const discountCents = cents(body?.discountCents);
   const { deliveryFeeCents } = resolvePosDeliveryPricing(orderConfiguration, orderType, body, subtotalCents);
-  const tipCents = 0;
-  const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
-  const taxCents = Math.round((taxableAmountCents * await taxRateBps(restaurantId)) / 10_000);
-  const totalCents = Math.max(0, taxableAmountCents + deliveryFeeCents + taxCents + tipCents);
+  const pricing = calculatePosPricingSnapshot({
+    lineItems: normalizedItems,
+    discountCents,
+    deliveryFeeCents,
+    taxRateBps: await taxRateBps(restaurantId),
+    tipCents: 0
+  });
+  const { taxCents, tipCents, totalCents } = pricing;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   const locationId = await resolvePosLocationId(restaurantId, body?.locationId);
 
@@ -1613,6 +1741,533 @@ async function cashPaymentFromQuote({
     amountReceivedCents: settlement.cashTenderedCents,
     drawerRequest,
     ...(performance ? { performance } : {})
+  };
+}
+
+function posOfflineError(message, code, status = 422, details = {}) {
+  return httpError(message, status, { code, ...details });
+}
+
+function requiredPosOfflineString(value, field, maximum = 240) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.length > maximum) {
+    throw posOfflineError("Offline transaction identity is invalid.", "POS_OFFLINE_IDENTITY_INVALID", 422, { field });
+  }
+  return normalized;
+}
+
+function assertPosOfflinePayloadSecurity(value, path = "transaction") {
+  if (!value || typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value)) {
+    const nestedPath = `${path}.${key}`;
+    if (/password|rawpin|cardnumber|card_number|cvv|databaseurl|database_url|servicerole|service_role|jwtsecret|jwt_secret/i.test(key)) {
+      throw posOfflineError("Offline transaction contains a prohibited field.", "POS_OFFLINE_PROHIBITED_DATA", 422, { field: nestedPath });
+    }
+    assertPosOfflinePayloadSecurity(nested, nestedPath);
+  }
+}
+
+function verifyPosOfflineProofAtCompletion(token, verify, completedAt, invalidCode) {
+  let proof;
+  try {
+    proof = verify(token, { ignoreExpiration: true });
+  } catch {
+    throw posOfflineError("Offline transaction proof is invalid.", invalidCode);
+  }
+  const completedAtMs = new Date(completedAt).getTime();
+  const issuedAtMs = Number(proof.iat || 0) * 1000;
+  const expiresAtMs = Number(proof.exp || 0) * 1000;
+  if (
+    !Number.isFinite(completedAtMs)
+    || !issuedAtMs
+    || !expiresAtMs
+    || completedAtMs < issuedAtMs - (5 * 60 * 1000)
+    || completedAtMs > expiresAtMs
+    || completedAtMs > Date.now() + (15 * 60 * 1000)
+  ) {
+    throw posOfflineError("Offline transaction was not completed during the signed configuration window.", "POS_OFFLINE_PROOF_WINDOW_INVALID");
+  }
+  return proof;
+}
+
+function validatePosOfflineOrderSetup({ orderType, customerJson, orderFieldPolicy }) {
+  const customer = normalizePosCustomer(customerJson);
+  const policy = safeJson(orderFieldPolicy, {})[orderType] || {};
+  const missingFields = Object.entries(policy)
+    .filter(([, mode]) => mode === "REQUIRED")
+    .map(([field]) => field)
+    .filter((field) => !customer[field]);
+  if (missingFields.length) {
+    throw posOfflineError("Required offline order setup details are missing.", "POS_ORDER_SETUP_REQUIRED", 422, { fields: missingFields });
+  }
+  for (const field of ["guestCount", "headcount"]) {
+    if (customer[field] && (!Number.isInteger(Number(customer[field])) || Number(customer[field]) < 1)) {
+      throw posOfflineError("Offline order setup is invalid.", "POS_ORDER_SETUP_INVALID", 422, { field });
+    }
+  }
+  for (const [field, mode] of Object.entries(policy)) {
+    if (mode === "HIDDEN") customer[field] = "";
+  }
+  return customer;
+}
+
+function validatePosOfflineMenuLines({ transaction, configurationProof }) {
+  const rawLines = transaction.orderSnapshot?.lineItems;
+  if (!Array.isArray(rawLines) || !rawLines.length || rawLines.length > 100) {
+    throw posOfflineError("Offline transaction requires between 1 and 100 line items.", "POS_OFFLINE_ITEMS_INVALID");
+  }
+  let menuVersion = null;
+  const lines = rawLines.map((line, index) => {
+    const proof = verifyPosOfflineProofAtCompletion(
+      line?.offlinePricingProof,
+      verifyPosOfflineMenuItemProof,
+      transaction.completedAt,
+      "POS_OFFLINE_MENU_PROOF_INVALID"
+    );
+    if (proof.restaurantId !== transaction.restaurantId || proof.menuItem?.id !== String(line?.menuItemId || "")) {
+      throw posOfflineError("Offline menu item proof does not match this transaction.", "POS_OFFLINE_MENU_PROOF_MISMATCH", 422, { index });
+    }
+    if (menuVersion && menuVersion !== proof.menuVersion) {
+      throw posOfflineError("Offline transaction mixes menu configuration versions.", "POS_OFFLINE_MENU_VERSION_MISMATCH");
+    }
+    menuVersion = proof.menuVersion;
+    const menuItem = proof.menuItem;
+    if (!menuItem?.available) {
+      throw posOfflineError("Offline menu item was not available in the signed snapshot.", "POS_OFFLINE_MENU_ITEM_UNAVAILABLE", 422, { index });
+    }
+    let selected;
+    try {
+      selected = validateSelectedModifiers(menuItem, { modifierSelections: line.modifierSelections || [] });
+    } catch (error) {
+      throw posOfflineError(error.message, error.code || "POS_OFFLINE_MODIFIER_INVALID", 422, { index });
+    }
+    const quantity = Number(line.quantity);
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw posOfflineError("Offline item quantity is invalid.", "POS_OFFLINE_QUANTITY_INVALID", 422, { index });
+    }
+    const unitPriceCents = cents(menuItem.priceCents) + selected.modifiers.reduce((sum, option) => sum + cents(option.priceCents), 0);
+    if (unitPriceCents !== Number(line.unitPriceCents) || Number(line.basePriceCents) !== cents(menuItem.priceCents)) {
+      throw posOfflineError("Offline menu item price does not match its signed snapshot.", "POS_OFFLINE_ITEM_PRICE_MISMATCH", 422, { index });
+    }
+    return {
+      menuItemId: menuItem.id,
+      name: menuItem.name,
+      quantity,
+      unitPriceCents,
+      basePriceCents: cents(menuItem.priceCents),
+      optionIds: selected.optionIds,
+      modifierOptionIds: selected.optionIds,
+      modifiers: selected.modifiers,
+      options: selected.modifiers,
+      sendToKitchen: menuItem.sendToKitchen !== false,
+      specialInstructions: String(line.specialInstructions || "").slice(0, 500),
+      lineTotalCents: unitPriceCents * quantity
+    };
+  });
+  const expectedVersion = `${configurationProof.configurationVersion}::${menuVersion}`;
+  if (transaction.configurationVersion !== expectedVersion) {
+    throw posOfflineError("Offline configuration version does not match its signed snapshots.", "POS_OFFLINE_CONFIGURATION_VERSION_MISMATCH");
+  }
+  return lines;
+}
+
+function validatePosOfflineTransaction({ transaction, restaurantId, user, sessionStaff, sessionDevice }) {
+  if (!transaction || typeof transaction !== "object" || Array.isArray(transaction)) {
+    throw posOfflineError("Offline transaction payload is required.", "POS_OFFLINE_TRANSACTION_REQUIRED", 400);
+  }
+  if (Buffer.byteLength(JSON.stringify(transaction), "utf8") > 512 * 1024) {
+    throw posOfflineError("Offline transaction payload is too large.", "POS_OFFLINE_TRANSACTION_TOO_LARGE", 413);
+  }
+  assertPosOfflinePayloadSecurity(transaction);
+  if (Number(transaction.schemaVersion) !== POS_OFFLINE_SCHEMA_VERSION) {
+    throw posOfflineError("Offline transaction schema version is unsupported.", "POS_OFFLINE_SCHEMA_UNSUPPORTED");
+  }
+  const localTransactionId = requiredPosOfflineString(transaction.localTransactionId, "localTransactionId");
+  const idempotencyKey = requiredPosOfflineString(transaction.idempotencyKey, "idempotencyKey");
+  const transactionRestaurantId = requiredPosOfflineString(transaction.restaurantId, "restaurantId");
+  const transactionTenantId = requiredPosOfflineString(transaction.tenantId, "tenantId");
+  const terminalId = requiredPosOfflineString(transaction.terminalId, "terminalId");
+  const staffId = requiredPosOfflineString(transaction.staffId, "staffId");
+  const locationId = requiredPosOfflineString(transaction.locationId, "locationId");
+  const shiftId = requiredPosOfflineString(transaction.shiftId, "shiftId");
+  const cashDrawerId = requiredPosOfflineString(transaction.cashDrawerId, "cashDrawerId");
+  if (
+    transactionRestaurantId !== restaurantId
+    || transactionTenantId !== restaurantId
+    || terminalId !== sessionDevice?.id
+    || staffId !== sessionStaff?.id
+    || sessionStaff?.id !== transaction.staffId
+  ) {
+    throw posOfflineError("Offline transaction does not match the authenticated tenant or register.", "POS_OFFLINE_CONTEXT_MISMATCH", 403);
+  }
+  if ((sessionDevice.locationId || null) !== locationId) {
+    throw posOfflineError("Offline transaction location does not match the authenticated register.", "POS_OFFLINE_LOCATION_MISMATCH", 403);
+  }
+  const configurationProof = verifyPosOfflineProofAtCompletion(
+    transaction.offlineConfigurationProof,
+    verifyPosOfflineConfigurationProof,
+    transaction.completedAt,
+    "POS_OFFLINE_CONFIGURATION_PROOF_INVALID"
+  );
+  for (const [field, expected] of Object.entries({
+    restaurantId,
+    userId: user.id,
+    staffId,
+    deviceId: terminalId,
+    locationId,
+    shiftId,
+    cashDrawerId
+  })) {
+    if ((configurationProof[field] || null) !== (expected || null)) {
+      throw posOfflineError("Offline configuration proof does not match the authenticated register.", "POS_OFFLINE_CONFIGURATION_PROOF_MISMATCH", 403, { field });
+    }
+  }
+  const orderType = ORDER_TYPES.has(transaction.orderSnapshot?.orderType) ? transaction.orderSnapshot.orderType : null;
+  if (!orderType) throw posOfflineError("Offline order type is invalid.", "POS_OFFLINE_ORDER_TYPE_INVALID");
+  const lineItems = validatePosOfflineMenuLines({ transaction, configurationProof });
+  const subtotalCents = lineItems.reduce((sum, line) => sum + line.lineTotalCents, 0);
+  let delivery;
+  try {
+    delivery = resolvePosDeliveryPricingSnapshot({
+      orderType,
+      deliveryZones: configurationProof.deliveryZones,
+      defaultDeliveryFeeCents: configurationProof.deliveryFeeCents,
+      deliveryZoneId: transaction.orderSnapshot?.customer?.deliveryZoneId,
+      subtotalCents
+    });
+  } catch (error) {
+    throw posOfflineError(error.message, error.code || "POS_OFFLINE_DELIVERY_INVALID");
+  }
+  if (delivery.deliveryFeeCents !== Number(transaction.orderSnapshot?.deliveryFeeCents)) {
+    throw posOfflineError("Offline delivery price does not match its signed configuration.", "POS_OFFLINE_DELIVERY_PRICE_MISMATCH");
+  }
+  if (
+    !configurationProof.taxConfiguration
+    || Number(configurationProof.taxConfiguration.taxRateBps) !== Number(transaction.taxSnapshot?.taxRateBps)
+    || String(configurationProof.taxConfiguration.provider || "manual") !== String(transaction.taxSnapshot?.provider || "manual")
+    || transaction.taxSnapshot?.configurationVersion !== transaction.configurationVersion
+  ) {
+    throw posOfflineError("Offline tax does not match its signed configuration.", "POS_OFFLINE_TAX_CONFIGURATION_MISMATCH");
+  }
+  const normalizedTransaction = {
+    ...transaction,
+    orderSnapshot: { ...transaction.orderSnapshot, lineItems }
+  };
+  try {
+    validatePosOfflinePricingSnapshot(normalizedTransaction);
+  } catch (error) {
+    throw posOfflineError(error.message, error.code || "POS_OFFLINE_PRICING_MISMATCH");
+  }
+  if (transaction.paymentSnapshot?.method !== "CASH") {
+    throw posOfflineError("Only cash can be reconciled from Offline v1.", "POS_OFFLINE_PAYMENT_METHOD_INVALID");
+  }
+  let settlement;
+  try {
+    settlement = cashSettlementAmounts(
+      Number(transaction.orderSnapshot.totalCents),
+      Number(transaction.paymentSnapshot.cashTenderedCents),
+      0
+    );
+  } catch (error) {
+    throw posOfflineError(error.message, error.code || "POS_OFFLINE_TENDER_INVALID");
+  }
+  for (const field of ["amountDueCents", "cashTenderedCents", "cashAppliedCents", "changeDueCents"]) {
+    if (Number(transaction.paymentSnapshot[field]) !== settlement[field]) {
+      throw posOfflineError("Offline cash tender snapshot failed validation.", "POS_OFFLINE_TENDER_MISMATCH", 422, { field });
+    }
+  }
+  const normalizedCustomer = validatePosOfflineOrderSetup({
+    orderType,
+    customerJson: transaction.orderSnapshot.customer,
+    orderFieldPolicy: configurationProof.orderFieldPolicy
+  });
+  return {
+    transaction: normalizedTransaction,
+    localTransactionId,
+    idempotencyKey,
+    terminalId,
+    staffId,
+    locationId,
+    shiftId,
+    cashDrawerId,
+    orderType,
+    lineItems,
+    normalizedCustomer,
+    configurationProof,
+    settlement
+  };
+}
+
+async function loadPosOfflineCanonicalResult(reconciliation) {
+  if (!reconciliation?.orderId || !reconciliation.paymentId) return null;
+  const [order, payment, orderPayment, ledger, receipt, kitchenReceipt] = await Promise.all([
+    prisma.order.findFirst({
+      where: { id: reconciliation.orderId, restaurantId: reconciliation.restaurantId },
+      include: { customer: true, location: true, items: true, statusHistory: { orderBy: { createdAt: "asc" } } }
+    }),
+    prisma.payment.findUnique({ where: { id: reconciliation.paymentId } }),
+    prisma.restaurantOrderPayment.findUnique({ where: { orderId: reconciliation.orderId } }),
+    reconciliation.cashLedgerEntryId ? prisma.cashLedgerEntry.findUnique({ where: { id: reconciliation.cashLedgerEntryId } }) : null,
+    reconciliation.customerReceiptId ? prisma.posReceipt.findUnique({ where: { id: reconciliation.customerReceiptId } }) : null,
+    reconciliation.kitchenReceiptId ? prisma.posReceipt.findUnique({ where: { id: reconciliation.kitchenReceiptId } }) : null
+  ]);
+  if (!order || !payment || !orderPayment || !ledger || !receipt) return null;
+  return { order, payment, orderPayment, ledger, receipt, kitchenReceipt };
+}
+
+async function dispatchPosOfflinePostCommit({ reconciliation, canonical, user, device, shift, cashDrawer, settlement }) {
+  if (canonical.kitchenReceipt && !reconciliation.kdsDispatchedAt) {
+    const claimed = await prisma.posOfflineReconciliation.updateMany({
+      where: { id: reconciliation.id, kdsDispatchedAt: null },
+      data: { kdsDispatchedAt: new Date() }
+    });
+    if (claimed.count === 1) {
+      emitKitchenTicketCreated(canonical.order, { eventId: `pos-offline:${reconciliation.id}` });
+    }
+  }
+  if (!reconciliation.cashDrawerDispatchedAt) {
+    const claimed = await prisma.posOfflineReconciliation.updateMany({
+      where: { id: reconciliation.id, cashDrawerDispatchedAt: null },
+      data: { cashDrawerDispatchedAt: new Date() }
+    });
+    if (claimed.count === 1) {
+      await runCashPostCommitTasks({
+        restaurantId: reconciliation.restaurantId,
+        user,
+        device,
+        cashDrawer,
+        shift,
+        order: canonical.order,
+        paymentId: canonical.payment.id,
+        settlement
+      });
+    }
+  }
+}
+
+export async function reconcilePosOfflineCashTransaction({
+  restaurantId,
+  user,
+  body,
+  sessionStaff,
+  sessionDevice,
+  entitlementVerified = false
+}) {
+  if (!entitlementVerified) await assertPosFeature(restaurantId, "POST");
+  await Promise.all([
+    assertPosPermission(user, restaurantId, POS_PERMISSION.ACCEPT_CASH),
+    assertPosPermission(user, restaurantId, POS_PERMISSION.SEND_TO_KITCHEN)
+  ]);
+  const validated = validatePosOfflineTransaction({
+    transaction: body?.transaction,
+    restaurantId,
+    user,
+    sessionStaff,
+    sessionDevice
+  });
+  const completedAt = new Date(validated.transaction.completedAt);
+  const shift = await prisma.employeeShift.findFirst({
+    where: {
+      id: validated.shiftId,
+      restaurantId,
+      employeeUserId: user.id,
+      deviceId: validated.terminalId,
+      cashDrawerId: validated.cashDrawerId,
+      ...(validated.locationId ? { locationId: validated.locationId } : { locationId: null })
+    },
+    include: { cashDrawer: true }
+  });
+  if (
+    !shift
+    || shift.openedAt > completedAt
+    || (shift.closedAt && shift.closedAt < completedAt)
+    || !shift.cashDrawer
+  ) {
+    throw posOfflineError("The cached shift was not valid when this offline cash sale completed.", "POS_OFFLINE_SHIFT_INVALID", 409);
+  }
+  const cashDrawer = shift.cashDrawer;
+  let reconciliation;
+  let canonical;
+  let duplicate = false;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const record = await tx.posOfflineReconciliation.create({
+        data: {
+          restaurantId,
+          locationId: validated.locationId,
+          deviceId: validated.terminalId,
+          staffId: validated.staffId,
+          shiftId: validated.shiftId,
+          localTransactionId: validated.localTransactionId,
+          idempotencyKey: validated.idempotencyKey,
+          configurationVersion: validated.transaction.configurationVersion,
+          status: "PROCESSING",
+          payloadJson: validated.transaction
+        }
+      });
+      const quote = await tx.orderQuote.create({
+        data: {
+          restaurantId,
+          locationId: validated.locationId,
+          deviceId: validated.terminalId,
+          createdByUserId: user.id,
+          orderType: validated.orderType,
+          lineItemsJson: validated.lineItems,
+          subtotalCents: validated.transaction.orderSnapshot.subtotalCents,
+          discountCents: validated.transaction.orderSnapshot.discountCents,
+          deliveryFeeCents: validated.transaction.orderSnapshot.deliveryFeeCents,
+          taxCents: validated.transaction.orderSnapshot.taxCents,
+          tipCents: validated.transaction.orderSnapshot.tipCents,
+          totalCents: validated.transaction.orderSnapshot.totalCents,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        }
+      });
+      const orderResult = await createPosOrderTransaction({
+        tx,
+        restaurantId,
+        user,
+        quote,
+        normalizedCustomer: validated.normalizedCustomer,
+        notes: validated.transaction.orderSnapshot.notes,
+        deviceId: validated.terminalId
+      });
+      await tx.orderTaxSnapshot.create({
+        data: {
+          orderId: orderResult.order.id,
+          restaurantId,
+          provider: validated.transaction.taxSnapshot.provider || "manual",
+          taxableAmountCents: validated.transaction.taxSnapshot.taxableAmountCents,
+          taxRateBps: validated.transaction.taxSnapshot.taxRateBps,
+          taxCents: validated.transaction.taxSnapshot.taxCents,
+          jurisdictionJson: {
+            source: "POS_OFFLINE_V1",
+            configurationVersion: validated.transaction.configurationVersion,
+            localTransactionId: validated.localTransactionId,
+            localCompletedAt: validated.transaction.completedAt,
+            timezone: validated.transaction.timezone || null
+          }
+        }
+      });
+      const cashTender = {
+        tenderType: "CASH",
+        source: "POS_OFFLINE_V1",
+        restaurantId,
+        locationId: validated.locationId,
+        amountDueCents: validated.settlement.amountDueCents,
+        tenderedCents: validated.settlement.cashTenderedCents,
+        appliedCents: validated.settlement.cashAppliedCents,
+        changeDueCents: validated.settlement.changeDueCents,
+        cashierUserId: user.id,
+        shiftId: shift.id,
+        deviceId: sessionDevice.id,
+        cashDrawerId: cashDrawer.id,
+        localTransactionId: validated.localTransactionId,
+        idempotencyKey: validated.idempotencyKey,
+        localCompletedAt: validated.transaction.completedAt,
+        settledAt: new Date().toISOString()
+      };
+      const cashResult = await settleCashOrderTransaction({
+        tx,
+        restaurantId,
+        user,
+        order: orderResult.order,
+        device: sessionDevice,
+        shift,
+        cashDrawer,
+        settlement: validated.settlement,
+        cashTender
+      });
+      const updated = await tx.posOfflineReconciliation.update({
+        where: { id: record.id },
+        data: {
+          status: "SYNCED",
+          orderId: orderResult.order.id,
+          paymentId: cashResult.payment.id,
+          cashLedgerEntryId: cashResult.ledger.id,
+          customerReceiptId: cashResult.receipt.id,
+          kitchenReceiptId: orderResult.receipt?.id || null,
+          reconciledAt: new Date()
+        }
+      });
+      await tx.auditLog.create({
+        data: {
+          actorUserId: user.id,
+          restaurantId,
+          action: "pos.offline.cash.reconciled",
+          entityType: "PosOfflineReconciliation",
+          entityId: updated.id,
+          metadataJson: {
+            localTransactionId: validated.localTransactionId,
+            idempotencyKey: validated.idempotencyKey,
+            orderId: orderResult.order.id,
+            paymentId: cashResult.payment.id,
+            ledgerId: cashResult.ledger.id,
+            receiptId: cashResult.receipt.id,
+            kitchenReceiptId: orderResult.receipt?.id || null,
+            localCompletedAt: validated.transaction.completedAt
+          }
+        }
+      });
+      return {
+        reconciliation: updated,
+        canonical: { order: orderResult.order, kitchenReceipt: orderResult.receipt, ...cashResult }
+      };
+    });
+    reconciliation = result.reconciliation;
+    canonical = result.canonical;
+  } catch (error) {
+    if (["P2003", "P2025"].includes(error?.code)) {
+      throw posOfflineError(
+        "Offline transaction can no longer be mapped to canonical cloud data and needs review.",
+        "POS_OFFLINE_CANONICAL_CONFLICT",
+        409
+      );
+    }
+    if (error?.code !== "P2002") throw error;
+    reconciliation = await prisma.posOfflineReconciliation.findFirst({
+      where: {
+        restaurantId,
+        OR: [
+          { localTransactionId: validated.localTransactionId },
+          { idempotencyKey: validated.idempotencyKey }
+        ]
+      }
+    });
+    if (!reconciliation) throw error;
+    if (
+      reconciliation.localTransactionId !== validated.localTransactionId
+      || reconciliation.idempotencyKey !== validated.idempotencyKey
+    ) {
+      throw posOfflineError("Offline idempotency identity conflicts with another transaction.", "POS_OFFLINE_IDEMPOTENCY_CONFLICT", 409);
+    }
+    canonical = await loadPosOfflineCanonicalResult(reconciliation);
+    if (!canonical) {
+      throw posOfflineError("Offline reconciliation is still processing. Retry shortly.", "POS_OFFLINE_SYNC_IN_PROGRESS", 409);
+    }
+    duplicate = true;
+  }
+  await dispatchPosOfflinePostCommit({
+    reconciliation,
+    canonical,
+    user,
+    device: sessionDevice,
+    shift,
+    cashDrawer,
+    settlement: validated.settlement
+  });
+  return {
+    reconciliationId: reconciliation.id,
+    localTransactionId: reconciliation.localTransactionId,
+    idempotencyKey: reconciliation.idempotencyKey,
+    serverSyncedAt: reconciliation.reconciledAt,
+    duplicate,
+    ...canonical,
+    canonicalOrderId: canonical.order.id,
+    canonicalPaymentId: canonical.payment.id,
+    canonicalLedgerId: canonical.ledger.id,
+    canonicalReceiptId: canonical.receipt.id,
+    canonicalKitchenReceiptId: canonical.kitchenReceipt?.id || null,
+    ...validated.settlement
   };
 }
 

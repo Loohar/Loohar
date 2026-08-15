@@ -117,9 +117,9 @@ export function serializeKitchenOrder(order, { kitchenOnly = true } = {}) {
   };
 }
 
-function kitchenEvent(eventType, order) {
+function kitchenEvent(eventType, order, { eventId = null } = {}) {
   const ticket = serializeKitchenOrder(order);
-  return {
+  const event = {
     eventId: crypto.randomUUID(),
     eventType,
     schemaVersion: 1,
@@ -129,6 +129,8 @@ function kitchenEvent(eventType, order) {
     locationId: ticket.locationId,
     ticket
   };
+  if (eventId) event.eventId = eventId;
+  return event;
 }
 
 function hasKitchenSnapshot(order) {
@@ -255,9 +257,9 @@ function emitKitchenEvent(eventName, event) {
   }
 }
 
-export function emitKitchenTicketCreated(order) {
+export function emitKitchenTicketCreated(order, options = {}) {
   if (!hasKitchenSnapshot(order)) return null;
-  const event = kitchenEvent("kitchen.ticket.created.v1", order);
+  const event = kitchenEvent("kitchen.ticket.created.v1", order, options);
   emitKitchenEvent("kitchen.ticket.created.v1", event);
   return event;
 }

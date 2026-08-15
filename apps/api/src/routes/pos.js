@@ -20,13 +20,15 @@ import {
   posConfig,
   posMenu,
   posMenuAvailabilityDiagnostics,
+  reconcilePosOfflineCashTransaction,
   registerPosDevice,
   resolveRestaurantForPos,
   setKioskMode,
   setCashierPin,
   submitPosOrder,
   unlockPosDevice,
-  updatePosDevice
+  updatePosDevice,
+  withPosOfflineMenuProofs
 } from "../services/posService.js";
 
 const router = express.Router();
@@ -99,6 +101,14 @@ const posPinLimiter = rateLimit({
   message: { error: "Too many POS PIN attempts. Please wait before trying again.", code: "RATE_LIMITED" }
 });
 
+const posOfflineReconcileLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Offline reconciliation is temporarily rate limited.", code: "RATE_LIMITED" }
+});
+
 function deviceContext(req) {
   return {
     deviceId: req.get("x-loohar-device-id") || req.body?.deviceId || req.query?.deviceId || null,
@@ -160,7 +170,11 @@ async function buildPosMenuPayload(req, categories, requestId = req.get("x-looha
     },
     menuDiagnostics,
     entitlement: posEntitlementPayload(req),
-    categories
+    categories: withPosOfflineMenuProofs({
+      restaurantId: req.resolvedRestaurantId,
+      menuVersion: summary.menuVersion,
+      categories
+    })
   };
 }
 
@@ -466,6 +480,22 @@ router.post("/:restaurantId/pos/payments/cash", requirePosSession, async (req, r
       ].join(", "));
     }
     res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/offline/reconcile", posOfflineReconcileLimiter, requirePosSession, async (req, res, next) => {
+  try {
+    const result = await reconcilePosOfflineCashTransaction({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      body: req.body,
+      sessionStaff: req.posSessionStaff,
+      sessionDevice: req.posSessionDevice,
+      entitlementVerified: Boolean(req.entitlementDecision?.allowed)
+    });
+    res.status(result.duplicate ? 200 : 201).json(result);
   } catch (error) {
     next(error);
   }

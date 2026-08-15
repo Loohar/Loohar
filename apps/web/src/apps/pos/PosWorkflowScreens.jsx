@@ -153,23 +153,24 @@ export function CashierPinScreen({ pin, setPin, error, lockedUntil, saving, onSu
   );
 }
 
-export function RegisterHomeScreen({ restaurant, device, shift, heldCount, openCount, recentCount, onNewOrder, onHeld, onOpen, onRecent, onReprint, onShift, onSettings, onManager, onLock }) {
+export function RegisterHomeScreen({ restaurant, device, shift, heldCount, openCount, recentCount, onNewOrder, onHeld, onOpen, onRecent, onReprint, onShift, onSettings, onManager, onLock, offline = false, pendingSyncCount = 0, syncing = false }) {
   const actions = [
     { label: "New order", detail: "Start dine-in, takeout, delivery, or walk-in service.", icon: ShoppingBag, action: onNewOrder, primary: true },
-    { label: "Held orders", detail: `${heldCount || 0} waiting`, icon: PauseCircle, action: onHeld },
-    { label: "Open orders", detail: `${openCount || 0} in progress`, icon: ReceiptText, action: onOpen },
-    { label: "Recent orders", detail: `${recentCount || 0} today`, icon: History, action: onRecent },
-    { label: "Reprint receipt", detail: "Find a completed order", icon: ReceiptText, action: onReprint },
-    { label: "Shift", detail: shift?.status === "OPEN" ? "Open" : "Closed", icon: Clock, action: onShift },
-    { label: "Register settings", detail: device?.name || "Configure register", icon: MonitorCog, action: onSettings },
-    { label: "Manager actions", detail: "Protected controls", icon: LockKeyhole, action: onManager }
+    { label: "Held orders", detail: `${heldCount || 0} waiting`, icon: PauseCircle, action: onHeld, disabled: offline },
+    { label: "Open orders", detail: `${openCount || 0} in progress`, icon: ReceiptText, action: onOpen, disabled: offline },
+    { label: "Recent orders", detail: `${recentCount || 0} today`, icon: History, action: onRecent, disabled: offline },
+    { label: "Reprint receipt", detail: "Find a completed order", icon: ReceiptText, action: onReprint, disabled: offline },
+    { label: "Shift", detail: shift?.status === "OPEN" ? "Open" : "Closed", icon: Clock, action: onShift, disabled: offline },
+    { label: "Register settings", detail: device?.name || "Configure register", icon: MonitorCog, action: onSettings, disabled: offline },
+    { label: "Manager actions", detail: "Protected controls", icon: LockKeyhole, action: onManager, disabled: offline }
   ];
   return (
     <section className="pos-home-screen">
       <PosScreenHeader eyebrow={restaurant?.name || "Restaurant"} title="Register home" detail="Choose a task to continue." actions={<button className="button-muted" type="button" onClick={onLock}><LockKeyhole size={18} />Lock</button>} />
+      {offline || pendingSyncCount > 0 ? <div className={`pos-home-operational-status ${offline ? "offline" : "syncing"}`} role="status"><strong>{offline ? "Offline" : syncing ? "Syncing" : "Pending Sync"}</strong><span>Pending Sync: {pendingSyncCount}</span></div> : null}
       <div className="pos-home-grid">
-        {actions.map(({ label, detail, icon: Icon, action, primary }) => (
-          <button className={`pos-home-action${primary ? " primary" : ""}`} type="button" onClick={action} key={label}>
+        {actions.map(({ label, detail, icon: Icon, action, primary, disabled }) => (
+          <button className={`pos-home-action${primary ? " primary" : ""}`} type="button" onClick={action} disabled={disabled} key={label}>
             <Icon size={26} />
             <strong>{label}</strong>
             <span>{detail}</span>
@@ -332,6 +333,7 @@ export function OrderEntryScreen({
   onPay,
   onHold,
   onHome,
+  offline = false,
   saving,
   emptyTitle,
   emptyDetail,
@@ -425,7 +427,7 @@ export function OrderEntryScreen({
               );
             }) : <div className="empty-state pos-entry-empty-cart"><ShoppingBag size={28} /><strong>Cart is empty</strong><span>Choose an item from the menu.</span></div>}
           </div>
-          <div className="pos-entry-cart-footer"><div><span>Estimated subtotal</span><strong>{money(cartTotalCents)}</strong></div><div className="pos-entry-cart-footer-actions"><button className="button-muted" type="button" onClick={onHold} disabled={!cart.length || saving}><PauseCircle size={18} />Hold</button><button className="button-primary" type="button" onClick={onPay} disabled={!cart.length || saving}><CreditCard size={18} />Pay</button></div></div>
+          <div className="pos-entry-cart-footer"><div><span>Estimated subtotal</span><strong>{money(cartTotalCents)}</strong></div><div className="pos-entry-cart-footer-actions"><button className="button-muted" type="button" onClick={onHold} disabled={!cart.length || saving || offline}><PauseCircle size={18} />Hold</button><button className="button-primary" type="button" onClick={onPay} disabled={!cart.length || saving}><CreditCard size={18} />Pay</button></div></div>
         </aside>
       </div>
       <button className="pos-entry-mobile-summary" type="button" onClick={() => setMobileCartOpen(true)} aria-label={`View current order with ${cartItemCount} items totaling ${money(cartTotalCents)}`}>
@@ -436,7 +438,7 @@ export function OrderEntryScreen({
   );
 }
 
-export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onEdit, onSend, onPay, onHold, saving }) {
+export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onEdit, onSend, onPay, onHold, offline = false, saving }) {
   const subtotal = quote?.subtotalCents ?? cart.reduce((sum, line) => sum + Number(line.priceCents || 0) * Number(line.quantity || 0), 0);
   return (
     <section className="pos-workflow-screen">
@@ -446,12 +448,12 @@ export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onE
       </div>
       {notes ? <div className="pos-review-note"><strong>Order notes</strong><span>{notes}</span></div> : null}
       <dl className="pos-review-totals"><div><dt>Subtotal</dt><dd>{money(quote?.subtotalCents ?? subtotal)}</dd></div>{quote ? <><div><dt>Tax</dt><dd>{money(quote.taxCents)}</dd></div><div><dt>Delivery</dt><dd>{money(quote.deliveryFeeCents)}</dd></div></> : null}<div className="total"><dt>Total</dt><dd>{money(quote?.totalCents ?? subtotal)}</dd></div></dl>
-      <div className="pos-workflow-actions split"><button className="button-muted" type="button" onClick={onHold} disabled={saving}><PauseCircle size={18} />Hold</button><button className="button-muted" type="button" onClick={onSend} disabled={saving}><ReceiptText size={18} />Send to Kitchen</button><button className="button-primary" type="button" onClick={onPay} disabled={saving}><CreditCard size={18} />Continue to payment</button></div>
+      <div className="pos-workflow-actions split"><button className="button-muted" type="button" onClick={onHold} disabled={saving || offline}><PauseCircle size={18} />Hold</button><button className="button-muted" type="button" onClick={onSend} disabled={saving || offline}><ReceiptText size={18} />Send to Kitchen</button><button className="button-primary" type="button" onClick={onPay} disabled={saving}><CreditCard size={18} />Continue to payment</button></div>
     </section>
   );
 }
 
-export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash, onFirstRender }) {
+export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash, onFirstRender, offline = false, pendingSyncCount = 0 }) {
   const firstRenderReportedRef = useRef(false);
   useLayoutEffect(() => {
     if (firstRenderReportedRef.current) return;
@@ -473,7 +475,8 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
     <section className="pos-workflow-screen">
       <PosScreenHeader eyebrow="Checkout" title="Cash payment" detail="Enter the cash received and complete the sale." onBack={onBack} />
       {error ? <div className="pos-alert" role="alert">{error}</div> : null}
-      {!quoteReady ? <div className="pos-menu-state refreshing" role="status">Preparing the server-verified total...</div> : null}
+      {offline ? <div className="pos-cash-connectivity" role="status"><span><WifiOff size={17} />Offline cash available</span><span>Card requires internet</span><span>Pending Sync: {pendingSyncCount}</span></div> : null}
+      {!quoteReady ? <div className="pos-menu-state refreshing" role="status">{offline ? "Preparing the signed cached total..." : "Preparing the server-verified total..."}</div> : null}
       <div className="pos-cash-totals" aria-label="Cash payment totals">
         <div><span>Order total</span><strong>{quoteReady ? money(total) : "..."}</strong></div>
         <div><span>Amount paid</span><strong>{money(0)}</strong></div>
