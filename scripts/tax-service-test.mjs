@@ -30,6 +30,7 @@ const paymentService = read("apps/api/src/modules/orderPayments/orderPaymentServ
 const offlinePricing = read("apps/web/src/apps/pos/offlinePricing.js");
 const app = read("apps/web/src/App.jsx");
 const superAdmin = read("apps/api/src/routes/superAdmin.js");
+const stagingCertification = read("scripts/certify-tax-service-staging.mjs");
 
 const completeLocation = {
   id: "location-a",
@@ -207,6 +208,11 @@ assert.ok(app.includes("Special districts") && app.includes("Acknowledged") && a
 assert.ok(app.includes('taxWorkspace.ready ? "POS tax ready" : "Checkout blocked"'), "settings readiness must use the active-location workspace summary");
 assert.equal(app.includes("What tax rate do you want?"), false, "owners must not be asked to invent a rate");
 assert.equal(app.includes("0.0825"), false, "frontend must not contain an implicit tax rate");
+
+assert.ok(stagingCertification.includes('appEnv !== "staging"') && stagingCertification.includes('required("EXPECTED_SUPABASE_PROJECT_REF")'), "staging certification fixtures must refuse non-staging databases");
+assert.ok(stagingCertification.includes('STAGING_TAX_CERTIFICATION_CONFIRM') && stagingCertification.includes('TAX_SERVICE_V1_ISOLATED_ONLY'), "staging fixture writes must require explicit authorization");
+assert.ok(stagingCertification.includes("tenant-a-denver") && stagingCertification.includes("tenant-a-boulder") && stagingCertification.includes("tenant-b-zero") && stagingCertification.includes("tenant-a-profileless"), "staging certification must cover multi-location, multi-tenant, zero-rate, and profileless fixtures");
+assert.ok(stagingCertification.includes("Cross-tenant profile history must be rejected") && stagingCertification.includes("Historical rate must remain immutable and superseded"), "staging certification must prove tenant isolation and immutable history");
 
 const activeLookupIndex = service.indexOf("findValidLocationTaxConfiguration");
 const providerLookupIndex = service.indexOf("resolveLocationTaxProfile");
