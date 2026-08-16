@@ -33,7 +33,7 @@ assert(schema.includes("onboardingCurrentStep") && schema.includes("websitePubli
 assert(schema.includes("mobileHeroImageUrl") && schema.includes("faviconUrl") && schema.includes("buttonColor"), "Website settings store onboarding branding fields");
 assert(restaurantRoutes.includes('router.get("/onboarding"') && restaurantRoutes.includes('router.patch("/:restaurantId/onboarding/:step"'), "Restaurant onboarding API routes exist");
 assert(restaurantRoutes.includes("requireTenantAccess") && restaurantRoutes.includes("Tenant access denied"), "Restaurant onboarding stays tenant scoped");
-assert(restaurantRoutes.includes("onboardingReadiness") && restaurantRoutes.includes("orderingReady: websiteReady && sections.fulfillment && sections.menu && paymentReady"), "Backend separates website readiness from ordering readiness");
+assert(restaurantRoutes.includes("onboardingReadiness") && restaurantRoutes.includes("orderingReady: websiteReady && sections.fulfillment && sections.menu && sections.tax && paymentReady"), "Backend separates website readiness from ordering readiness and requires tax readiness");
 assert(restaurantRoutes.includes("websitePublishedAt") && restaurantRoutes.includes("onboardingStatus: \"COMPLETED\"") && restaurantRoutes.includes("onboardingCompletedAt"), "Publish endpoint persists completed onboarding");
 assert(uploadRoutes.includes("restaurant-mobile-hero") && uploadRoutes.includes("restaurant-favicon") && uploadRoutes.includes("menu-item"), "Upload routes support onboarding image types");
 assert(uploadService.includes("tenants/") && uploadService.includes("hero/mobile") && uploadService.includes("favicon"), "Upload service uses tenant-safe onboarding paths");

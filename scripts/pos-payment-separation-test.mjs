@@ -13,11 +13,13 @@ function sectionBetween(content, start, end) {
 }
 
 const cashSection = sectionBetween(service, "export async function cashPayment", "export async function cardPaymentIntent");
+const cashSettlementSection = sectionBetween(service, "async function settleCashOrderTransaction", "async function runCashPostCommitTasks");
 const cardSection = sectionBetween(service, "export async function cardPaymentIntent", "export async function registerPosDevice");
 
 assert.ok(cashSection.includes("requireCashRegisterAccess"), "Cash POS must require register/device/shift readiness");
-assert.ok(cashSection.includes('provider: "manual_cash"'), "Cash POS must use manual cash payment provider");
-assert.ok(cashSection.includes('source: "POS_CASH"'), "Cash POS must record zero platform fee cash source");
+assert.ok(cashSection.includes("settleCashOrderTransaction"), "Cash POS must use the authoritative cash settlement transaction");
+assert.ok(cashSettlementSection.includes('provider: "manual_cash"'), "Cash POS must use manual cash payment provider");
+assert.ok(cashSettlementSection.includes('source: "POS_CASH"'), "Cash POS must record zero platform fee cash source");
 assert.ok(!cashSection.includes("restaurantMerchantAccount"), "Cash POS must not require Stripe Connect merchant account");
 assert.ok(!cashSection.includes("stripeChargesEnabled"), "Cash POS must not require Stripe charges");
 assert.ok(!cashSection.includes("STRIPE_CONNECT"), "Cash POS must not use Stripe Connect provider");

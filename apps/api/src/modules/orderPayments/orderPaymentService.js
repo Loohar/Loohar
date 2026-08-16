@@ -129,6 +129,7 @@ export async function createOrderPayment({ body }) {
     const order = await tx.order.create({
       data: {
         restaurantId: quote.restaurant.id,
+        locationId: quote.locationId,
         orderNumber,
         type: body.type,
         deliveryAddress: body.deliveryAddress,
@@ -193,6 +194,10 @@ export async function createOrderPayment({ body }) {
           breakdown: quote.breakdown,
           couponCode: quote.couponCode,
           taxRateBps: quote.taxRateBps,
+          taxInclusive: quote.taxInclusive,
+          locationId: quote.locationId,
+          taxProfileId: quote.taxProfileId,
+          taxConfigurationVersion: quote.taxConfigurationVersion,
           zeroLooharPlatformFee: quote.zeroLooharPlatformFee,
           looharPlatformFeeCents: quote.looharPlatformFeeCents,
           processorFeesMayApply: quote.processorFeesMayApply,
@@ -204,10 +209,25 @@ export async function createOrderPayment({ body }) {
       data: {
         orderId: order.id,
         restaurantId: order.restaurantId,
-        provider: "manual",
+        locationId: quote.locationId,
+        taxProfileId: quote.taxProfileId,
+        configurationVersion: quote.taxConfigurationVersion,
+        provider: quote.taxConfiguration.provider,
+        source: quote.taxConfiguration.source,
         taxableAmountCents: quote.taxableAmountCents,
         taxRateBps: quote.taxRateBps,
-        taxCents: quote.taxCents
+        taxCents: quote.taxCents,
+        jurisdictionJson: {
+          jurisdictionCode: quote.taxConfiguration.jurisdictionCode,
+          jurisdictionMetadata: quote.taxConfiguration.jurisdictionMetadata,
+          specialDistricts: quote.taxConfiguration.specialDistricts || [],
+          taxComponents: quote.taxConfiguration.taxComponents || [],
+          exemption: quote.taxConfiguration.exemption || null,
+          taxProfileVersion: quote.taxConfigurationVersion,
+          taxProfileEffectiveAt: quote.taxConfiguration.effectiveAt,
+          taxProfileVerifiedAt: quote.taxConfiguration.verifiedAt,
+          taxInclusive: quote.taxInclusive
+        }
       }
     });
     return { order, payment };

@@ -20,6 +20,7 @@ import publicRoutes from "./routes/public.js";
 import registrationRoutes from "./routes/registration.js";
 import restaurantRoutes from "./routes/restaurant.js";
 import superAdminRoutes from "./routes/superAdmin.js";
+import taxProfileRoutes from "./routes/taxProfiles.js";
 import uploadRoutes from "./routes/uploads.js";
 import { authorizeNetOrdersWebhookRouter, authorizeNetPlatformWebhookRouter, stripeConnectWebhookRouter, stripePlatformWebhookRouter } from "./routes/webhooks.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
@@ -146,7 +147,7 @@ app.use("/api/webhooks/authorize-net-platform", express.raw({ type: "application
 app.use("/api/webhooks/authorize-net-orders", express.raw({ type: "application/json", limit: "2mb" }), authorizeNetOrdersWebhookRouter);
 app.use(express.json({ limit: "8mb" }));
 const posSafeReadPathPattern = /^\/api\/restaurants?\/[^/]+\/pos\/(?:bootstrap|config|menu|held-orders|devices|shifts\/current|orders\/[^/]+\/receipt)\/?$/;
-const restaurantSafeReadPathPattern = /^\/api\/restaurants?\/[^/]+\/(?:dashboard|profile|settings(?:\/(?:search|audit|[a-z0-9-]+))?|menu\/(?:categories|items|insights)|orders|drivers|dispatch|customers(?:\/summary)?|loyalty|promotions\/analytics|analytics|locations|website|domain|gallery|social-links|employees|printing|notification-settings|delivery-zones|inventory|reports\/(?:sales|operations))\/?$/;
+const restaurantSafeReadPathPattern = /^\/api\/restaurants?\/[^/]+\/(?:dashboard|profile|settings(?:\/(?:search|audit|[a-z0-9-]+))?|menu\/(?:categories|items|insights)|orders|drivers|dispatch|customers(?:\/summary)?|loyalty|promotions\/analytics|analytics|locations|tax-profiles|locations\/[^/]+\/tax-profile(?:\/history)?|website|domain|gallery|social-links|employees|printing|notification-settings|delivery-zones|inventory|reports\/(?:sales|operations))\/?$/;
 function isSafeReadBurstPath(req) {
   return posSafeReadPathPattern.test(req.path) || restaurantSafeReadPathPattern.test(req.path);
 }
@@ -186,6 +187,8 @@ app.use("/api/restaurants", posRoutes);
 app.use("/api/restaurant", posRoutes);
 app.use("/api/restaurants", entitlementSimulationRoutes);
 app.use("/api/restaurant", entitlementSimulationRoutes);
+app.use("/api/restaurants", taxProfileRoutes);
+app.use("/api/restaurant", taxProfileRoutes);
 app.use("/api/restaurants", restaurantRoutes);
 app.use("/api/restaurant", restaurantRoutes);
 app.use("/api/customer", customerRoutes);

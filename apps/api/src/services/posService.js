@@ -8,6 +8,7 @@ import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomi
 import { assemblePosMenuCategories } from "./posMenuReadModel.js";
 import { requestCashDrawerOpen } from "./posHardwareService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
+import { findValidLocationTaxConfiguration } from "./taxProfileService.js";
 import {
   signPosOfflineConfigurationProof,
   signPosOfflineMenuItemProof,
@@ -722,56 +723,46 @@ function posOfflineConfigurationVersion(snapshot) {
   return `offline-v1:${crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")}`;
 }
 
-function normalizedLocationTaxConfiguration(profile) {
-  if (
-    !profile
-    || !Number.isSafeInteger(profile.taxRateBps)
-    || profile.taxRateBps < 0
-    || profile.taxRateBps > 100_000
-    || !String(profile.provider || "").trim()
-    || !String(profile.source || "").trim()
-    || !String(profile.jurisdictionCode || "").trim()
-    || !String(profile.configurationVersion || "").trim()
-  ) return null;
-  return {
-    id: profile.id,
-    locationId: profile.locationId,
-    provider: profile.provider,
-    source: profile.source,
-    taxRateBps: profile.taxRateBps,
-    taxInclusive: profile.taxInclusive,
-    enabled: profile.enabled,
-    jurisdictionCode: profile.jurisdictionCode,
-    jurisdictionMetadata: profile.jurisdictionJson,
-    sourceMetadata: profile.sourceMetadataJson,
-    effectiveAt: profile.effectiveAt.toISOString(),
-    verifiedAt: profile.verifiedAt.toISOString(),
-    configurationVersion: profile.configurationVersion,
-    updatedAt: profile.updatedAt
-  };
-}
-
-async function findValidLocationTaxConfiguration({ restaurantId, locationId, asOf = new Date() }) {
-  if (!locationId) return null;
-  const profile = await prisma.locationTaxProfile.findFirst({
-    where: {
-      restaurantId,
-      locationId,
-      enabled: true,
-      taxInclusive: false,
-      effectiveAt: { lte: asOf },
-      verifiedAt: { lte: asOf }
-    },
-    orderBy: [{ effectiveAt: "desc" }, { verifiedAt: "desc" }, { updatedAt: "desc" }]
-  });
-  return normalizedLocationTaxConfiguration(profile);
-}
-
 function requireLocationTaxConfiguration(taxConfiguration) {
   if (!taxConfiguration) {
     throw httpError(POS_TAX_CONFIGURATION_REQUIRED_MESSAGE, 409, { code: "POS_TAX_CONFIGURATION_REQUIRED" });
   }
   return taxConfiguration;
+}
+
+function requireCurrentQuoteTaxSnapshot(quote, asOf = new Date()) {
+  const tax = quote?.taxSnapshotJson;
+  const now = new Date(asOf);
+  const effectiveAt = new Date(tax?.effectiveAt || 0);
+  const verifiedAt = new Date(tax?.verifiedAt || 0);
+  const expiresAt = tax?.expiresAt ? new Date(tax.expiresAt) : null;
+  const nextVerificationAt = tax?.nextVerificationAt ? new Date(tax.nextVerificationAt) : null;
+  if (
+    !tax
+    || !quote.taxProfileId
+    || !quote.taxConfigurationVersion
+    || tax.id !== quote.taxProfileId
+    || tax.locationId !== quote.locationId
+    || tax.configurationVersion !== quote.taxConfigurationVersion
+    || tax.acknowledgementVersion !== tax.configurationVersion
+    || !tax.acknowledgedAt
+    || tax.enabled !== true
+    || typeof tax.taxInclusive !== "boolean"
+    || !Number.isSafeInteger(tax.taxRateBps)
+    || tax.taxRateBps < 0
+    || !tax.provider
+    || !tax.source
+    || !tax.jurisdictionCode
+    || Number.isNaN(effectiveAt.getTime())
+    || Number.isNaN(verifiedAt.getTime())
+    || effectiveAt > now
+    || verifiedAt > now
+    || (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt <= now))
+    || (nextVerificationAt && (Number.isNaN(nextVerificationAt.getTime()) || nextVerificationAt <= now))
+  ) {
+    throw httpError(POS_TAX_CONFIGURATION_REQUIRED_MESSAGE, 409, { code: "POS_TAX_CONFIGURATION_REQUIRED" });
+  }
+  return tax;
 }
 
 function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, taxConfiguration }) {
@@ -793,13 +784,25 @@ function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, tax
       source: taxConfiguration.source,
       taxRateBps: taxConfiguration.taxRateBps,
       taxInclusive: taxConfiguration.taxInclusive,
+      enabled: taxConfiguration.enabled,
+      countryCode: taxConfiguration.countryCode,
+      stateCode: taxConfiguration.stateCode,
+      county: taxConfiguration.county,
+      municipality: taxConfiguration.municipality,
       jurisdictionCode: taxConfiguration.jurisdictionCode,
       jurisdictionMetadata: taxConfiguration.jurisdictionMetadata,
+      specialDistricts: taxConfiguration.specialDistricts,
+      taxComponents: taxConfiguration.taxComponents,
+      exemption: taxConfiguration.exemption,
       sourceMetadata: taxConfiguration.sourceMetadata,
       effectiveAt: taxConfiguration.effectiveAt,
+      expiresAt: taxConfiguration.expiresAt,
       verifiedAt: taxConfiguration.verifiedAt,
+      nextVerificationAt: taxConfiguration.nextVerificationAt,
       configurationVersion: taxConfiguration.configurationVersion,
-      updatedAt: taxConfiguration.updatedAt.toISOString()
+      acknowledgementVersion: taxConfiguration.acknowledgementVersion,
+      acknowledgedAt: taxConfiguration.acknowledgedAt,
+      updatedAt: taxConfiguration.updatedAt
     },
     deliveryFeeCents: cents(restaurant.deliveryFeeCents),
     deliveryZones: (restaurant.deliveryZones || []).map((zone) => ({
@@ -848,9 +851,11 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
     && taxConfiguration?.enabled
     && taxConfiguration.locationId === device.locationId
     && taxConfiguration.configurationVersion
+    && taxConfiguration.acknowledgementVersion === taxConfiguration.configurationVersion
+    && taxConfiguration.acknowledgedAt
     && taxConfiguration.source
     && taxConfiguration.jurisdictionCode
-    && taxConfiguration.taxInclusive === false
+    && typeof taxConfiguration.taxInclusive === "boolean"
     && permissions.includes(POS_PERMISSION.ACCEPT_CASH)
     && permissions.includes(POS_PERMISSION.SEND_TO_KITCHEN)
   );
@@ -1097,6 +1102,7 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     discountCents,
     deliveryFeeCents,
     taxRateBps: taxConfiguration.taxRateBps,
+    taxInclusive: taxConfiguration.taxInclusive,
     tipCents: 0
   });
   const { taxCents, tipCents, totalCents } = pricing;
@@ -1108,6 +1114,9 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
       locationId,
       deviceId,
       sessionId,
+      taxProfileId: taxConfiguration.id,
+      taxConfigurationVersion: taxConfiguration.configurationVersion,
+      taxSnapshotJson: taxConfiguration,
       createdByUserId: user.id,
       orderType,
       lineItemsJson: normalizedItems,
@@ -1126,7 +1135,13 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     action: "pos.quote.created",
     entityType: "OrderQuote",
     entityId: quote.id,
-    metadata: { orderType, totalCents }
+    metadata: {
+      orderType,
+      totalCents,
+      locationId,
+      taxProfileId: taxConfiguration.id,
+      taxConfigurationVersion: taxConfiguration.configurationVersion
+    }
   });
   return quote;
 }
@@ -1270,6 +1285,34 @@ async function createPosOrderTransaction({
       statusHistory: { orderBy: { createdAt: "asc" } }
     }
   });
+  if (quote.taxSnapshotJson && quote.taxProfileId && quote.taxConfigurationVersion) {
+    const taxSnapshot = quote.taxSnapshotJson;
+    await tx.orderTaxSnapshot.create({
+      data: {
+        orderId: order.id,
+        restaurantId,
+        locationId: quote.locationId,
+        taxProfileId: quote.taxProfileId,
+        configurationVersion: quote.taxConfigurationVersion,
+        provider: taxSnapshot.provider,
+        source: taxSnapshot.source,
+        taxableAmountCents: Math.max(0, quote.subtotalCents - quote.discountCents),
+        taxRateBps: taxSnapshot.taxRateBps,
+        taxCents: quote.taxCents,
+        jurisdictionJson: {
+          jurisdictionCode: taxSnapshot.jurisdictionCode,
+          jurisdictionMetadata: taxSnapshot.jurisdictionMetadata,
+          specialDistricts: taxSnapshot.specialDistricts || [],
+          taxComponents: taxSnapshot.taxComponents || [],
+          exemption: taxSnapshot.exemption || null,
+          taxProfileVersion: quote.taxConfigurationVersion,
+          taxProfileEffectiveAt: taxSnapshot.effectiveAt,
+          taxProfileVerifiedAt: taxSnapshot.verifiedAt,
+          taxInclusive: taxSnapshot.taxInclusive
+        }
+      }
+    });
+  }
   if (sessionId) {
     await tx.posOrderSession.updateMany({
       where: { id: sessionId, restaurantId },
@@ -1312,6 +1355,7 @@ export async function submitPosOrder({
   if (!quote || quote.voidedAt) throw httpError("POS quote not found.", 404);
   if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409);
   if (quote.acceptedAt) throw httpError("POS quote has already been submitted.", 409);
+  requireCurrentQuoteTaxSnapshot(quote);
   const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
 
   const transactionStartedAt = Date.now();
@@ -1676,6 +1720,7 @@ async function cashPaymentFromQuote({
     return { ...recovered, ...(performance ? { performance } : {}) };
   }
   if (quote.expiresAt < new Date()) throw httpError("POS quote expired. Recalculate the cart.", 409, { code: "POS_CASH_QUOTE_EXPIRED" });
+  requireCurrentQuoteTaxSnapshot(quote);
 
   const normalizedCustomer = await validatePosOrderSetup({ restaurantId, orderType: quote.orderType, customerJson, quote });
   const settlement = cashSettlementAmounts(quote.totalCents, amountCents, 0);
@@ -1968,6 +2013,7 @@ function validatePosOfflineTransaction({ transaction, restaurantId, user, sessio
     transaction.completedAt,
     "POS_OFFLINE_CONFIGURATION_PROOF_INVALID"
   );
+  const completedAt = new Date(transaction.completedAt);
   for (const [field, expected] of Object.entries({
     restaurantId,
     userId: user.id,
@@ -2009,6 +2055,14 @@ function validatePosOfflineTransaction({ transaction, restaurantId, user, sessio
     || String(configurationProof.taxConfiguration.jurisdictionCode || "") !== String(transaction.taxSnapshot?.jurisdictionCode || "")
     || configurationProof.taxConfiguration.configurationVersion !== transaction.taxSnapshot?.profileVersion
     || transaction.taxSnapshot?.configurationVersion !== transaction.configurationVersion
+    || configurationProof.taxConfiguration.enabled !== true
+    || Boolean(configurationProof.taxConfiguration.taxInclusive) !== Boolean(transaction.taxSnapshot?.taxInclusive)
+    || configurationProof.taxConfiguration.acknowledgementVersion !== configurationProof.taxConfiguration.configurationVersion
+    || !configurationProof.taxConfiguration.acknowledgedAt
+    || new Date(configurationProof.taxConfiguration.effectiveAt) > completedAt
+    || new Date(configurationProof.taxConfiguration.verifiedAt) > completedAt
+    || (configurationProof.taxConfiguration.expiresAt && new Date(configurationProof.taxConfiguration.expiresAt) <= completedAt)
+    || (configurationProof.taxConfiguration.nextVerificationAt && new Date(configurationProof.taxConfiguration.nextVerificationAt) <= completedAt)
   ) {
     throw posOfflineError("Offline tax does not match its signed configuration.", "POS_OFFLINE_TAX_CONFIGURATION_MISMATCH");
   }
@@ -2204,7 +2258,11 @@ export async function reconcilePosOfflineCashTransaction({
         data: {
           orderId: orderResult.order.id,
           restaurantId,
+          locationId: validated.locationId,
+          taxProfileId: validated.configurationProof.taxConfiguration.id,
+          configurationVersion: validated.configurationProof.taxConfiguration.configurationVersion,
           provider: validated.configurationProof.taxConfiguration.provider,
+          source: validated.configurationProof.taxConfiguration.source,
           taxableAmountCents: validated.transaction.taxSnapshot.taxableAmountCents,
           taxRateBps: validated.transaction.taxSnapshot.taxRateBps,
           taxCents: validated.transaction.taxSnapshot.taxCents,

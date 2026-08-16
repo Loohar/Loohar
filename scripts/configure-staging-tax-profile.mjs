@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
 import { describeDatabaseUrl, printSafeUrlSummary, redactSensitiveText } from "./safe-db-url-metadata.mjs";
+import { ManualVerifiedTaxProvider, normalizeBusinessAddress, validateBusinessAddress } from "../apps/api/src/services/taxDomain.js";
 
 for (const envPath of [resolve(process.cwd(), ".env"), resolve(process.cwd(), "apps/api/.env")]) {
   if (existsSync(envPath)) loadDotenv({ path: envPath, override: false });
@@ -55,15 +56,17 @@ if (!Number.isSafeInteger(taxRateBps) || taxRateBps < 0 || taxRateBps > 100_000)
 const tenantSlug = required("STAGING_TAX_TENANT_SLUG");
 const locationName = required("STAGING_TAX_LOCATION_NAME");
 const expectedTenantClassification = required("STAGING_TAX_EXPECTED_TENANT_CLASSIFICATION");
-const configurationVersion = required("STAGING_TAX_CONFIGURATION_VERSION");
+const expectedConfigurationVersion = optional("STAGING_TAX_CONFIGURATION_VERSION");
 const provider = required("STAGING_TAX_PROVIDER");
 const source = required("STAGING_TAX_SOURCE");
 const sourceReference = required("STAGING_TAX_SOURCE_REFERENCE");
 const jurisdictionCode = required("STAGING_TAX_JURISDICTION_CODE");
+const countryCode = required("STAGING_TAX_JURISDICTION_COUNTRY");
+const stateCode = required("STAGING_TAX_JURISDICTION_REGION");
+const county = required("STAGING_TAX_JURISDICTION_COUNTY");
+const municipality = required("STAGING_TAX_JURISDICTION_LOCALITY");
 const effectiveAt = requiredDate("STAGING_TAX_EFFECTIVE_AT");
 const verifiedAt = requiredDate("STAGING_TAX_VERIFIED_AT");
-
-if (verifiedAt < effectiveAt) throw new Error("STAGING_TAX_VERIFIED_AT must be on or after STAGING_TAX_EFFECTIVE_AT.");
 
 printSafeUrlSummary("DATABASE_URL", databaseMeta, expectedProjectRef);
 printSafeUrlSummary("DIRECT_URL", directMeta, expectedProjectRef);
@@ -89,75 +92,92 @@ try {
     throw new Error("The requested active staging location did not resolve uniquely.");
   }
   const location = matchingLocations[0];
-  const jurisdictionMetadata = {
-    code: jurisdictionCode,
-    countryCode: optional("STAGING_TAX_JURISDICTION_COUNTRY"),
-    regionCode: optional("STAGING_TAX_JURISDICTION_REGION"),
-    locality: optional("STAGING_TAX_JURISDICTION_LOCALITY"),
-    tenantSlug,
-    locationName: location.name,
-    locationAddress: location.address || null,
-    environment: "staging",
-    synthetic: true
-  };
-  const sourceMetadata = {
-    reference: sourceReference,
-    environment: "staging",
-    synthetic: true,
-    purpose: "Offline v1 certification",
-    synchronizedAt: verifiedAt.toISOString()
-  };
+  const normalizedAddress = normalizeBusinessAddress(location);
+  const addressValidation = validateBusinessAddress(normalizedAddress);
+  if (!addressValidation.valid) throw new Error(`The staging location address is incomplete: ${addressValidation.missing.join(", ")}.`);
+  const verifiedConfiguration = await new ManualVerifiedTaxProvider().verifyTaxConfiguration({
+    restaurantId: restaurant.id,
+    locationId: location.id,
+    address: normalizedAddress,
+    effectiveAt,
+    manualConfiguration: {
+      taxRateBps,
+      taxInclusive: false,
+      jurisdictionCode,
+      county,
+      municipality,
+      sourceReference,
+      verificationMethod: "isolated-staging-certification",
+      verifiedBy: "staging-certification-script",
+      verifiedAt
+    }
+  });
+  if (provider !== verifiedConfiguration.provider || source !== verifiedConfiguration.source) {
+    throw new Error("Staging provider/source must identify the verified manual TaxProvider workflow.");
+  }
+  if (countryCode !== verifiedConfiguration.countryCode || stateCode !== verifiedConfiguration.stateCode) {
+    throw new Error("Staging jurisdiction metadata does not match the location's normalized address.");
+  }
+  if (expectedConfigurationVersion && expectedConfigurationVersion !== verifiedConfiguration.configurationVersion) {
+    throw new Error("STAGING_TAX_CONFIGURATION_VERSION does not match the derived immutable version.");
+  }
+  const configurationVersion = verifiedConfiguration.configurationVersion;
 
   const profile = await prisma.$transaction(async (tx) => {
-    await tx.locationTaxProfile.updateMany({
-      where: {
-        restaurantId: restaurant.id,
-        locationId: location.id,
-        enabled: true,
-        NOT: { configurationVersion }
-      },
-      data: { enabled: false }
-    });
-    const nextProfile = await tx.locationTaxProfile.upsert({
+    const existingProfile = await tx.locationTaxProfile.findUnique({
       where: {
         restaurantId_locationId_configurationVersion: {
           restaurantId: restaurant.id,
           locationId: location.id,
           configurationVersion
         }
-      },
-      update: {
-        provider,
-        source,
-        taxRateBps,
-        taxInclusive: false,
-        enabled: true,
-        jurisdictionCode,
-        jurisdictionJson: jurisdictionMetadata,
-        sourceMetadataJson: sourceMetadata,
-        effectiveAt,
-        verifiedAt
-      },
-      create: {
+      }
+    });
+    const nextProfile = existingProfile || await tx.locationTaxProfile.create({
+      data: {
         restaurantId: restaurant.id,
         locationId: location.id,
+        status: "REVIEW_REQUIRED",
+        verificationStatus: "VERIFIED",
         provider,
         source,
-        taxRateBps,
-        taxInclusive: false,
-        enabled: true,
-        jurisdictionCode,
-        jurisdictionJson: jurisdictionMetadata,
-        sourceMetadataJson: sourceMetadata,
-        effectiveAt,
-        verifiedAt,
+        taxRateBps: verifiedConfiguration.taxRateBps,
+        taxInclusive: verifiedConfiguration.taxInclusive,
+        enabled: false,
+        countryCode: verifiedConfiguration.countryCode,
+        stateCode: verifiedConfiguration.stateCode,
+        county: verifiedConfiguration.county,
+        municipality: verifiedConfiguration.municipality,
+        jurisdictionCode: verifiedConfiguration.jurisdictionCode,
+        jurisdictionJson: verifiedConfiguration.jurisdictionMetadata,
+        specialDistrictsJson: verifiedConfiguration.specialDistricts,
+        taxComponentsJson: verifiedConfiguration.taxComponents,
+        exemptionJson: verifiedConfiguration.exemption,
+        sourceMetadataJson: verifiedConfiguration.sourceMetadata,
+        effectiveAt: verifiedConfiguration.effectiveAt,
+        expiresAt: verifiedConfiguration.expiresAt,
+        verifiedAt: verifiedConfiguration.verifiedAt,
+        lastVerifiedAt: verifiedConfiguration.verifiedAt,
+        nextVerificationAt: verifiedConfiguration.nextVerificationAt,
         configurationVersion
+      }
+    });
+    await tx.restaurantLocation.update({
+      where: { id: location.id },
+      data: {
+        taxStatus: "REVIEW_REQUIRED",
+        taxStatusCode: "TAX_PROFILE_REVIEW_REQUIRED",
+        taxStatusMessage: "Review and acknowledge the synthetic staging profile before activation.",
+        taxLastAttemptAt: verifiedAt,
+        normalizedAddressJson: addressValidation.address,
+        addressValidationStatus: "VALID",
+        addressVerifiedAt: verifiedAt
       }
     });
     await tx.auditLog.create({
       data: {
         restaurantId: restaurant.id,
-        action: "staging.location_tax_profile.synchronized",
+        action: "staging.location_tax_profile.candidate_created",
         entityType: "LocationTaxProfile",
         entityId: nextProfile.id,
         metadataJson: {
@@ -176,7 +196,7 @@ try {
     return nextProfile;
   });
 
-  console.log("Staging location tax profile synchronized.", {
+  console.log("Staging location tax profile candidate created.", {
     tenantSlug,
     locationName: location.name,
     profileId: profile.id,
@@ -184,6 +204,7 @@ try {
     configurationVersion: profile.configurationVersion,
     effectiveAt: profile.effectiveAt.toISOString(),
     verifiedAt: profile.verifiedAt.toISOString(),
+    requiresAcknowledgement: true,
     synthetic: true
   });
 } catch (error) {

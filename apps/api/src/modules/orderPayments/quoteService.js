@@ -1,5 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import { normalizeTipInput } from "../../services/orderWorkflowService.js";
+import { findValidLocationTaxConfiguration } from "../../services/taxProfileService.js";
 
 const ORDERING_TYPES = new Set(["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"]);
 export const ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE =
@@ -39,7 +40,10 @@ function activeCouponWhere({ restaurantId, couponCode }) {
 export async function calculateOrderQuote({ restaurantId, body }) {
   const restaurant = await prisma.restaurant.findUnique({
     where: { id: restaurantId },
-    include: { taxConfigurations: { where: { enabled: true }, take: 1 }, deliveryFeeRules: { where: { active: true }, orderBy: { createdAt: "asc" } } }
+    include: {
+      locations: { where: { active: true }, orderBy: { createdAt: "asc" } },
+      deliveryFeeRules: { where: { active: true }, orderBy: { createdAt: "asc" } }
+    }
   });
   if (!restaurant || restaurant.status !== "ACTIVE") {
     const error = new Error("Restaurant unavailable");
@@ -51,6 +55,19 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     error.status = 400;
     throw error;
   }
+  const requestedLocationId = String(body.locationId || "").trim();
+  const location = requestedLocationId
+    ? restaurant.locations.find((candidate) => candidate.id === requestedLocationId)
+    : restaurant.locations.length === 1 ? restaurant.locations[0] : null;
+  if (!location) {
+    const error = new Error(restaurant.locations.length > 1
+      ? "Choose a restaurant location before requesting a quote."
+      : "A configured restaurant location is required before requesting a quote.");
+    error.status = 409;
+    error.code = requestedLocationId ? "ORDER_LOCATION_INVALID" : "ORDER_LOCATION_REQUIRED";
+    throw error;
+  }
+  const taxConfiguration = await findValidLocationTaxConfiguration({ restaurantId: restaurant.id, locationId: location.id });
 
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length === 0) {
@@ -119,11 +136,14 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");
   const deliveryFeeCents = orderType === "DELIVERY" && !freeDelivery ? nonnegativeInt(configuredDeliveryFeeCents) : 0;
   const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
-  const taxRateBps = configuredTaxRateBps(restaurant.taxConfigurations?.[0]);
-  const taxCents = Math.round((taxableAmountCents * taxRateBps) / 10000);
+  const taxRateBps = configuredTaxRateBps(taxConfiguration);
+  const taxInclusive = taxConfiguration.taxInclusive === true;
+  const taxCents = taxInclusive
+    ? Math.round((taxableAmountCents * taxRateBps) / (10000 + taxRateBps))
+    : Math.round((taxableAmountCents * taxRateBps) / 10000);
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
   const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
-  const totalCents = taxableAmountCents + deliveryFeeCents + taxCents + serviceFeeCents + tipBreakdown.tipCents;
+  const totalCents = taxableAmountCents + deliveryFeeCents + (taxInclusive ? 0 : taxCents) + serviceFeeCents + tipBreakdown.tipCents;
   const feeCents = platformFeeCents();
   const restaurantGrossCents = totalCents - (tipBreakdown.driverTipCents || 0);
   const restaurantNetCents = restaurantGrossCents;
@@ -136,8 +156,13 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     subtotalCents,
     discountCents,
     couponCode: coupon?.code || null,
+    locationId: location.id,
+    taxProfileId: taxConfiguration.id,
+    taxConfigurationVersion: taxConfiguration.configurationVersion,
+    taxConfiguration,
     taxableAmountCents,
     taxRateBps,
+    taxInclusive,
     taxCents,
     deliveryFeeCents,
     serviceFeeCents,

@@ -7,6 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
 
 const posService = read("apps/api/src/services/posService.js");
+const taxProfileService = read("apps/api/src/services/taxProfileService.js");
 const quoteService = read("apps/api/src/modules/orderPayments/quoteService.js");
 const orderPaymentService = read("apps/api/src/modules/orderPayments/orderPaymentService.js");
 const errorHandler = read("apps/api/src/middleware/errorHandler.js");
@@ -28,7 +29,8 @@ assert.ok(posService.includes("findValidLocationTaxConfiguration"), "POS quotes 
 assert.ok(posService.includes("POS_TAX_CONFIGURATION_REQUIRED"), "POS must return a stable missing-tax error code");
 assert.ok(posService.indexOf("requireLocationTaxConfiguration(taxConfiguration)") < posService.indexOf("prisma.orderQuote.create"), "POS quote creation must fail before persistence when tax is missing");
 assert.ok(quoteService.includes("ORDER_TAX_CONFIGURATION_REQUIRED"), "Customer quotes must return a stable missing-tax error code");
-assert.ok(quoteService.includes("configuredTaxRateBps(restaurant.taxConfigurations?.[0])"), "Customer quote tax must use explicit configuration only");
+assert.ok(quoteService.includes("configuredTaxRateBps(taxConfiguration)"), "Customer quote tax must use an active location profile only");
+assert.ok(taxProfileService.includes("findValidLocationTaxConfiguration") && taxProfileService.includes("status: TAX_PROFILE_STATUS.ACTIVE"), "Runtime tax lookup must require an active location profile");
 assert.ok(orderPaymentService.indexOf("calculateOrderQuote") < orderPaymentService.indexOf("prisma.$transaction"), "Missing tax must fail before customer order settlement starts");
 assert.ok(errorHandler.includes("error.code ? { code: error.code }"), "Controlled tax errors must expose their stable code");
 

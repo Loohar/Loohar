@@ -24,6 +24,7 @@ const app = read("apps/web/src/App.jsx");
 const screens = read("apps/web/src/apps/pos/PosWorkflowScreens.jsx");
 const storageSource = read("apps/web/src/apps/pos/offlineStorage.js");
 const service = read("apps/api/src/services/posService.js");
+const taxProfileService = read("apps/api/src/services/taxProfileService.js");
 const route = read("apps/api/src/routes/pos.js");
 const schema = read("apps/api/prisma/schema.prisma");
 const migration = read("apps/api/prisma/migrations/20260815090000_pos_offline_reconciliation/migration.sql");
@@ -57,6 +58,8 @@ function fixture({ priceCents = 1000, taxRateBps = 825 } = {}) {
       effectiveAt: now.toISOString(),
       verifiedAt: now.toISOString(),
       configurationVersion: "tax-profile-v1",
+      acknowledgementVersion: "tax-profile-v1",
+      acknowledgedAt: now.toISOString(),
       updatedAt: now.toISOString()
     },
     configurationVersion: `config-${taxRateBps}`,
@@ -118,11 +121,11 @@ assert.equal(posOfflineInitializationUsable(null), false, "an uninitialized regi
 assert.equal(initialization.menu.categories[0].items[0].imageUrl, undefined, "offline cache should not duplicate menu images");
 const inclusiveTaxFixture = fixture();
 inclusiveTaxFixture.config.taxConfiguration.taxInclusive = true;
-assert.throws(
-  () => buildPosOfflineInitialization({ config: inclusiveTaxFixture.config, menu: inclusiveTaxFixture.menu, registerKey: inclusiveTaxFixture.initialization.registerKey }),
-  /verified location tax profile/i,
-  "Offline v1 must fail closed for tax-inclusive profiles until inclusive arithmetic is supported"
-);
+const inclusiveInitialization = buildPosOfflineInitialization({ config: inclusiveTaxFixture.config, menu: inclusiveTaxFixture.menu, registerKey: inclusiveTaxFixture.initialization.registerKey });
+const inclusiveQuote = calculatePosOfflineQuote({ initialization: inclusiveInitialization, cart: cart(), orderType: "WALK_IN", customer: {}, locationId: "location-1" });
+assert.equal(inclusiveQuote.taxCents, 76, "Offline v1 must extract the synchronized tax-inclusive portion");
+assert.equal(inclusiveQuote.totalCents, 1000, "Offline v1 must not add tax twice for tax-inclusive profiles");
+assert.equal(inclusiveQuote.taxSnapshot.taxInclusive, true, "Offline v1 must preserve tax-inclusive profile metadata");
 
 const simpleQuote = calculatePosOfflineQuote({ initialization, cart: cart(), orderType: "WALK_IN", customer: {}, locationId: "location-1" });
 assert.equal(simpleQuote.subtotalCents, 1000, "simple cached item pricing should be deterministic");
@@ -265,7 +268,8 @@ assert.ok(route.includes('router.post("/:restaurantId/pos/offline/reconcile"') &
 assert.ok(route.includes('json({ error: error.message, code: error.code })'), "offline reconciliation must return stable server error codes to the retry classifier");
 assert.ok(service.includes("validatePosOfflinePricingSnapshot") && service.includes("verifyPosOfflineConfigurationProof") && service.includes("verifyPosOfflineMenuItemProof"), "server should verify signed configuration, menu, tax, and arithmetic");
 assert.ok(service.includes("effectiveShiftLocationId = shift?.locationId || sessionDevice?.locationId") && service.includes("shift.cashDrawer?.locationId && shift.cashDrawer.locationId !== validated.locationId"), "legacy null-scoped shifts must inherit only their authenticated terminal location while conflicting drawer scopes fail closed");
-assert.ok(service.includes("prisma.locationTaxProfile.findFirst") && service.includes("locationId: device.locationId"), "signed offline initialization must select the terminal location's active tax profile");
+assert.ok(service.includes("findValidLocationTaxConfiguration") && service.includes("locationId: device.locationId"), "signed offline initialization must select the terminal location's active tax profile");
+assert.ok(taxProfileService.includes("prisma.locationTaxProfile.findFirst") && taxProfileService.includes("status: TAX_PROFILE_STATUS.ACTIVE"), "Tax Service must enforce active profile state server-side");
 assert.ok(service.includes("configurationProof.taxConfiguration.configurationVersion !== transaction.taxSnapshot?.profileVersion"), "reconciliation must verify the signed tax profile version");
 assert.ok(service.includes("createPosOrderTransaction") && service.includes("settleCashOrderTransaction"), "reconciliation should reuse canonical order and cash services");
 assert.ok(service.includes("tx.orderTaxSnapshot.create") && service.includes("tx.posOfflineReconciliation.update"), "tax and canonical IDs should commit atomically");

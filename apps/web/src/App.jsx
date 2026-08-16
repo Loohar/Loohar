@@ -333,6 +333,7 @@ const onboardingSteps = [
   { id: "content", label: "Content" },
   { id: "hours", label: "Hours" },
   { id: "fulfillment", label: "Pickup & Delivery" },
+  { id: "tax", label: "Taxes" },
   { id: "menu", label: "Menu" },
   { id: "gallery", label: "Gallery & Social" },
   { id: "domain", label: "Domain & SEO" },
@@ -347,6 +348,7 @@ const restaurantSettingsLinks = [
   { id: "ordering", label: "Ordering", detail: "Pickup, delivery, order readiness, and kitchen workflow configuration.", status: "READ_ONLY" },
   { id: "menu-catalog", label: "Menu/Catalog", detail: "Menu categories, food items, photos, modifiers, availability, and food catalog controls.", status: "IMPLEMENTED", feature: "MENU_MANAGEMENT" },
   { id: "payments", label: "Payments", detail: "Customer checkout, Stripe Connect, and payout readiness.", status: "READ_ONLY", feature: "ORDER_PAYMENTS" },
+  { id: "taxes", label: "Tax Configuration", detail: "Location jurisdiction, verified tax profiles, acknowledgement, activation, and POS readiness.", status: "IMPLEMENTED" },
   { id: "receipts-printing", label: "Receipts & Printing", detail: "Kitchen tickets, customer receipts, printer targets, and future thermal printer integrations.", status: "IMPLEMENTED", feature: "PRINTING" },
   { id: "inventory", label: "Inventory", detail: "Ingredients, stock levels, units, cost tracking, and future automatic depletion.", status: "IMPLEMENTED", feature: "INVENTORY" },
   { id: "website-branding", label: "Website & Branding", detail: "Logo, hero image, brand colors, homepage content, and section visibility.", status: "IMPLEMENTED" },
@@ -365,7 +367,7 @@ const restaurantSettingsLinks = [
 ];
 const restaurantSettingsGroups = [
   { id: "organization", label: "Organization", items: ["account", "restaurant-profile", "locations", "business-hours", "billing-subscription"] },
-  { id: "operations", label: "Operations", items: ["menu-catalog", "ordering", "payments", "pos-kiosk", "receipts-printing", "inventory", "delivery-zones"] },
+  { id: "operations", label: "Operations", items: ["menu-catalog", "ordering", "payments", "taxes", "pos-kiosk", "receipts-printing", "inventory", "delivery-zones"] },
   { id: "people", label: "People", items: ["staff-roles", "customers"] },
   { id: "growth", label: "Growth", items: ["loyalty", "coupons", "notifications", "website-branding", "gallery-social", "domains-seo"] },
   { id: "governance", label: "Governance", items: ["reports", "security-audit", "integrations", "developer-api"] }
@@ -1148,6 +1150,23 @@ function locationDraftFrom(location = {}, profile = {}) {
     active: location.active !== false,
     primary: location.primary !== false
   };
+}
+
+function taxRateLabel(taxRateBps) {
+  const rate = Number(taxRateBps);
+  return Number.isFinite(rate) ? `${(rate / 100).toFixed(2)}%` : "Not available";
+}
+
+function taxDateLabel(value) {
+  if (!value) return "Not set";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Not set" : parsed.toLocaleDateString();
+}
+
+function taxStatusTone(status = "UNCONFIGURED") {
+  if (status === "ACTIVE") return "good";
+  if (["PROVIDER_ERROR", "UNSUPPORTED_JURISDICTION", "EXPIRED", "DISABLED"].includes(status)) return "bad";
+  return "warn";
 }
 
 function planFor(restaurant = {}) {
@@ -6056,7 +6075,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
               <button className="button-muted" type="button" onClick={previousStep} disabled={currentStepIndex === 0}>Back</button>
               <button className="button-muted" type="button" onClick={nextStep} disabled={currentStepIndex === onboardingSteps.length - 1}>Next</button>
               {optionalOnboardingSteps.has(activeStep) ? <button className="button-muted" type="button" onClick={() => skipStep(activeStep)} disabled={Boolean(saving)}>{saving === `skip:${activeStep}` ? "Skipping..." : "Skip for now"}</button> : null}
-              {activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "payments" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
+              {activeStep !== "tax" && activeStep !== "menu" && activeStep !== "gallery" && activeStep !== "payments" && activeStep !== "review" ? <button className="button-primary" type="button" onClick={() => saveStep(activeStep)} disabled={Boolean(saving)}>{saving === activeStep ? "Saving..." : "Save step"}</button> : null}
             </div>
             {activeStepSave?.message ? <p className={`text-sm font-bold ${activeStepSave.status === "ERROR" ? "text-rose-600" : "text-slate-500"}`} role="status" aria-live="polite">{activeStepSave.message}</p> : null}
           </div>
@@ -6466,6 +6485,23 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
               <Field label="Minimum order cents"><TextInput field="minimumOrderCents" type="number" /></Field>
               <Field label="Average prep minutes"><TextInput field="averagePrepMinutes" type="number" /></Field>
               <div className="rounded-md border border-line bg-slate-50 p-4 text-sm text-slate-500">{deliveryZones.length} active delivery zone{deliveryZones.length === 1 ? "" : "s"} configured.</div>
+            </div>
+          ) : null}
+
+          {activeStep === "tax" ? (
+            <div className="mt-5 grid gap-5">
+              <div className="flex flex-col justify-between gap-3 border-b border-line pb-5 md:flex-row md:items-start">
+                <div>
+                  <h3 className="font-black text-ink">Location tax readiness</h3>
+                  <p className="mt-2 max-w-2xl text-sm text-slate-500">Loohar verifies tax from each location's complete physical address. The restaurant account can continue setup while tax is incomplete, but checkout stays unavailable.</p>
+                </div>
+                <StatusPill tone={readiness.taxReady ? "good" : "warn"}>{readiness.taxReady ? "Active" : readable(readiness.taxStatus || "UNCONFIGURED")}</StatusPill>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="summary-line"><span>Active locations</span><strong>{integer(readiness.counts?.activeLocations || 0)}</strong></div>
+                <div className="summary-line"><span>Tax-ready locations</span><strong>{integer(readiness.counts?.taxReadyLocations || 0)}</strong></div>
+              </div>
+              <a className="button-primary w-fit" href={restaurantSettingPath(dashboardHref, "taxes")}><Shield size={16} />Review tax configuration</a>
             </div>
           ) : null}
 
@@ -10418,6 +10454,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const [growthAnalytics, setGrowthAnalytics] = useState(() => emptyGrowthAnalytics());
   const [menuInsights, setMenuInsights] = useState(() => emptyMenuInsights());
   const [locations, setLocations] = useState([]);
+  const [taxWorkspace, setTaxWorkspace] = useState({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] });
+  const [taxAcknowledgements, setTaxAcknowledgements] = useState({});
+  const [savingTaxAction, setSavingTaxAction] = useState("");
   const [website, setWebsite] = useState(() => emptyWebsiteSettings());
   const [domain, setDomain] = useState(() => emptyDomainSettings(initialProfile.slug));
   const [gallery, setGallery] = useState([]);
@@ -10489,6 +10528,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     setGrowthAnalytics(emptyGrowthAnalytics());
     setMenuInsights(emptyMenuInsights());
     setLocations([]);
+    setTaxWorkspace({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] });
+    setTaxAcknowledgements({});
+    setSavingTaxAction("");
     setWebsite(emptyWebsiteSettings());
     setDomain(emptyDomainSettings(nextProfile?.slug || initialSlug || user?.restaurantSlug || ""));
     setGallery([]);
@@ -10715,7 +10757,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       const customerParams = new window.URLSearchParams(reportParams);
       customerParams.set("pageSize", "100");
       const customerQuery = `?${customerParams.toString()}`;
-      const [dashboardPayload, profilePayload, mePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload] = await Promise.all([
+      const [dashboardPayload, profilePayload, mePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload, taxWorkspacePayload] = await Promise.all([
         api(`/api/restaurants/${restaurantId}/dashboard`, { token }),
         api(`/api/restaurants/${restaurantId}/profile`, { token }),
         api("/api/restaurants/me", { token }),
@@ -10740,7 +10782,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
         optionalApi("INVENTORY", `/api/restaurants/${restaurantId}/inventory`, { items: [] }),
         optionalApi("PRINTING", `/api/restaurants/${restaurantId}/printing`, { settings: {} }),
         optionalApi("NOTIFICATIONS", `/api/restaurants/${restaurantId}/notification-settings`, { settings: {} }),
-        optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations${reportQuery}`, emptyOperationsReport())
+        optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations${reportQuery}`, emptyOperationsReport()),
+        activePage === "settings" ? api(`/api/restaurants/${restaurantId}/tax-profiles`, { token }) : Promise.resolve({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] })
       ]);
       if (requestId !== loadRestaurantRequestIdRef.current) return null;
       const profileBase = profilePayload.restaurant || initialProfile;
@@ -10764,6 +10807,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       setGrowthAnalytics(analyticsPayload);
       setMenuInsights(menuInsightsPayload);
       setLocations(nextLocations);
+      setTaxWorkspace(taxWorkspacePayload || { ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] });
       setLocationDrafts(Object.fromEntries(nextLocations.map((location) => [location.id, locationDraftFrom(location, nextProfile)])));
       setWebsite(websitePayload.website || emptyWebsiteSettings());
       setDomain(domainPayload.domain || emptyDomainSettings(nextProfile.slug));
@@ -10847,6 +10891,81 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       showToast(saveError.message, "bad");
     } finally {
       setSavingLocationId("");
+    }
+  }
+
+  async function reloadTaxWorkspace() {
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to load tax configuration.");
+    const payload = await api(`/api/restaurants/${restaurantId}/tax-profiles`, { token });
+    setTaxWorkspace(payload || { locations: [] });
+    return payload;
+  }
+
+  async function resolveTaxProfileForLocation(location) {
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to verify tax jurisdiction.");
+    setSavingTaxAction(`resolve:${location.id}`);
+    try {
+      await api(`/api/restaurants/${restaurantId}/locations/${location.id}/tax-profile/resolve`, {
+        method: "POST",
+        token,
+        body: {}
+      });
+      await reloadTaxWorkspace();
+      showToast("Verified tax profile is ready for review.");
+    } catch (taxError) {
+      setError(taxError.message);
+      showToast(taxError.message, "bad");
+      await reloadTaxWorkspace().catch(() => {});
+    } finally {
+      setSavingTaxAction("");
+    }
+  }
+
+  async function refreshTaxProfileForLocation(location) {
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to refresh tax configuration.");
+    setSavingTaxAction(`refresh:${location.id}`);
+    try {
+      await api(`/api/restaurants/${restaurantId}/locations/${location.id}/tax-profile/refresh`, {
+        method: "POST",
+        token,
+        body: {}
+      });
+      await reloadTaxWorkspace();
+      showToast("Tax verification refreshed.");
+    } catch (taxError) {
+      setError(taxError.message);
+      showToast(taxError.message, "bad");
+      await reloadTaxWorkspace().catch(() => {});
+    } finally {
+      setSavingTaxAction("");
+    }
+  }
+
+  async function acknowledgeTaxProfile(location, profile) {
+    if (!taxAcknowledgements[profile.id]) {
+      return showToast("Confirm the verified location and tax information before activation.", "bad");
+    }
+    if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to activate tax configuration.");
+    setSavingTaxAction(`acknowledge:${profile.id}`);
+    try {
+      await api(`/api/restaurants/${restaurantId}/locations/${location.id}/tax-profile/acknowledge`, {
+        method: "POST",
+        token,
+        body: {
+          profileId: profile.id,
+          configurationVersion: profile.configurationVersion,
+          confirmed: true
+        }
+      });
+      setTaxAcknowledgements((current) => ({ ...current, [profile.id]: false }));
+      await reloadTaxWorkspace();
+      showToast("Tax profile activated for this location.");
+    } catch (taxError) {
+      setError(taxError.message);
+      showToast(taxError.message, "bad");
+      await reloadTaxWorkspace().catch(() => {});
+    } finally {
+      setSavingTaxAction("");
     }
   }
 
@@ -11671,6 +11790,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const sectionSettings = { ...websiteSectionDefaults, ...(website.sectionSettingsJson || {}) };
   const settingsStoreHours = Object.entries(website.storeHoursJson || profile.storeHoursJson || {});
   const orderingModuleEnabled = (profile.enabledModules || []).includes("RESTAURANT_ORDERING");
+  const canManageTaxes = ["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "SUPER_ADMIN"].includes(user?.role);
   const lockFor = (feature) => featureLocks[feature];
   const hasLock = (feature) => Boolean(lockFor(feature));
   const entitlementSummary = profile.entitlements || {};
@@ -12800,6 +12920,93 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                 </div>
               );
             })}
+          </div>
+        </div>
+        ) : null}
+        {showSettingsSection("taxes") ? (
+        <div className="panel xl:col-span-2" id="settings-taxes">
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <h3 className="panel-title">Tax Configuration</h3>
+              <p className="mt-2 max-w-3xl text-sm text-slate-500">Tax profiles are resolved independently from each location's complete business address. Checkout uses only an acknowledged, active version.</p>
+            </div>
+            <StatusPill tone={taxWorkspace.ready ? "good" : "warn"}>
+              {taxWorkspace.ready ? "POS tax ready" : "Checkout blocked"}
+            </StatusPill>
+          </div>
+          <div className="mt-5 divide-y divide-line border-y border-line">
+            {(taxWorkspace.locations || []).length === 0 ? (
+              <EmptyState title="No tax locations loaded" detail="Add an active restaurant location with a complete physical address, then refresh this page." />
+            ) : (taxWorkspace.locations || []).map((location) => {
+              const activeTaxProfile = location.activeProfile;
+              const reviewTaxProfile = location.reviewProfile;
+              const displayedTaxProfile = activeTaxProfile || reviewTaxProfile;
+              const address = location.address || {};
+              return (
+                <section className="py-5 first:pt-0 last:pb-0" key={location.id}>
+                  <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <MapPin size={18} className="text-mint" />
+                        <h4 className="font-black text-ink">{location.name}</h4>
+                        <StatusPill tone={taxStatusTone(location.status)}>{readable(location.status || "UNCONFIGURED")}</StatusPill>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-500">{address.normalizedAddress || "Complete the location address before verification."}</p>
+                      {location.statusMessage ? <p className="mt-2 text-sm font-bold text-rose-600">{location.statusMessage}</p> : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {canManageTaxes && activeTaxProfile ? <button className="button-muted" type="button" onClick={() => refreshTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />{savingTaxAction === `refresh:${location.id}` ? "Refreshing..." : "Refresh verification"}</button> : null}
+                      {canManageTaxes && !activeTaxProfile && !reviewTaxProfile ? <button className="button-primary" type="button" onClick={() => resolveTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><Shield size={16} />{savingTaxAction === `resolve:${location.id}` ? "Verifying..." : "Verify jurisdiction"}</button> : null}
+                      {!canManageTaxes ? <StatusPill tone="neutral">Read only</StatusPill> : null}
+                    </div>
+                  </div>
+
+                  {displayedTaxProfile ? (
+                    <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                      <div><span className="block font-semibold text-slate-500">Jurisdiction</span><strong className="text-ink">{[displayedTaxProfile.municipality, displayedTaxProfile.county, displayedTaxProfile.stateCode].filter(Boolean).join(", ") || displayedTaxProfile.jurisdictionCode}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Applicable rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Provider</span><strong className="text-ink">{readable(displayedTaxProfile.provider)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Source</span><strong className="break-words text-ink">{displayedTaxProfile.sourceMetadata?.sourceReference || readable(displayedTaxProfile.source)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Special districts</span><strong className="text-ink">{(displayedTaxProfile.specialDistricts || []).map((district) => district.name).filter(Boolean).join(", ") || "None listed"}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Version</span><strong className="break-all text-ink">{displayedTaxProfile.configurationVersion}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Effective</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.effectiveAt)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Verified</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.verifiedAt)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Acknowledged</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.acknowledgedAt)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Next verification</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.nextVerificationAt)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Pricing</span><strong className="text-ink">{displayedTaxProfile.taxInclusive ? "Tax inclusive" : "Tax added at checkout"}</strong></div>
+                    </div>
+                  ) : null}
+
+                  {reviewTaxProfile && canManageTaxes ? (
+                    <div className="mt-5 border-t border-line pt-4">
+                      <label className="flex items-start gap-3 text-sm font-semibold text-slate-700">
+                        <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
+                        <span>I confirm that this verified business location and tax information are correct for this location.</span>
+                      </label>
+                      <button className="button-primary mt-4" type="button" onClick={() => acknowledgeTaxProfile(location, reviewTaxProfile)} disabled={!taxAcknowledgements[reviewTaxProfile.id] || Boolean(savingTaxAction)}><CheckCircle2 size={16} />{savingTaxAction === `acknowledge:${reviewTaxProfile.id}` ? "Activating..." : "Confirm & activate tax profile"}</button>
+                    </div>
+                  ) : null}
+
+                  {(location.history || []).length ? (
+                    <details className="mt-4 border-t border-line pt-4">
+                      <summary className="cursor-pointer text-sm font-bold text-slate-600">Profile history ({integer(location.history.length)})</summary>
+                      <div className="mt-3 grid gap-2 text-sm">
+                        {location.history.map((profile) => (
+                          <div className="summary-line" key={profile.id}>
+                            <span>{readable(profile.status)} - {taxDateLabel(profile.effectiveAt)}</span>
+                            <strong>{taxRateLabel(profile.taxRateBps)} - {profile.configurationVersion}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
+                </section>
+              );
+            })}
+          </div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+            <div><strong className="text-ink">First-sale readiness</strong><p className="text-sm text-slate-500">{integer(taxWorkspace.counts?.readyLocations || 0)} of {integer(taxWorkspace.counts?.activeLocations || 0)} active locations are tax ready. Register and menu setup may continue while tax is incomplete, but financial checkout remains unavailable.</p></div>
+            <button className="button-muted" type="button" onClick={() => reloadTaxWorkspace()} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />Reload status</button>
           </div>
         </div>
         ) : null}

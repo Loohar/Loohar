@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
+import { isActiveTaxProfile, taxProfileReadiness } from "../services/taxDomain.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { provisionRestaurantTenant } from "../modules/platformBilling/platformBillingService.js";
@@ -25,7 +26,7 @@ const tenantInclude = {
   domains: true,
   deliveryZones: true,
   subscriptions: { include: { plan: true } },
-  locations: true,
+  locations: { include: { taxProfiles: { orderBy: { effectiveAt: "desc" } } } },
   platformSubscriptions: { include: { plan: true }, orderBy: { updatedAt: "desc" }, take: 1 },
   trialEnrollments: { orderBy: { createdAt: "desc" }, take: 1 },
   notificationSchedules: { orderBy: { scheduledFor: "asc" }, take: 6 },
@@ -37,6 +38,10 @@ function adminOnboardingSummary(restaurant) {
   const website = restaurant.websiteSettings || {};
   const domain = restaurant.domains?.[0] || {};
   const ownerReady = (restaurant.users || []).some((user) => ["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN"].includes(user.role) && user.status === "ACTIVE");
+  const activeLocations = (restaurant.locations || []).filter((location) => location.active !== false);
+  const taxReady = activeLocations.length > 0 && activeLocations.every((location) =>
+    (location.taxProfiles || []).some((profile) => isActiveTaxProfile(profile))
+  );
   const sections = {
     business: Boolean(restaurant.name && restaurant.slug && restaurant.email && restaurant.phone && restaurant.address && restaurant.city && restaurant.state && restaurant.zip),
     owner: ownerReady,
@@ -44,6 +49,7 @@ function adminOnboardingSummary(restaurant) {
     content: Boolean(website.heroTitle && website.heroSubtitle && website.aboutStory),
     hours: Boolean(website.storeHoursJson || restaurant.storeHoursJson),
     fulfillment: Boolean(restaurant.pickupEnabled || restaurant.deliveryEnabled) && (!restaurant.deliveryEnabled || (restaurant.deliveryZones || []).length > 0 || Number(restaurant.deliveryRadiusMiles || 0) > 0),
+    tax: taxReady,
     menu: (restaurant._count?.menuItems || 0) > 0,
     domain: Boolean(domain.defaultSubdomain || restaurant.slug),
     payments: Boolean(restaurant.settingsJson?.paymentSetup?.status === "CONNECTED" || restaurant.settingsJson?.paymentSetup?.connected === true)
@@ -58,6 +64,7 @@ function adminOnboardingSummary(restaurant) {
     websitePublishedAt: restaurant.websitePublishedAt,
     orderingEnabled: Boolean(restaurant.settingsJson?.onlineOrderingEnabled),
     paymentConnected: sections.payments,
+    taxStatus: taxReady ? "ACTIVE" : activeLocations[0]?.taxStatus || "UNCONFIGURED",
     domainStatus: domain.domainStatus || "NOT_CONFIGURED",
     lastUpdatedAt: restaurant.onboardingUpdatedAt || restaurant.updatedAt
   };
@@ -665,6 +672,47 @@ router.get("/audit-logs", async (req, res, next) => {
   try {
     const auditLogs = await prisma.auditLog.findMany({ include: { actor: true, restaurant: true }, orderBy: { createdAt: "desc" }, take: 200 });
     res.json({ auditLogs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/tax-status", async (req, res, next) => {
+  try {
+    const locations = await prisma.restaurantLocation.findMany({
+      include: {
+        restaurant: { select: { id: true, slug: true, name: true, businessName: true } },
+        taxProfiles: {
+          where: { status: { in: ["ACTIVE", "REVIEW_REQUIRED", "REFRESH_REQUIRED", "EXPIRED"] } },
+          orderBy: [{ effectiveAt: "desc" }, { updatedAt: "desc" }],
+          take: 5
+        }
+      },
+      orderBy: [{ restaurantId: "asc" }, { createdAt: "asc" }]
+    });
+    res.json({
+      locations: locations.map((location) => {
+        const activeProfile = location.taxProfiles.find((profile) => isActiveTaxProfile(profile));
+        const readiness = taxProfileReadiness(activeProfile || location.taxProfiles[0]);
+        return {
+          restaurant: location.restaurant,
+          location: { id: location.id, name: location.name, active: location.active },
+          status: activeProfile ? "ACTIVE" : location.taxProfiles.length ? readiness.status : location.taxStatus,
+          statusCode: activeProfile ? "TAX_PROFILE_ACTIVE" : location.taxProfiles.length ? readiness.code : location.taxStatusCode,
+          lastAttemptAt: location.taxLastAttemptAt,
+          profiles: location.taxProfiles.map((profile) => ({
+          id: profile.id,
+          status: profile.status,
+          provider: profile.provider,
+          source: profile.source,
+          configurationVersion: profile.configurationVersion,
+          effectiveAt: profile.effectiveAt,
+          verifiedAt: profile.verifiedAt,
+          nextVerificationAt: profile.nextVerificationAt
+          }))
+        };
+      })
+    });
   } catch (error) {
     next(error);
   }

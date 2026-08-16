@@ -71,6 +71,7 @@ export function calculatePosPricingSnapshot({
   discountCents = 0,
   deliveryFeeCents = 0,
   taxRateBps,
+  taxInclusive = false,
   tipCents = 0
 } = {}) {
   if (!Array.isArray(lineItems) || !lineItems.length) {
@@ -93,8 +94,11 @@ export function calculatePosPricingSnapshot({
     throw new PosOfflinePricingError("A valid synchronized tax rate is required.", "POS_OFFLINE_TAX_INVALID");
   }
   const taxableAmountCents = Math.max(0, subtotalCents - discount);
-  const taxCents = Math.round((taxableAmountCents * rate) / 10_000);
-  const totalCents = Math.max(0, taxableAmountCents + deliveryFee + taxCents + tip);
+  const inclusive = taxInclusive === true;
+  const taxCents = inclusive
+    ? Math.round((taxableAmountCents * rate) / (10_000 + rate))
+    : Math.round((taxableAmountCents * rate) / 10_000);
+  const totalCents = Math.max(0, taxableAmountCents + deliveryFee + (inclusive ? 0 : taxCents) + tip);
   return {
     lineItems: normalizedLines,
     subtotalCents,
@@ -102,6 +106,7 @@ export function calculatePosPricingSnapshot({
     taxableAmountCents,
     deliveryFeeCents: deliveryFee,
     taxRateBps: rate,
+    taxInclusive: inclusive,
     taxCents,
     tipCents: tip,
     totalCents
@@ -116,6 +121,7 @@ export function validatePosOfflinePricingSnapshot(transaction = {}) {
     discountCents: order.discountCents,
     deliveryFeeCents: order.deliveryFeeCents,
     taxRateBps: tax.taxRateBps,
+    taxInclusive: tax.taxInclusive,
     tipCents: order.tipCents
   });
   for (const field of ["subtotalCents", "discountCents", "deliveryFeeCents", "taxCents", "tipCents", "totalCents"]) {

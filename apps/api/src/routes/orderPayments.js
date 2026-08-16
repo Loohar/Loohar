@@ -18,6 +18,7 @@ const orderItemSchema = z.object({
 const quoteSchema = z.object({
   body: z.object({
     restaurantId: z.string(),
+    locationId: z.string().optional(),
     type: z.enum(["PICKUP", "DELIVERY"]),
     couponCode: z.string().optional(),
     tipCents: z.number().int().nonnegative().default(0),
@@ -63,8 +64,19 @@ router.post("/quote", validate(quoteSchema), async (req, res, next) => {
   try {
     await assertOrderPaymentEntitlements(req);
     const quote = await calculateOrderQuote({ restaurantId: req.body.restaurantId, body: req.body });
-    const { restaurant, coupon, ...safeQuote } = quote;
-    res.json({ quote: safeQuote });
+    const { restaurant, coupon, taxConfiguration, ...safeQuote } = quote;
+    res.json({ quote: {
+      ...safeQuote,
+      taxConfiguration: {
+        provider: taxConfiguration.provider,
+        source: taxConfiguration.source,
+        jurisdictionCode: taxConfiguration.jurisdictionCode,
+        taxInclusive: taxConfiguration.taxInclusive,
+        configurationVersion: taxConfiguration.configurationVersion,
+        effectiveAt: taxConfiguration.effectiveAt,
+        verifiedAt: taxConfiguration.verifiedAt
+      }
+    } });
   } catch (error) {
     next(error);
   }

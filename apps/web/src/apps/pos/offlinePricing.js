@@ -126,12 +126,23 @@ function sanitizeConfig(config = {}) {
       taxRateBps: Number(config.taxConfiguration.taxRateBps),
       taxInclusive: Boolean(config.taxConfiguration.taxInclusive),
       enabled: config.taxConfiguration.enabled === true,
+      countryCode: string(config.taxConfiguration.countryCode, 8),
+      stateCode: string(config.taxConfiguration.stateCode, 40),
+      county: string(config.taxConfiguration.county, 120),
+      municipality: string(config.taxConfiguration.municipality, 120),
       jurisdictionCode: string(config.taxConfiguration.jurisdictionCode, 160),
       jurisdictionMetadata: config.taxConfiguration.jurisdictionMetadata || {},
+      specialDistricts: Array.isArray(config.taxConfiguration.specialDistricts) ? config.taxConfiguration.specialDistricts : [],
+      taxComponents: Array.isArray(config.taxConfiguration.taxComponents) ? config.taxConfiguration.taxComponents : [],
+      exemption: config.taxConfiguration.exemption || null,
       sourceMetadata: config.taxConfiguration.sourceMetadata || {},
       effectiveAt: iso(config.taxConfiguration.effectiveAt),
+      expiresAt: config.taxConfiguration.expiresAt ? iso(config.taxConfiguration.expiresAt) : null,
       verifiedAt: iso(config.taxConfiguration.verifiedAt),
+      nextVerificationAt: config.taxConfiguration.nextVerificationAt ? iso(config.taxConfiguration.nextVerificationAt) : null,
       configurationVersion: string(config.taxConfiguration.configurationVersion, 300),
+      acknowledgementVersion: string(config.taxConfiguration.acknowledgementVersion, 300),
+      acknowledgedAt: config.taxConfiguration.acknowledgedAt ? iso(config.taxConfiguration.acknowledgedAt) : null,
       updatedAt: iso(config.taxConfiguration.updatedAt)
     } : null,
     configurationVersion: string(config.configurationVersion, 500),
@@ -158,10 +169,15 @@ export function buildPosOfflineInitialization({ config, menu, registerKey }) {
     || !safeConfig.taxConfiguration.configurationVersion
     || !safeConfig.taxConfiguration.jurisdictionCode
     || !safeConfig.taxConfiguration.source
-    || safeConfig.taxConfiguration.taxInclusive
+    || safeConfig.taxConfiguration.acknowledgementVersion !== safeConfig.taxConfiguration.configurationVersion
+    || !safeConfig.taxConfiguration.acknowledgedAt
   ) {
     throw new Error("Offline sales require a verified location tax profile.");
   }
+  const taxExpiresAt = safeConfig.taxConfiguration.expiresAt ? new Date(safeConfig.taxConfiguration.expiresAt).getTime() : null;
+  if (taxExpiresAt && taxExpiresAt <= Date.now()) throw new Error("Offline tax configuration has expired.");
+  const taxVerificationDueAt = safeConfig.taxConfiguration.nextVerificationAt ? new Date(safeConfig.taxConfiguration.nextVerificationAt).getTime() : null;
+  if (taxVerificationDueAt && taxVerificationDueAt <= Date.now()) throw new Error("Offline tax configuration must be refreshed.");
   if (!safeConfig.configurationVersion || !menu?.menuVersion || !safeConfig.offlineConfigurationProof) {
     throw new Error("Offline configuration proof is incomplete.");
   }
@@ -207,9 +223,13 @@ export function posOfflineInitializationUsable(initialization, now = Date.now())
     && initialization.config?.taxConfiguration?.enabled
     && initialization.config.taxConfiguration.locationId === initialization.locationId
     && initialization.config.taxConfiguration.configurationVersion
+    && initialization.config.taxConfiguration.acknowledgementVersion === initialization.config.taxConfiguration.configurationVersion
+    && initialization.config.taxConfiguration.acknowledgedAt
     && initialization.config.taxConfiguration.jurisdictionCode
     && initialization.config.taxConfiguration.source
-    && initialization.config.taxConfiguration.taxInclusive === false
+    && typeof initialization.config.taxConfiguration.taxInclusive === "boolean"
+    && (!initialization.config.taxConfiguration.expiresAt || new Date(initialization.config.taxConfiguration.expiresAt).getTime() > now)
+    && (!initialization.config.taxConfiguration.nextVerificationAt || new Date(initialization.config.taxConfiguration.nextVerificationAt).getTime() > now)
     && initialization.config?.offlineConfigurationProof
     && Array.isArray(initialization.menu?.categories)
     && initialization.menu.categories.some((category) => (category.items || []).some((item) => item.available && item.offlinePricingProof))
@@ -265,6 +285,7 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
     discountCents: 0,
     deliveryFeeCents: delivery.deliveryFeeCents,
     taxRateBps: initialization.config.taxConfiguration.taxRateBps,
+    taxInclusive: initialization.config.taxConfiguration.taxInclusive,
     tipCents: 0
   });
   return {
@@ -280,9 +301,16 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
       source: initialization.config.taxConfiguration.source,
       locationId: initialization.config.taxConfiguration.locationId,
       jurisdictionCode: initialization.config.taxConfiguration.jurisdictionCode,
+      jurisdictionMetadata: initialization.config.taxConfiguration.jurisdictionMetadata,
+      specialDistricts: initialization.config.taxConfiguration.specialDistricts,
+      taxComponents: initialization.config.taxConfiguration.taxComponents,
+      exemption: initialization.config.taxConfiguration.exemption,
       profileVersion: initialization.config.taxConfiguration.configurationVersion,
+      acknowledgementVersion: initialization.config.taxConfiguration.acknowledgementVersion,
       effectiveAt: initialization.config.taxConfiguration.effectiveAt,
+      expiresAt: initialization.config.taxConfiguration.expiresAt,
       verifiedAt: initialization.config.taxConfiguration.verifiedAt,
+      taxInclusive: initialization.config.taxConfiguration.taxInclusive,
       taxRateBps: pricing.taxRateBps,
       taxableAmountCents: pricing.taxableAmountCents,
       taxCents: pricing.taxCents,

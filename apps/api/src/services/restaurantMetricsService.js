@@ -684,6 +684,8 @@ function normalizeLocation(location = {}, restaurant = {}) {
     state: settings.state || restaurant.state || "",
     zip: settings.zip || restaurant.zip || "",
     country: settings.country || "US",
+    latitude: settings.latitude ?? restaurant.latitude ?? null,
+    longitude: settings.longitude ?? restaurant.longitude ?? null,
     primary: settings.primary !== false,
     statusLabel: location.active ? "Active" : "Inactive"
   };
@@ -739,22 +741,55 @@ export async function updateRestaurantLocation({ restaurantId, locationId, data 
   }
   const settings = {
     ...locationSettings(existing),
-    address2: safeString(data.address2),
-    city: safeString(data.city),
-    state: safeString(data.state),
-    zip: safeString(data.zip),
-    country: safeString(data.country || "US"),
+    address2: safeString(data.address2 ?? locationSettings(existing).address2),
+    city: safeString(data.city ?? locationSettings(existing).city),
+    state: safeString(data.state ?? locationSettings(existing).state),
+    zip: safeString(data.zip ?? locationSettings(existing).zip),
+    country: safeString(data.country ?? locationSettings(existing).country ?? "US"),
+    latitude: data.latitude === undefined ? locationSettings(existing).latitude ?? null : Number(data.latitude),
+    longitude: data.longitude === undefined ? locationSettings(existing).longitude ?? null : Number(data.longitude),
     primary: data.primary !== false
   };
+  const existingSettings = locationSettings(existing);
+  const addressChanged = JSON.stringify([
+    safeString(existing.address),
+    safeString(existingSettings.address2),
+    safeString(existingSettings.city),
+    safeString(existingSettings.state),
+    safeString(existingSettings.zip),
+    safeString(existingSettings.country || "US")
+  ]) !== JSON.stringify([
+    safeString(data.address ?? existing.address),
+    settings.address2,
+    settings.city,
+    settings.state,
+    settings.zip,
+    settings.country
+  ]);
   const updateData = {
     name: safeString(data.name || existing.name),
-    address: safeString(data.address),
-    phone: safeString(data.phone),
+    address: safeString(data.address ?? existing.address),
+    phone: safeString(data.phone ?? existing.phone),
     timezone: safeString(data.timezone || existing.timezone || "America/Denver"),
     active: data.active !== false,
-    settingsJson: settings
+    settingsJson: settings,
+    ...(addressChanged ? {
+      normalizedAddressJson: null,
+      addressValidationStatus: "UNVERIFIED",
+      addressVerifiedAt: null,
+      taxStatus: "REFRESH_REQUIRED",
+      taxStatusCode: "TAX_LOCATION_ADDRESS_CHANGED",
+      taxStatusMessage: "Verify the new physical address before checkout.",
+      taxLastAttemptAt: new Date()
+    } : {})
   };
-  const [location, restaurant] = await prisma.$transaction([
+  const invalidatedTaxProfiles = addressChanged
+    ? await prisma.locationTaxProfile.findMany({
+      where: { restaurantId, locationId, status: { in: ["ACTIVE", "REVIEW_REQUIRED"] } },
+      select: { id: true, configurationVersion: true, provider: true, source: true, status: true }
+    })
+    : [];
+  const operations = [
     prisma.restaurantLocation.update({ where: { id: existing.id }, data: updateData }),
     settings.primary
       ? prisma.restaurant.update({
@@ -769,7 +804,14 @@ export async function updateRestaurantLocation({ restaurantId, locationId, data 
           }
         })
       : prisma.restaurant.findUnique({ where: { id: restaurantId } })
-  ]);
+  ];
+  if (addressChanged) {
+    operations.push(prisma.locationTaxProfile.updateMany({
+      where: { restaurantId, locationId, status: { in: ["ACTIVE", "REVIEW_REQUIRED"] } },
+      data: { status: "REFRESH_REQUIRED", enabled: false, disabledAt: new Date() }
+    }));
+  }
+  const [location, restaurant] = await prisma.$transaction(operations);
   if (actorUserId) {
     await recordAudit({
       actorUserId,
@@ -777,8 +819,35 @@ export async function updateRestaurantLocation({ restaurantId, locationId, data 
       action: "restaurant.location.updated",
       entityType: "RestaurantLocation",
       entityId: location.id,
-      metadata: { primary: settings.primary, active: updateData.active }
+      metadata: { primary: settings.primary, active: updateData.active, addressChanged }
     });
+    if (addressChanged) {
+      await recordAudit({
+        actorUserId,
+        restaurantId,
+        action: "tax.profile.address_changed",
+        entityType: "RestaurantLocation",
+        entityId: location.id,
+        metadata: { locationId: location.id, taxStatus: "REFRESH_REQUIRED" }
+      });
+      for (const profile of invalidatedTaxProfiles) {
+        await recordAudit({
+          actorUserId,
+          restaurantId,
+          action: "tax.profile.disabled",
+          entityType: "LocationTaxProfile",
+          entityId: profile.id,
+          metadata: {
+            locationId: location.id,
+            oldVersion: profile.configurationVersion,
+            provider: profile.provider,
+            source: profile.source,
+            previousStatus: profile.status,
+            reason: "location_address_changed"
+          }
+        });
+      }
+    }
   }
   return {
     location: normalizeLocation(location, restaurant),

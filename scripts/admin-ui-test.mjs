@@ -27,7 +27,7 @@ const platformNavigation = sliceBetween(app, "function platformNavigation(", "\n
 const restaurantOperationsNavigation = sliceBetween(app, "function restaurantOperationsNavigation(", "\nfunction dashboardPathFor");
 const adminRoute = sliceBetween(app, "if (isAdminRoute)", "\n  if (isRestaurantRoute || isSiteAdminRoute)");
 const restaurantRoute = sliceBetween(app, "if (isRestaurantRoute || isSiteAdminRoute)", "\n  if (isSiteRoute)");
-const adminApp = sliceBetween(app, "function AdminApp(", "\nfunction RestaurantApp");
+const adminApp = sliceBetween(app, "function AdminApp(", "\nfunction TrialCountdownPanel");
 const tenantSiteHeader = sliceBetween(app, '<header className="site-header premium">', "\n      </header>");
 
 assertCheck(packageJson.scripts?.["test:admin-ui"] === "node scripts/admin-ui-test.mjs", "Admin UI test script is registered");

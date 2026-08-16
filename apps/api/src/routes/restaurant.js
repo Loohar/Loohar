@@ -35,6 +35,7 @@ import {
   updateRestaurantLocation
 } from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
+import { isActiveTaxProfile } from "../services/taxDomain.js";
 
 const router = Router();
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -484,6 +485,7 @@ const onboardingSteps = [
   "content",
   "hours",
   "fulfillment",
+  "tax",
   "menu",
   "gallery",
   "domain",
@@ -634,6 +636,10 @@ function onboardingReadiness(restaurant) {
   const hasDeliveryCoverage = !restaurant.deliveryEnabled || activeZones.length > 0 || Number(restaurant.deliveryRadiusMiles || 0) > 0 || Boolean(restaurant.deliveryZoneJson);
   const payment = asObject(settings.paymentSetup || settings.payments);
   const paymentReady = Boolean(payment.stripeConnectAccountId || payment.providerAccountId || payment.status === "CONNECTED" || payment.connected === true);
+  const activeLocations = (restaurant.locations || []).filter((location) => location.active !== false);
+  const taxReady = activeLocations.length > 0 && activeLocations.every((location) =>
+    (location.taxProfiles || []).some((profile) => isActiveTaxProfile(profile))
+  );
 
   const sections = {
     business: hasText(restaurant.name) && hasText(restaurant.slug) && hasText(restaurant.phone) && hasText(restaurant.email) && hasText(restaurant.address) && hasText(restaurant.city) && hasText(restaurant.state) && hasText(restaurant.zip) && hasText(restaurant.timezone),
@@ -642,6 +648,7 @@ function onboardingReadiness(restaurant) {
     content: hasText(website.heroTitle) && hasText(website.heroSubtitle) && hasText(website.aboutStory) && activeSectionCount(website.sectionSettingsJson) > 0,
     hours: hasUsableHours(hours),
     fulfillment: (restaurant.pickupEnabled || restaurant.deliveryEnabled) && hasDeliveryCoverage,
+    tax: taxReady,
     menu: activeCategories.length > 0 && availableItems.length > 0,
     gallery: (restaurant.galleryImages || []).length > 0,
     domain: hasText(domain.defaultSubdomain || restaurant.slug),
@@ -656,6 +663,7 @@ function onboardingReadiness(restaurant) {
   if (!sections.content) blockers.push({ step: "content", message: "Add hero copy, about story, and at least one visible website section." });
   if (!sections.hours) blockers.push({ step: "hours", message: "Add operating hours for at least one open day." });
   if (!sections.fulfillment) warnings.push({ step: "fulfillment", message: "Online ordering stays disabled until pickup or delivery is configured. Delivery requires a zone, radius, or map coverage." });
+  if (!sections.tax) warnings.push({ step: "tax", message: "Financial checkout stays unavailable until every active location has an acknowledged, active tax profile." });
   if (!sections.menu) warnings.push({ step: "menu", message: "Online ordering stays disabled until at least one active menu category and one available menu item exist." });
   if (!sections.gallery) warnings.push({ step: "gallery", message: "Add gallery photos to make the public website feel complete." });
   if (domain.customDomain && !["VERIFIED", "SSL_PENDING", "ACTIVE"].includes(domain.domainStatus)) warnings.push({ step: "domain", message: "Custom domain is not verified yet. The Loohar subdomain can still be used." });
@@ -669,7 +677,9 @@ function onboardingReadiness(restaurant) {
     blockers,
     warnings,
     websiteReady,
-    orderingReady: websiteReady && sections.fulfillment && sections.menu && paymentReady,
+    orderingReady: websiteReady && sections.fulfillment && sections.menu && sections.tax && paymentReady,
+    taxReady,
+    taxStatus: taxReady ? "ACTIVE" : activeLocations[0]?.taxStatus || "UNCONFIGURED",
     paymentReady,
     paymentStatus: paymentReady ? "CONNECTED" : "NOT_CONNECTED",
     completionPercentage: Math.round((completedCount / Object.keys(sections).length) * 100),
@@ -678,7 +688,9 @@ function onboardingReadiness(restaurant) {
       availableItems: availableItems.length,
       galleryImages: (restaurant.galleryImages || []).length,
       socialLinks: (restaurant.socialLinks || []).length,
-      activeDeliveryZones: activeZones.length
+      activeDeliveryZones: activeZones.length,
+      activeLocations: activeLocations.length,
+      taxReadyLocations: activeLocations.filter((location) => (location.taxProfiles || []).some((profile) => isActiveTaxProfile(profile))).length
     }
   };
 }
@@ -694,6 +706,7 @@ async function ensureOnboardingRestaurant(req) {
       socialLinks: true,
       categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
       deliveryZones: { orderBy: { createdAt: "asc" } },
+      locations: { where: { active: true }, include: { taxProfiles: { orderBy: { effectiveAt: "desc" } } } },
       users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
     }
   });
@@ -708,6 +721,7 @@ async function ensureOnboardingRestaurant(req) {
       socialLinks: true,
       categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
       deliveryZones: { orderBy: { createdAt: "asc" } },
+      locations: { where: { active: true }, include: { taxProfiles: { orderBy: { effectiveAt: "desc" } } } },
       users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
     }
   });

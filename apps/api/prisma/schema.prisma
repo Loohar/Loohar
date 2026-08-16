@@ -368,6 +368,36 @@ enum OnboardingStatus {
   BLOCKED
 }
 
+enum TaxAddressValidationStatus {
+  UNVERIFIED
+  VALID
+  INVALID
+  PROVIDER_UNAVAILABLE
+}
+
+enum TaxProfileStatus {
+  UNCONFIGURED
+  ADDRESS_REQUIRED
+  VERIFYING
+  REVIEW_REQUIRED
+  ACTIVE
+  EXPIRED
+  REFRESH_REQUIRED
+  PROVIDER_ERROR
+  UNSUPPORTED_JURISDICTION
+  DISABLED
+  SUPERSEDED
+}
+
+enum TaxVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  FAILED
+  EXPIRED
+  REFRESH_REQUIRED
+}
+
 model User {
   id              String           @id @default(cuid())
   email           String           @unique
@@ -861,15 +891,22 @@ model LoyaltyReward {
 }
 
 model RestaurantLocation {
-  id           String     @id @default(cuid())
-  restaurantId String
-  name         String
-  address      String?
-  phone        String?
-  timezone     String     @default("America/Denver")
-  settingsJson Json?
-  active       Boolean    @default(true)
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
+  id                      String                     @id @default(cuid())
+  restaurantId            String
+  name                    String
+  address                 String?
+  phone                   String?
+  timezone                String                     @default("America/Denver")
+  settingsJson            Json?
+  normalizedAddressJson   Json?
+  addressValidationStatus TaxAddressValidationStatus @default(UNVERIFIED)
+  addressVerifiedAt       DateTime?
+  taxStatus               TaxProfileStatus           @default(UNCONFIGURED)
+  taxStatusCode           String?
+  taxStatusMessage        String?
+  taxLastAttemptAt        DateTime?
+  active                  Boolean                    @default(true)
+  restaurant              Restaurant                 @relation(fields: [restaurantId], references: [id])
   posDevices   PosDevice[]
   posRegisters PosRegister[]
   cashDrawers  CashDrawer[]
@@ -1419,7 +1456,11 @@ model OrderTaxSnapshot {
   id                 String   @id @default(cuid())
   orderId            String   @unique
   restaurantId       String
+  locationId         String?
+  taxProfileId       String?
+  configurationVersion String?
   provider           String   @default("manual")
+  source             String?
   taxableAmountCents Int
   taxRateBps         Int
   taxCents           Int
@@ -1484,27 +1525,46 @@ model TaxConfiguration {
 }
 
 model LocationTaxProfile {
-  id                   String             @id @default(cuid())
-  restaurantId         String
-  locationId           String
-  provider             String
-  source               String
-  taxRateBps            Int
-  taxInclusive          Boolean            @default(false)
-  enabled               Boolean            @default(true)
-  jurisdictionCode     String
-  jurisdictionJson     Json
-  sourceMetadataJson   Json
-  effectiveAt          DateTime
-  verifiedAt           DateTime
-  configurationVersion String
-  restaurant           Restaurant         @relation(fields: [restaurantId], references: [id])
-  location             RestaurantLocation @relation(fields: [locationId], references: [id])
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  id                       String                @id @default(cuid())
+  restaurantId             String
+  locationId               String
+  status                   TaxProfileStatus      @default(REVIEW_REQUIRED)
+  verificationStatus       TaxVerificationStatus @default(UNVERIFIED)
+  provider                 String
+  source                   String
+  taxRateBps               Int
+  taxInclusive             Boolean               @default(false)
+  enabled                  Boolean               @default(false)
+  countryCode              String?
+  stateCode                String?
+  county                   String?
+  municipality             String?
+  jurisdictionCode         String
+  jurisdictionJson         Json
+  specialDistrictsJson     Json?
+  taxComponentsJson        Json?
+  exemptionJson            Json?
+  sourceMetadataJson       Json
+  effectiveAt              DateTime
+  expiresAt                DateTime?
+  verifiedAt               DateTime
+  lastVerifiedAt           DateTime?
+  nextVerificationAt       DateTime?
+  configurationVersion     String
+  acknowledgementVersion   String?
+  acknowledgedByUserId     String?
+  acknowledgedAt           DateTime?
+  activatedAt              DateTime?
+  supersededAt             DateTime?
+  disabledAt               DateTime?
+  restaurant               Restaurant            @relation(fields: [restaurantId], references: [id])
+  location                 RestaurantLocation     @relation(fields: [locationId], references: [id])
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
 
   @@unique([restaurantId, locationId, configurationVersion])
-  @@index([restaurantId, locationId, enabled, effectiveAt])
+  @@index([restaurantId, locationId, status, enabled, effectiveAt])
+  @@index([status, nextVerificationAt])
 }
 
 model PosDevice {
@@ -1703,6 +1763,9 @@ model OrderQuote {
   locationId   String?
   deviceId     String?
   sessionId    String?
+  taxProfileId String?
+  taxConfigurationVersion String?
+  taxSnapshotJson Json?
   createdByUserId String
   orderType    OrderType  @default(WALK_IN)
   lineItemsJson Json
