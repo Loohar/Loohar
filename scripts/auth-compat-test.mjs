@@ -39,7 +39,7 @@ includes("apps/web/src/App.jsx", "window.addEventListener(\"loohar:navigate\"", 
 excludes("apps/web/src/App.jsx", "window.location.assign(returnToForUser", "Login success does not force a full page reload");
 includes("apps/web/src/App.jsx", "name=\"password\"", "Primary login password field uses standard name");
 includes("apps/web/src/apps/driver/components/DriverLogin.jsx", "name=\"password\"", "Driver login password field uses standard name");
-includes("apps/web/public/sw.js", "driver-pwa-shell-v4", "Service worker cache version bumped");
+includes("apps/web/public/sw.js", "loohar-pwa-shell-v5", "Service worker cache version bumped");
 includes("apps/web/public/sw.js", "NETWORK_ONLY_PATHS", "Service worker excludes auth/API paths");
 includes("apps/api/src/config/urls.js", "https://api.loohar.com", "Backend API URL default uses api.loohar.com");
 includes("render.yaml", "https://api.loohar.com", "Render blueprint uses api.loohar.com");
