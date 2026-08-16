@@ -1,21 +1,29 @@
 import { prisma } from "../config/prisma.js";
 import { recordAudit } from "./auditService.js";
 import {
+  TAX_CATEGORY_STATUS,
   TAX_PROFILE_STATUS,
   TAX_VERIFICATION_STATUS,
   TaxServiceError,
   isActiveTaxProfile,
   normalizeBusinessAddress,
+  taxCategoryActivationError,
   taxProfileReadiness,
   taxProviderFor,
+  taxProviderOperationalStatus,
   validateBusinessAddress
 } from "./taxDomain.js";
 
 function errorStatus(code) {
-  if (code === "TAX_ADDRESS_REQUIRED") return TAX_PROFILE_STATUS.ADDRESS_REQUIRED;
+  if (["TAX_ADDRESS_REQUIRED", "TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)) return TAX_PROFILE_STATUS.ADDRESS_REQUIRED;
   if (code === "TAX_UNSUPPORTED_JURISDICTION") return TAX_PROFILE_STATUS.UNSUPPORTED_JURISDICTION;
-  if (code === "TAX_PROVIDER_NOT_CONFIGURED") return TAX_PROFILE_STATUS.PROVIDER_ERROR;
+  if (["TAX_PROVIDER_NOT_CONFIGURED", "TAX_PROVIDER_UNAVAILABLE", "TAX_PROVIDER_AUTH_FAILED"].includes(code)) return TAX_PROFILE_STATUS.PROVIDER_ERROR;
+  if (["TAX_CATEGORY_RULE_REQUIRED", "TAX_UNSUPPORTED_SPECIAL_RATE", "TAX_MANUAL_REVIEW_REQUIRED", "TAX_RATE_NOT_EFFECTIVE"].includes(code)) return TAX_PROFILE_STATUS.REVIEW_REQUIRED;
   return TAX_PROFILE_STATUS.PROVIDER_ERROR;
+}
+
+function providerEvent(event, metadata = {}) {
+  console.info(JSON.stringify({ event, ...metadata }));
 }
 
 function date(value) {
@@ -47,6 +55,8 @@ function profileShape(profile) {
     taxComponents: profile.taxComponentsJson || [],
     exemption: profile.exemptionJson || null,
     sourceMetadata: profile.sourceMetadataJson,
+    categoryStatus: profile.sourceMetadataJson?.categoryStatus || null,
+    materialFingerprint: profile.sourceMetadataJson?.materialFingerprint || null,
     effectiveAt: profile.effectiveAt,
     expiresAt: profile.expiresAt,
     verifiedAt: profile.verifiedAt,
@@ -144,6 +154,45 @@ function autoProviderId(address) {
 }
 
 async function createCandidateProfile({ restaurantId, locationId, configuration, actorUserId }) {
+  const materialFingerprint = configuration.materialFingerprint || configuration.sourceMetadata?.materialFingerprint;
+  if (materialFingerprint) {
+    const recent = await prisma.locationTaxProfile.findMany({
+      where: {
+        restaurantId,
+        locationId,
+        provider: configuration.provider,
+        status: { in: [TAX_PROFILE_STATUS.ACTIVE, TAX_PROFILE_STATUS.REVIEW_REQUIRED] }
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      take: 10
+    });
+    const sameMaterial = recent.find((profile) => profile.sourceMetadataJson?.materialFingerprint === materialFingerprint);
+    if (sameMaterial) {
+      const profile = await prisma.locationTaxProfile.update({
+        where: { id: sameMaterial.id },
+        data: {
+          lastVerifiedAt: configuration.verifiedAt,
+          nextVerificationAt: configuration.nextVerificationAt
+        }
+      });
+      await audit({
+        actorUserId,
+        restaurantId,
+        action: "tax.profile.verification_refreshed",
+        entityId: profile.id,
+        metadata: {
+          locationId,
+          provider: profile.provider,
+          configurationVersion: profile.configurationVersion,
+          materialFingerprint,
+          providerResponseFingerprint: configuration.sourceMetadata?.providerResponseFingerprint || null,
+          sourceReference: configuration.sourceMetadata?.sourceReference || null,
+          verifiedAt: configuration.verifiedAt?.toISOString?.() || null
+        }
+      });
+      return { profile, created: false, verificationRefreshed: true };
+    }
+  }
   const existing = await prisma.locationTaxProfile.findUnique({
     where: {
       restaurantId_locationId_configurationVersion: {
@@ -215,13 +264,15 @@ async function createCandidateProfile({ restaurantId, locationId, configuration,
   return { profile, created: true };
 }
 
-async function setCandidateLocationState({ location, profile }) {
+async function setCandidateLocationState({ location, profile, normalizedAddress }) {
   if (isActiveTaxProfile(profile)) {
     await updateLocationTaxState({
       location,
       status: TAX_PROFILE_STATUS.ACTIVE,
       code: "TAX_PROFILE_ACTIVE",
-      message: null
+      message: null,
+      normalizedAddress,
+      addressValidationStatus: normalizedAddress ? "VALID" : undefined
     });
     return;
   }
@@ -235,7 +286,9 @@ async function setCandidateLocationState({ location, profile }) {
     location,
     status: TAX_PROFILE_STATUS.REVIEW_REQUIRED,
     code: "TAX_PROFILE_REVIEW_REQUIRED",
-    message: "Review and acknowledge the verified tax profile before activation."
+    message: "Review and acknowledge the verified tax profile before activation.",
+    normalizedAddress,
+    addressValidationStatus: normalizedAddress ? "VALID" : undefined
   });
 }
 
@@ -262,8 +315,7 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
     status: TAX_PROFILE_STATUS.VERIFYING,
     code: null,
     message: null,
-    normalizedAddress: validation.address,
-    addressValidationStatus: "VALID"
+    normalizedAddress: validation.address
   });
   try {
     const resolvedProviderId = providerId || autoProviderId(validation.address);
@@ -282,7 +334,8 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
       effectiveAt: new Date()
     });
     const { profile } = await createCandidateProfile({ restaurantId, locationId, configuration, actorUserId });
-    await setCandidateLocationState({ location, profile });
+    const verifiedAddress = configuration.jurisdictionMetadata?.verifiedAddress || validation.address;
+    await setCandidateLocationState({ location, profile, normalizedAddress: verifiedAddress });
     await audit({
       actorUserId,
       restaurantId,
@@ -290,11 +343,22 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
       entityId: profile.id,
       metadata: { locationId, provider: profile.provider, configurationVersion: profile.configurationVersion }
     });
+    providerEvent("tax.provider.success", {
+      restaurantId,
+      locationId,
+      provider: profile.provider,
+      configurationVersion: profile.configurationVersion
+    });
     return profileShape(profile);
   } catch (error) {
     const code = error.code || "TAX_PROVIDER_ERROR";
     const status = errorStatus(code);
-    await updateLocationTaxState({ location, status, code, message: error.message });
+    const addressValidationStatus = ["TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)
+      ? "INVALID"
+      : ["TAX_PROVIDER_NOT_CONFIGURED", "TAX_PROVIDER_UNAVAILABLE", "TAX_PROVIDER_AUTH_FAILED"].includes(code)
+        ? "PROVIDER_UNAVAILABLE"
+        : undefined;
+    await updateLocationTaxState({ location, status, code, message: error.message, addressValidationStatus });
     await audit({
       actorUserId,
       restaurantId,
@@ -302,6 +366,12 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
       entityId: location.id,
       metadata: { locationId, providerId: providerId || "AUTO", status, code }
     }).catch(() => {});
+    providerEvent("tax.provider.failure", {
+      restaurantId,
+      locationId,
+      provider: providerId || "AUTO",
+      code
+    });
     throw error;
   }
 }
@@ -372,7 +442,7 @@ function activationValidation(profile, now = new Date()) {
     throw new TaxServiceError("Tax profile verification metadata is incomplete.", { status: 409, code: "TAX_PROFILE_INVALID" });
   }
   if (profile.effectiveAt > now) {
-    throw new TaxServiceError("Tax profile is not effective yet.", { status: 409, code: "TAX_PROFILE_NOT_EFFECTIVE" });
+    throw new TaxServiceError("Tax profile is not effective yet.", { status: 409, code: "TAX_RATE_NOT_EFFECTIVE" });
   }
   if (profile.verifiedAt > now) {
     throw new TaxServiceError("Tax profile verification is not valid yet.", { status: 409, code: "TAX_PROFILE_NOT_VERIFIED" });
@@ -382,6 +452,14 @@ function activationValidation(profile, now = new Date()) {
   }
   if (profile.nextVerificationAt && profile.nextVerificationAt <= now) {
     throw new TaxServiceError("Tax profile verification must be refreshed.", { status: 409, code: "TAX_PROFILE_REFRESH_REQUIRED" });
+  }
+  const categoryError = taxCategoryActivationError(profile);
+  if (categoryError) {
+    throw new TaxServiceError("This Colorado result requires category-specific tax review before activation.", {
+      status: 409,
+      code: categoryError,
+      details: { categoryStatus: profile.sourceMetadataJson?.categoryStatus || TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED }
+    });
   }
 }
 
@@ -618,6 +696,7 @@ export async function getTaxWorkspace({ restaurantId }) {
       activeLocations: activeLocations.length,
       readyLocations: activeLocations.filter((location) => location.status === TAX_PROFILE_STATUS.ACTIVE).length
     },
+    providers: [taxProviderOperationalStatus("COLORADO")],
     locations: workspaceLocations
   };
 }

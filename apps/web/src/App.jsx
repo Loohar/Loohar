@@ -6495,13 +6495,13 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                   <h3 className="font-black text-ink">Location tax readiness</h3>
                   <p className="mt-2 max-w-2xl text-sm text-slate-500">Loohar verifies tax from each location's complete physical address. The restaurant account can continue setup while tax is incomplete, but checkout stays unavailable.</p>
                 </div>
-                <StatusPill tone={readiness.taxReady ? "good" : "warn"}>{readiness.taxReady ? "Active" : readable(readiness.taxStatus || "UNCONFIGURED")}</StatusPill>
+                <StatusPill tone={readiness.taxReady ? "good" : "warn"}>{readiness.taxReady ? "Active" : "Tax Setup Required"}</StatusPill>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="summary-line"><span>Active locations</span><strong>{integer(readiness.counts?.activeLocations || 0)}</strong></div>
                 <div className="summary-line"><span>Tax-ready locations</span><strong>{integer(readiness.counts?.taxReadyLocations || 0)}</strong></div>
               </div>
-              <a className="button-primary w-fit" href={restaurantSettingPath(dashboardHref, "taxes")}><Shield size={16} />Review tax configuration</a>
+              <a className="button-primary w-fit" href={restaurantSettingPath(dashboardHref, "taxes")}><Shield size={16} />Verify location tax</a>
             </div>
           ) : null}
 
@@ -10911,7 +10911,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
         body: {}
       });
       await reloadTaxWorkspace();
-      showToast("Verified tax profile is ready for review.");
+      showToast("Verified tax candidate is ready for review.");
     } catch (taxError) {
       setError(taxError.message);
       showToast(taxError.message, "bad");
@@ -12934,6 +12934,16 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
               {taxWorkspace.ready ? "POS tax ready" : "Checkout blocked"}
             </StatusPill>
           </div>
+          {(taxWorkspace.providers || []).length ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4 text-sm">
+              {(taxWorkspace.providers || []).map((provider) => (
+                <div className="flex items-center gap-2" key={provider.id}>
+                  <strong className="text-ink">{provider.label}</strong>
+                  <StatusPill tone={provider.status === "CONFIGURED" ? "good" : provider.status === "NOT_CONFIGURED" ? "neutral" : "warn"}>{readable(provider.status)}</StatusPill>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="mt-5 divide-y divide-line border-y border-line">
             {(taxWorkspace.locations || []).length === 0 ? (
               <EmptyState title="No tax locations loaded" detail="Add an active restaurant location with a complete physical address, then refresh this page." />
@@ -12942,6 +12952,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
               const reviewTaxProfile = location.reviewProfile;
               const displayedTaxProfile = activeTaxProfile || reviewTaxProfile;
               const address = location.address || {};
+              const categoryBlocksActivation = ["CATEGORY_RULE_REQUIRED", "UNSUPPORTED_SPECIAL_RATE", "MANUAL_REVIEW_REQUIRED"].includes(reviewTaxProfile?.categoryStatus);
               return (
                 <section className="py-5 first:pt-0 last:pb-0" key={location.id}>
                   <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
@@ -12956,34 +12967,40 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {canManageTaxes && activeTaxProfile ? <button className="button-muted" type="button" onClick={() => refreshTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />{savingTaxAction === `refresh:${location.id}` ? "Refreshing..." : "Refresh verification"}</button> : null}
-                      {canManageTaxes && !activeTaxProfile && !reviewTaxProfile ? <button className="button-primary" type="button" onClick={() => resolveTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><Shield size={16} />{savingTaxAction === `resolve:${location.id}` ? "Verifying..." : "Verify jurisdiction"}</button> : null}
+                      {canManageTaxes && !activeTaxProfile && !reviewTaxProfile ? <button className="button-primary" type="button" onClick={() => resolveTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><Shield size={16} />{savingTaxAction === `resolve:${location.id}` ? "Resolving..." : "Verify address & resolve tax"}</button> : null}
                       {!canManageTaxes ? <StatusPill tone="neutral">Read only</StatusPill> : null}
                     </div>
                   </div>
 
                   {displayedTaxProfile ? (
                     <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-                      <div><span className="block font-semibold text-slate-500">Jurisdiction</span><strong className="text-ink">{[displayedTaxProfile.municipality, displayedTaxProfile.county, displayedTaxProfile.stateCode].filter(Boolean).join(", ") || displayedTaxProfile.jurisdictionCode}</strong></div>
-                      <div><span className="block font-semibold text-slate-500">Applicable rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps)}</strong></div>
+                      <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Verified address</span><strong className="text-ink">{displayedTaxProfile.jurisdictionMetadata?.verifiedAddress?.normalizedAddress || address.normalizedAddress}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Provider</span><strong className="text-ink">{readable(displayedTaxProfile.provider)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Source</span><strong className="break-words text-ink">{displayedTaxProfile.sourceMetadata?.sourceReference || readable(displayedTaxProfile.source)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">State</span><strong className="text-ink">{displayedTaxProfile.stateCode || "Not supplied"}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">County</span><strong className="text-ink">{displayedTaxProfile.county || "Not supplied"}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Municipality</span><strong className="text-ink">{displayedTaxProfile.municipality || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Special districts</span><strong className="text-ink">{(displayedTaxProfile.specialDistricts || []).map((district) => district.name).filter(Boolean).join(", ") || "None listed"}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Current rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Category safety</span><strong className="text-ink">{readable(displayedTaxProfile.categoryStatus || "MANUAL_VERIFIED")}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Version</span><strong className="break-all text-ink">{displayedTaxProfile.configurationVersion}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Effective</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.effectiveAt)}</strong></div>
-                      <div><span className="block font-semibold text-slate-500">Verified</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.verifiedAt)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Last verified</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.lastVerifiedAt || displayedTaxProfile.verifiedAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Acknowledged</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.acknowledgedAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Next verification</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.nextVerificationAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Pricing</span><strong className="text-ink">{displayedTaxProfile.taxInclusive ? "Tax inclusive" : "Tax added at checkout"}</strong></div>
+                      <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Components</span><strong className="text-ink">{(displayedTaxProfile.taxComponents || []).map((component) => `${component.name} ${taxRateLabel(component.rateBps)}`).join(" + ") || (displayedTaxProfile.taxRateBps === 0 ? "Verified zero rate" : "No component breakdown supplied")}</strong></div>
                     </div>
                   ) : null}
 
                   {reviewTaxProfile && canManageTaxes ? (
                     <div className="mt-5 border-t border-line pt-4">
+                      {categoryBlocksActivation ? <p className="mb-3 text-sm font-bold text-rose-600">This provider result requires category-specific review and cannot be activated as a general restaurant rate.</p> : null}
                       <label className="flex items-start gap-3 text-sm font-semibold text-slate-700">
-                        <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
+                        <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} disabled={categoryBlocksActivation} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
                         <span>I confirm that this verified business location and tax information are correct for this location.</span>
                       </label>
-                      <button className="button-primary mt-4" type="button" onClick={() => acknowledgeTaxProfile(location, reviewTaxProfile)} disabled={!taxAcknowledgements[reviewTaxProfile.id] || Boolean(savingTaxAction)}><CheckCircle2 size={16} />{savingTaxAction === `acknowledge:${reviewTaxProfile.id}` ? "Activating..." : "Confirm & activate tax profile"}</button>
+                      <button className="button-primary mt-4" type="button" onClick={() => acknowledgeTaxProfile(location, reviewTaxProfile)} disabled={categoryBlocksActivation || !taxAcknowledgements[reviewTaxProfile.id] || Boolean(savingTaxAction)}><CheckCircle2 size={16} />{categoryBlocksActivation ? "Category review required" : savingTaxAction === `acknowledge:${reviewTaxProfile.id}` ? "Activating..." : "Confirm & activate tax profile"}</button>
                     </div>
                   ) : null}
 
