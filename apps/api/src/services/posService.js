@@ -106,6 +106,7 @@ const POS_CUSTOMER_FIELDS = new Set([
 ]);
 const POS_DEVICE_TOUCH_INTERVAL_MS = 60 * 1000;
 const POS_OFFLINE_CONFIGURATION_TTL_MS = 72 * 60 * 60 * 1000;
+const POS_TAX_CONFIGURATION_REQUIRED_MESSAGE = "Tax configuration is required before this location can process sales.";
 
 async function recordPosTiming(timings, name, operation) {
   const startedAt = performance.now();
@@ -721,6 +722,58 @@ function posOfflineConfigurationVersion(snapshot) {
   return `offline-v1:${crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")}`;
 }
 
+function normalizedLocationTaxConfiguration(profile) {
+  if (
+    !profile
+    || !Number.isSafeInteger(profile.taxRateBps)
+    || profile.taxRateBps < 0
+    || profile.taxRateBps > 100_000
+    || !String(profile.provider || "").trim()
+    || !String(profile.source || "").trim()
+    || !String(profile.jurisdictionCode || "").trim()
+    || !String(profile.configurationVersion || "").trim()
+  ) return null;
+  return {
+    id: profile.id,
+    locationId: profile.locationId,
+    provider: profile.provider,
+    source: profile.source,
+    taxRateBps: profile.taxRateBps,
+    taxInclusive: profile.taxInclusive,
+    enabled: profile.enabled,
+    jurisdictionCode: profile.jurisdictionCode,
+    jurisdictionMetadata: profile.jurisdictionJson,
+    sourceMetadata: profile.sourceMetadataJson,
+    effectiveAt: profile.effectiveAt.toISOString(),
+    verifiedAt: profile.verifiedAt.toISOString(),
+    configurationVersion: profile.configurationVersion,
+    updatedAt: profile.updatedAt
+  };
+}
+
+async function findValidLocationTaxConfiguration({ restaurantId, locationId, asOf = new Date() }) {
+  if (!locationId) return null;
+  const profile = await prisma.locationTaxProfile.findFirst({
+    where: {
+      restaurantId,
+      locationId,
+      enabled: true,
+      taxInclusive: false,
+      effectiveAt: { lte: asOf },
+      verifiedAt: { lte: asOf }
+    },
+    orderBy: [{ effectiveAt: "desc" }, { verifiedAt: "desc" }, { updatedAt: "desc" }]
+  });
+  return normalizedLocationTaxConfiguration(profile);
+}
+
+function requireLocationTaxConfiguration(taxConfiguration) {
+  if (!taxConfiguration) {
+    throw httpError(POS_TAX_CONFIGURATION_REQUIRED_MESSAGE, 409, { code: "POS_TAX_CONFIGURATION_REQUIRED" });
+  }
+  return taxConfiguration;
+}
+
 function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, taxConfiguration }) {
   return {
     schemaVersion: POS_OFFLINE_SCHEMA_VERSION,
@@ -776,40 +829,15 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
     device = await activeInternalDevelopmentDevice(restaurant.id);
   }
   const profileAsOf = new Date();
-  const [shift, cashDrawers, registers, devices, taxProfile] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
+  const [shift, cashDrawers, registers, devices, taxConfiguration] = await recordPosTiming(timings, "config-register-state", () => Promise.all([
     currentShift({ restaurantId: restaurant.id, userId: user.id, deviceId: device?.id || null }),
     prisma.cashDrawer.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posRegister.findMany({ where: { restaurantId: restaurant.id, active: true }, orderBy: { createdAt: "asc" } }),
     prisma.posDevice.findMany({ where: { restaurantId: restaurant.id }, orderBy: { updatedAt: "desc" }, take: 25 }),
     device?.locationId
-      ? prisma.locationTaxProfile.findFirst({
-          where: {
-            restaurantId: restaurant.id,
-            locationId: device.locationId,
-            enabled: true,
-            effectiveAt: { lte: profileAsOf },
-            verifiedAt: { lte: profileAsOf }
-          },
-          orderBy: [{ effectiveAt: "desc" }, { verifiedAt: "desc" }, { updatedAt: "desc" }]
-        })
+      ? findValidLocationTaxConfiguration({ restaurantId: restaurant.id, locationId: device.locationId, asOf: profileAsOf })
       : Promise.resolve(null)
   ]));
-  const taxConfiguration = taxProfile ? {
-    id: taxProfile.id,
-    locationId: taxProfile.locationId,
-    provider: taxProfile.provider,
-    source: taxProfile.source,
-    taxRateBps: taxProfile.taxRateBps,
-    taxInclusive: taxProfile.taxInclusive,
-    enabled: taxProfile.enabled,
-    jurisdictionCode: taxProfile.jurisdictionCode,
-    jurisdictionMetadata: taxProfile.jurisdictionJson,
-    sourceMetadata: taxProfile.sourceMetadataJson,
-    effectiveAt: taxProfile.effectiveAt.toISOString(),
-    verifiedAt: taxProfile.verifiedAt.toISOString(),
-    configurationVersion: taxProfile.configurationVersion,
-    updatedAt: taxProfile.updatedAt
-  } : null;
   const offlineReady = Boolean(
     staff
     && device?.status === "ACTIVE"
@@ -996,15 +1024,6 @@ export async function posMenuAvailabilityDiagnostics(restaurantId, categories = 
   };
 }
 
-async function taxRateBps(restaurantId) {
-  const config = await prisma.taxConfiguration.findFirst({
-    where: { restaurantId, enabled: true },
-    orderBy: { updatedAt: "desc" },
-    select: { taxRateBps: true }
-  });
-  return config?.taxRateBps ?? 825;
-}
-
 async function resolvePosLocationId(restaurantId, requestedLocationId) {
   const locationId = String(requestedLocationId || "").trim();
   const location = await prisma.restaurantLocation.findFirst({
@@ -1030,7 +1049,8 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
   if (!rawItems.length) throw httpError("At least one menu item is required.", 400);
 
   const itemIds = [...new Set(rawItems.map((line) => String(line.menuItemId || "")).filter(Boolean))];
-  const [menuItems, orderConfiguration] = await Promise.all([
+  const locationId = await resolvePosLocationId(restaurantId, body?.locationId);
+  const [menuItems, orderConfiguration, taxConfiguration] = await Promise.all([
     prisma.menuItem.findMany({
       where: { restaurantId, id: { in: itemIds }, available: true },
       include: {
@@ -1041,8 +1061,10 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
         }
       }
     }),
-    loadPosOrderConfiguration(restaurantId)
+    loadPosOrderConfiguration(restaurantId),
+    findValidLocationTaxConfiguration({ restaurantId, locationId })
   ]);
+  requireLocationTaxConfiguration(taxConfiguration);
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
   const normalizedItems = rawItems.map((line) => {
@@ -1074,12 +1096,11 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     lineItems: normalizedItems,
     discountCents,
     deliveryFeeCents,
-    taxRateBps: await taxRateBps(restaurantId),
+    taxRateBps: taxConfiguration.taxRateBps,
     tipCents: 0
   });
   const { taxCents, tipCents, totalCents } = pricing;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  const locationId = await resolvePosLocationId(restaurantId, body?.locationId);
 
   const quote = await prisma.orderQuote.create({
     data: {

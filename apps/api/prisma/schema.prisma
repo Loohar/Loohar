@@ -1421,7 +1421,7 @@ model OrderTaxSnapshot {
   restaurantId       String
   provider           String   @default("manual")
   taxableAmountCents Int
-  taxRateBps         Int      @default(825)
+  taxRateBps         Int
   taxCents           Int
   jurisdictionJson   Json?
   createdAt          DateTime @default(now())
@@ -1472,7 +1472,7 @@ model TaxConfiguration {
   id             String     @id @default(cuid())
   restaurantId   String
   provider       String     @default("manual")
-  taxRateBps     Int        @default(825)
+  taxRateBps     Int
   taxInclusive   Boolean    @default(false)
   enabled        Boolean    @default(true)
   nexusJson      Json?

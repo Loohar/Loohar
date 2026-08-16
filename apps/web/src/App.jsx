@@ -13282,7 +13282,6 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [error, setError] = useState("");
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + (item.linePriceCents || item.priceCents) * item.quantity, 0), [cart]);
   const delivery = serviceType === "DELIVERY" ? restaurant.deliveryFeeCents || 0 : 0;
-  const tax = Math.round(subtotal * 0.0825);
   const tipOptions = ["0", "10", "15", "20", "25", "CUSTOM"];
   const tipFromChoice = (choice, customValue) => {
     if (choice === "CUSTOM") return Math.max(0, Math.round(Number(customValue || 0) * 100));
@@ -13292,11 +13291,11 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const driverTip = serviceType === "DELIVERY" ? tipFromChoice(driverTipChoice, customDriverTip) : 0;
   const tip = restaurantTip + driverTip;
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const orderTotal = quote?.totalCents ?? subtotal + delivery + tax + tip;
+  const orderTotal = quote?.totalCents ?? subtotal + delivery + tip;
   const displaySubtotal = quote?.subtotalCents ?? subtotal;
   const displayDiscount = quote?.discountCents || 0;
   const displayDelivery = quote?.deliveryFeeCents ?? delivery;
-  const displayTax = quote?.taxCents ?? tax;
+  const displayTax = quote?.taxCents ?? null;
   const displayRestaurantTip = quote?.restaurantTipCents ?? restaurantTip;
   const displayDriverTip = quote?.driverTipCents ?? driverTip;
   const displayServiceFee = quote?.serviceFeeCents || 0;
@@ -13696,14 +13695,14 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
             <div className="summary-line"><span>Subtotal</span><strong>{money(displaySubtotal)}</strong></div>
             {displayDiscount ? <div className="summary-line"><span>Discount</span><strong>-{money(displayDiscount)}</strong></div> : null}
             <div className="summary-line"><span>Delivery fee</span><strong>{money(displayDelivery)}</strong></div>
-            <div className="summary-line"><span>Estimated tax</span><strong>{money(displayTax)}</strong></div>
+            <div className="summary-line"><span>Estimated tax</span><strong>{displayTax == null ? "Configured at checkout" : money(displayTax)}</strong></div>
             {displayServiceFee ? <div className="summary-line"><span>Service fee</span><strong>{money(displayServiceFee)}</strong></div> : null}
             <div className="summary-line"><span>Restaurant tip</span><strong>{money(displayRestaurantTip)}</strong></div>
             {serviceType === "DELIVERY" ? <div className="summary-line"><span>Driver tip</span><strong>{money(displayDriverTip)}</strong></div> : null}
-            <div className="summary-line total"><span>Total</span><strong>{money(orderTotal)}</strong></div>
+            <div className="summary-line total"><span>{quote ? "Total" : "Pre-tax total"}</span><strong>{money(orderTotal)}</strong></div>
             {quote ? <p className="payment-fee-disclosure">{paymentFeeDisclosureText(quote)}</p> : null}
           </div>
-          <button className="button-primary mt-5 w-full justify-center" disabled={!orderingEnabled || cart.length === 0 || quoteLoading || Boolean(quoteError)} onClick={placeOrder}><CreditCard size={18} />Continue to secure payment</button>
+          <button className="button-primary mt-5 w-full justify-center" disabled={!orderingEnabled || cart.length === 0 || quoteLoading || Boolean(quoteError) || (apiOnline && !quote)} onClick={placeOrder}><CreditCard size={18} />Continue to secure payment</button>
           {paymentClientSecret ? (
             <div className="mt-5 rounded-md border border-line bg-white p-3">
               <p className="mb-3 text-sm font-black text-ink">Secure restaurant payment</p>

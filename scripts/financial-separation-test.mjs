@@ -112,7 +112,7 @@ const groups = {
   tax: () => {
     assertCheck(schema.includes("model TaxConfiguration") && schema.includes("model OrderTaxSnapshot"), "Tax configuration and per-order tax snapshots exist");
     assertCheck(includesAll(quoteService, ["taxableAmountCents", "taxRateBps", "taxCents"]), "Order quote service calculates tax server-side");
-    assertCheck(apiEnv.includes("TAX_PROVIDER") && apiEnv.includes("DEFAULT_TAX_RATE_BPS"), "Tax env foundation exists");
+    assertCheck(apiEnv.includes("TAX_PROVIDER") && !apiEnv.includes("DEFAULT_TAX_RATE_BPS"), "Tax foundation requires explicit configured rates without a global fallback");
   },
   tips: () => {
     assertCheck(includesAll(schema, ["restaurantTipCents", "driverTipCents", "DriverEarningLedger"]), "Restaurant tips, driver tips, and driver earning ledger are modeled");

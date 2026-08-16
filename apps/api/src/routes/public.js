@@ -460,7 +460,6 @@ async function sendOrderConfig(req, res, next) {
       pickupEnabled: pickupAllowed && bundle.restaurant.pickupEnabled,
       deliveryEnabled: deliveryAllowed && bundle.restaurant.deliveryEnabled,
       deliveryFeeCents: bundle.restaurant.deliveryFeeCents,
-      taxRatePlaceholder: 0.0825,
       coupons: couponsAllowed ? bundle.restaurant.coupons : [],
       loyaltyRewards: loyaltyAllowed ? bundle.restaurant.loyaltyRewards : [],
       entitlements: {

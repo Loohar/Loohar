@@ -92,6 +92,7 @@ export function errorHandler(error, req, res, next) {
     });
   }
   res.status(status).json({
-    error: status === 500 ? "Internal server error" : error.message
+    error: status === 500 ? "Internal server error" : error.message,
+    ...(status !== 500 && error.code ? { code: error.code } : {})
   });
 }

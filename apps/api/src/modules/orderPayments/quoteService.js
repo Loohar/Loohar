@@ -14,8 +14,15 @@ function platformFeeCents() {
   return 0;
 }
 
-function defaultTaxRateBps() {
-  return nonnegativeInt(process.env.DEFAULT_TAX_RATE_BPS, 825);
+function configuredTaxRateBps(taxConfiguration) {
+  const rate = taxConfiguration?.taxRateBps;
+  if (!Number.isSafeInteger(rate) || rate < 0 || rate > 100_000) {
+    const error = new Error("Tax configuration is required before this restaurant can process sales.");
+    error.status = 409;
+    error.code = "ORDER_TAX_CONFIGURATION_REQUIRED";
+    throw error;
+  }
+  return rate;
 }
 
 function activeCouponWhere({ restaurantId, couponCode }) {
@@ -112,7 +119,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");
   const deliveryFeeCents = orderType === "DELIVERY" && !freeDelivery ? nonnegativeInt(configuredDeliveryFeeCents) : 0;
   const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
-  const taxRateBps = restaurant.taxConfigurations?.[0]?.taxRateBps ?? defaultTaxRateBps();
+  const taxRateBps = configuredTaxRateBps(restaurant.taxConfigurations?.[0]);
   const taxCents = Math.round((taxableAmountCents * taxRateBps) / 10000);
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
   const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
