@@ -13005,7 +13005,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
             })}
           </div>
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-            <div><strong className="text-ink">First-sale readiness</strong><p className="text-sm text-slate-500">{integer(taxWorkspace.counts?.readyLocations || 0)} of {integer(taxWorkspace.counts?.activeLocations || 0)} active locations are tax ready. Register and menu setup may continue while tax is incomplete, but financial checkout remains unavailable.</p></div>
+            <div><strong className="text-ink">First-sale readiness</strong><p className="text-sm text-slate-500">{integer(taxWorkspace.counts?.readyLocations || 0)} of {integer(taxWorkspace.counts?.activeLocations || 0)} active locations are tax ready. {taxWorkspace.ready ? "All active locations have an acknowledged tax profile and financial checkout is tax ready." : "Register and menu setup may continue while tax is incomplete, but financial checkout remains unavailable."}</p></div>
             <button className="button-muted" type="button" onClick={() => reloadTaxWorkspace()} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />Reload status</button>
           </div>
         </div>

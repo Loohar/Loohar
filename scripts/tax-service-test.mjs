@@ -206,6 +206,7 @@ assert.ok(app.includes("I confirm that this verified business location and tax i
 assert.ok(app.includes("Confirm & activate tax profile") && app.includes("First-sale readiness"), "settings must support activation and readiness");
 assert.ok(app.includes("Special districts") && app.includes("Acknowledged") && app.includes("readyLocations"), "owner review must expose full jurisdiction and readiness details");
 assert.ok(app.includes('taxWorkspace.ready ? "POS tax ready" : "Checkout blocked"'), "settings readiness must use the active-location workspace summary");
+assert.ok(app.includes('taxWorkspace.ready ? "All active locations have an acknowledged tax profile and financial checkout is tax ready."'), "first-sale readiness must not claim checkout is blocked after every active location is ready");
 assert.equal(app.includes("What tax rate do you want?"), false, "owners must not be asked to invent a rate");
 assert.equal(app.includes("0.0825"), false, "frontend must not contain an implicit tax rate");
 
