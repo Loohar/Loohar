@@ -3,9 +3,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   ColoradoTaxProvider,
+  COLORADO_TTR_ENDPOINT,
   TAX_CATEGORY_STATUS,
   TAX_PROVIDER_STATUS,
+  createColoradoTtrLookup,
+  decimalTaxRateToBps,
   mapColoradoSutsLookupResult,
+  normalizeColoradoTtrResponse,
   taxCategoryActivationError,
   taxProviderOperationalStatus
 } from "../apps/api/src/services/taxDomain.js";
@@ -28,6 +32,121 @@ const address = {
   postalCode: "80202",
   country: "US"
 };
+
+function ttrFixture(overrides = {}) {
+  return {
+    address: "100 Test Plaza, Suite 2, Denver, CO 80202, US",
+    jurisdictionCode: "CO-DENVER-TTR",
+    productService: null,
+    totalSalesTax: 0.085,
+    salesTax: [
+      { jurisdiction: "Colorado", type: "state", answer: "taxable", value: 0.029 },
+      { jurisdiction: "Denver County", type: "county", answer: "taxable", value: 0.01 },
+      { jurisdiction: "Denver", type: "city", answer: "taxable", value: 0.041 },
+      { jurisdiction: "Contract District", type: "district", answer: "taxable", value: 0.005 },
+      { jurisdiction: "Exempt Example", type: "district", answer: "exempt", value: 0.01 }
+    ],
+    ...overrides
+  };
+}
+
+assert.equal(decimalTaxRateToBps(0.0431), 431, "TTR decimal rates must convert exactly to basis points");
+assert.equal(decimalTaxRateToBps("0.0290"), 290);
+assert.throws(() => decimalTaxRateToBps("0.04315"), (error) => error.code === "TAX_PROVIDER_INVALID_RESPONSE");
+
+let transportRequest;
+const ttrLookup = createColoradoTtrLookup({
+  fetchImpl: async (url, options) => {
+    transportRequest = { url, options };
+    return { ok: true, status: 200, json: async () => ttrFixture() };
+  }
+});
+const normalizedTtr = await ttrLookup({ apiKey: "transport-test-key", address, signal: new AbortController().signal });
+assert.equal(transportRequest.url, COLORADO_TTR_ENDPOINT);
+assert.equal(transportRequest.options.method, "POST");
+assert.equal(transportRequest.options.headers.Authorization, "Bearer transport-test-key");
+assert.equal(transportRequest.options.headers["Content-Type"], "application/json");
+assert.equal(transportRequest.options.headers.Accept, "application/json");
+assert.deepEqual(Object.keys(JSON.parse(transportRequest.options.body)), ["address"], "address-only requests must omit productServiceId");
+assert.equal(normalizedTtr.combinedRateBps, 850);
+assert.equal(normalizedTtr.taxComponents.find((component) => component.answer === "EXEMPT").rateBps, 0, "exempt components must not contribute to the total");
+assert.equal(normalizedTtr.taxComponents.find((component) => component.answer === "EXEMPT").providerRateBps, 100, "the provider's exempt value must remain auditable");
+assert.equal(normalizedTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED, "address-only rates must not claim universal restaurant category support");
+assert.equal(normalizedTtr.componentReconciliationStatus, "RECONCILED");
+
+await ttrLookup({ apiKey: "transport-test-key", address, productServiceId: 777, signal: new AbortController().signal });
+assert.equal(JSON.parse(transportRequest.options.body).productServiceId, 777, "a verified productServiceId must remain an explicit optional input");
+
+const unreconciledTtr = normalizeColoradoTtrResponse({
+  address,
+  response: ttrFixture({ totalSalesTax: 0.09 })
+});
+assert.equal(unreconciledTtr.componentReconciliationStatus, "REVIEW_REQUIRED");
+assert.equal(unreconciledTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED);
+const unreconciledCandidate = mapColoradoSutsLookupResult({
+  restaurantId: "tenant-a",
+  locationId: "location-unreconciled",
+  address,
+  result: unreconciledTtr
+});
+assert.equal(unreconciledCandidate.categoryStatus, TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED);
+assert.equal(taxCategoryActivationError({ provider: unreconciledCandidate.provider, sourceMetadata: unreconciledCandidate.sourceMetadata }), "TAX_MANUAL_REVIEW_REQUIRED");
+
+const transportProvider = new ColoradoTaxProvider({
+  enabled: true,
+  apiKey: "transport-test-key",
+  lookup: ttrLookup
+});
+const transportCandidate = await transportProvider.resolveJurisdiction({
+  restaurantId: "tenant-a",
+  locationId: "location-ttr",
+  address
+});
+assert.equal(transportCandidate.provider, "COLORADO_TTR");
+assert.equal(transportCandidate.taxRateBps, 850);
+assert.equal(transportCandidate.categoryStatus, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED);
+assert.equal(taxCategoryActivationError({ provider: transportCandidate.provider, sourceMetadata: transportCandidate.sourceMetadata }), "TAX_CATEGORY_RULE_REQUIRED");
+
+for (const [status, expectedCode] of [
+  [401, "TAX_PROVIDER_AUTH_FAILED"],
+  [429, "TAX_PROVIDER_RATE_LIMITED"],
+  [503, "TAX_PROVIDER_UNAVAILABLE"]
+]) {
+  const failingLookup = createColoradoTtrLookup({ fetchImpl: async () => ({ ok: false, status }) });
+  await assert.rejects(
+    () => failingLookup({ apiKey: "transport-test-key", address, signal: new AbortController().signal }),
+    (error) => error.code === expectedCode
+  );
+}
+
+const malformedLookup = createColoradoTtrLookup({
+  fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ address: "incomplete" }) })
+});
+await assert.rejects(
+  () => malformedLookup({ apiKey: "transport-test-key", address, signal: new AbortController().signal }),
+  (error) => error.code === "TAX_ADDRESS_INVALID" || error.code === "TAX_PROVIDER_INVALID_RESPONSE"
+);
+
+let timeoutAborted = false;
+const timeoutProvider = new ColoradoTaxProvider({
+  enabled: true,
+  apiKey: "transport-test-key",
+  timeoutMs: 500,
+  maxRetries: 0,
+  lookup: ({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener("abort", () => {
+      timeoutAborted = true;
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    }, { once: true });
+  })
+});
+await assert.rejects(
+  () => timeoutProvider.resolveJurisdiction({ restaurantId: "tenant-a", locationId: "location-timeout", address }),
+  (error) => error.code === "TAX_PROVIDER_TIMEOUT"
+);
+assert.equal(timeoutAborted, true, "provider timeout must abort the underlying TTR request");
 
 function lookupFixture(overrides = {}) {
   return {
@@ -65,7 +184,7 @@ await assert.rejects(
   "missing Colorado credentials/contract must fail closed"
 );
 assert.deepEqual(
-  taxProviderOperationalStatus("COLORADO", { COLORADO_SUTS_API_ENABLED: "false" }).status,
+  taxProviderOperationalStatus("COLORADO", {}).status,
   TAX_PROVIDER_STATUS.NOT_CONFIGURED
 );
 
@@ -95,8 +214,8 @@ const configuration = await provider.getTaxConfiguration({
   jurisdiction: resolved
 });
 assert.equal(lookupCalls, 1, "address and tax resolution must use one authoritative lookup");
-assert.equal(configuration.provider, "COLORADO_CDOR_SUTS");
-assert.equal(configuration.source, "COLORADO_DEPARTMENT_OF_REVENUE_SUTS_GIS");
+assert.equal(configuration.provider, "COLORADO_TTR");
+assert.equal(configuration.source, "Colorado SUTS / TTR Rate Automation API");
 assert.equal(configuration.taxRateBps, 850);
 assert.equal(configuration.taxComponents.length, 4);
 assert.equal(configuration.taxComponents.reduce((sum, component) => sum + component.rateBps, 0), configuration.taxRateBps);
@@ -237,12 +356,15 @@ assert.ok(service.includes("tax.profile.verification_refreshed") && service.incl
 assert.ok(service.includes("TAX_CATEGORY_RULE_REQUIRED") && service.includes("TAX_UNSUPPORTED_SPECIAL_RATE"), "category-specific candidates must be blocked from activation");
 assert.ok(service.includes("tax.provider.success") && service.includes("tax.provider.failure"), "provider outcomes must emit safe operational events");
 assert.ok(routes.includes("requireTenantAccess") && !routes.includes("CASHIER"), "provider actions must remain tenant-isolated and unavailable to cashiers");
+assert.ok(routes.includes("productServiceId: z.number().int().positive().optional()"), "productServiceId must remain an explicit optional backend input");
 assert.ok(app.includes("Verify address & resolve tax") && app.includes("Category review required"), "Settings must expose provider review without a duplicate admin surface");
 assert.ok(app.includes("Verified address") && app.includes("Components") && app.includes("Last verified"), "Settings must show provider provenance and jurisdiction details");
 assert.ok(app.includes("Tax Setup Required") && app.includes("Verify location tax"), "onboarding must direct incomplete locations to tax setup");
 assert.ok(offlinePricing.includes("provider") && offlinePricing.includes("jurisdictionMetadata") && offlinePricing.includes("configurationVersion"), "Offline v1 must retain provider-backed profile identity");
-assert.ok(apiEnv.includes("COLORADO_SUTS_API_KEY=") && apiEnv.includes("COLORADO_SUTS_API_ENABLED=false"), "only environment variable names/default-off state may be documented");
-assert.ok(docs.includes("does not infer an endpoint") && docs.includes("TAX_PROVIDER_NOT_CONFIGURED"), "documentation must stop at the authenticated official contract boundary");
+assert.ok(apiEnv.includes("COLORADO_TTR_API_KEY=") && !apiEnv.includes("COLORADO_SUTS_API_KEY="), "only the backend TTR environment variable name may be documented");
+assert.ok(docs.includes(COLORADO_TTR_ENDPOINT) && docs.includes("TAX_PROVIDER_NOT_CONFIGURED"), "documentation must record the authenticated official contract and fail-closed behavior");
+assert.ok(domain.includes("Authorization: `Bearer ${apiKey}`"), "TTR authentication must be constructed only in the backend transport");
+assert.equal(domain.includes("productServiceId: 626"), false, "the charitable-sales product service must never be a restaurant default");
 assert.equal(domain.includes("8.25"), false, "Colorado provider logic must not hardcode a fallback rate");
 assert.equal(domain.includes("0.0825"), false, "Colorado provider logic must not hardcode a decimal fallback rate");
 

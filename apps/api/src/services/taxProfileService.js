@@ -17,7 +17,14 @@ import {
 function errorStatus(code) {
   if (["TAX_ADDRESS_REQUIRED", "TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)) return TAX_PROFILE_STATUS.ADDRESS_REQUIRED;
   if (code === "TAX_UNSUPPORTED_JURISDICTION") return TAX_PROFILE_STATUS.UNSUPPORTED_JURISDICTION;
-  if (["TAX_PROVIDER_NOT_CONFIGURED", "TAX_PROVIDER_UNAVAILABLE", "TAX_PROVIDER_AUTH_FAILED"].includes(code)) return TAX_PROFILE_STATUS.PROVIDER_ERROR;
+  if ([
+    "TAX_PROVIDER_NOT_CONFIGURED",
+    "TAX_PROVIDER_UNAVAILABLE",
+    "TAX_PROVIDER_AUTH_FAILED",
+    "TAX_PROVIDER_TIMEOUT",
+    "TAX_PROVIDER_RATE_LIMITED",
+    "TAX_PROVIDER_INVALID_RESPONSE"
+  ].includes(code)) return TAX_PROFILE_STATUS.PROVIDER_ERROR;
   if (["TAX_CATEGORY_RULE_REQUIRED", "TAX_UNSUPPORTED_SPECIAL_RATE", "TAX_MANUAL_REVIEW_REQUIRED", "TAX_RATE_NOT_EFFECTIVE"].includes(code)) return TAX_PROFILE_STATUS.REVIEW_REQUIRED;
   return TAX_PROFILE_STATUS.PROVIDER_ERROR;
 }
@@ -292,7 +299,7 @@ async function setCandidateLocationState({ location, profile, normalizedAddress 
   });
 }
 
-export async function resolveLocationTaxProfile({ restaurantId, locationId, actorUserId, providerId }) {
+export async function resolveLocationTaxProfile({ restaurantId, locationId, actorUserId, providerId, productServiceId }) {
   const location = await locationForTenant({ restaurantId, locationId });
   const address = normalizeBusinessAddress(location);
   const validation = validateBusinessAddress(address);
@@ -324,7 +331,8 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
       restaurantId,
       locationId,
       address: validation.address,
-      effectiveAt: new Date()
+      effectiveAt: new Date(),
+      productServiceId
     });
     const configuration = await provider.getTaxConfiguration({
       restaurantId,
@@ -355,7 +363,14 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
     const status = errorStatus(code);
     const addressValidationStatus = ["TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)
       ? "INVALID"
-      : ["TAX_PROVIDER_NOT_CONFIGURED", "TAX_PROVIDER_UNAVAILABLE", "TAX_PROVIDER_AUTH_FAILED"].includes(code)
+      : [
+          "TAX_PROVIDER_NOT_CONFIGURED",
+          "TAX_PROVIDER_UNAVAILABLE",
+          "TAX_PROVIDER_AUTH_FAILED",
+          "TAX_PROVIDER_TIMEOUT",
+          "TAX_PROVIDER_RATE_LIMITED",
+          "TAX_PROVIDER_INVALID_RESPONSE"
+        ].includes(code)
         ? "PROVIDER_UNAVAILABLE"
         : undefined;
     await updateLocationTaxState({ location, status, code, message: error.message, addressValidationStatus });

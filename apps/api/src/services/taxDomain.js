@@ -37,8 +37,10 @@ export const TAX_CATEGORY_STATUS = Object.freeze({
   MANUAL_REVIEW_REQUIRED: "MANUAL_REVIEW_REQUIRED"
 });
 
-const COLORADO_PROVIDER_ID = "COLORADO_CDOR_SUTS";
-const COLORADO_SOURCE = "COLORADO_DEPARTMENT_OF_REVENUE_SUTS_GIS";
+const COLORADO_PROVIDER_ID = "COLORADO_TTR";
+const LEGACY_COLORADO_PROVIDER_ID = "COLORADO_CDOR_SUTS";
+const COLORADO_SOURCE = "Colorado SUTS / TTR Rate Automation API";
+export const COLORADO_TTR_ENDPOINT = "https://api.ttr.services/v1/automation.rates.list";
 
 export class TaxServiceError extends Error {
   constructor(message, { status = 400, code = "TAX_SERVICE_ERROR", details = null } = {}) {
@@ -172,7 +174,7 @@ function validRate(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= 100_000;
 }
 
-function normalizedComponents(components, taxRateBps) {
+function normalizedComponents(components, taxRateBps, { allowMismatch = false } = {}) {
   if (!Array.isArray(components) || components.length === 0) return [];
   const result = components.map((component, index) => {
     const rateBps = Number(component?.rateBps);
@@ -185,16 +187,251 @@ function normalizedComponents(components, taxRateBps) {
       jurisdictionCode: upper(component?.jurisdictionCode, 160),
       rateBps
     };
+    const answer = upper(component?.answer, 40);
+    const providerType = text(component?.providerType, 80);
+    const providerValue = text(component?.providerValue, 80);
+    const providerRateBps = Number(component?.providerRateBps);
+    if (answer) normalizedComponent.answer = answer;
+    if (providerType) normalizedComponent.providerType = providerType;
+    if (providerValue) normalizedComponent.providerValue = providerValue;
+    if (validRate(providerRateBps)) normalizedComponent.providerRateBps = providerRateBps;
     if (!normalizedComponent.type || !normalizedComponent.name || !normalizedComponent.jurisdictionCode) {
       throw new TaxServiceError(`Tax component ${index + 1} is missing jurisdiction metadata.`, { code: "TAX_COMPONENT_INVALID" });
     }
     return normalizedComponent;
   });
   const componentTotal = result.reduce((sum, component) => sum + component.rateBps, 0);
-  if (componentTotal !== taxRateBps) {
+  if (componentTotal !== taxRateBps && !allowMismatch) {
     throw new TaxServiceError("Tax component rates must equal the authoritative combined rate.", { code: "TAX_COMPONENT_TOTAL_MISMATCH" });
   }
   return result;
+}
+
+export function decimalTaxRateToBps(value) {
+  const raw = typeof value === "number" ? String(value) : text(value, 80);
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) {
+    throw new TaxServiceError("The TTR tax rate is invalid.", { code: "TAX_PROVIDER_INVALID_RESPONSE" });
+  }
+  const [whole, fraction = ""] = raw.split(".");
+  if (fraction.slice(4).replace(/0/g, "")) {
+    throw new TaxServiceError("The TTR tax rate exceeds basis-point precision.", { code: "TAX_PROVIDER_INVALID_RESPONSE" });
+  }
+  const rateBps = Number(BigInt(whole) * 10_000n + BigInt((fraction.slice(0, 4) + "0000").slice(0, 4)));
+  if (!validRate(rateBps)) {
+    throw new TaxServiceError("The TTR tax rate is outside the supported range.", { code: "TAX_PROVIDER_INVALID_RESPONSE" });
+  }
+  return rateBps;
+}
+
+function coloradoTtrAddress(address) {
+  return [
+    address.addressLine1,
+    address.addressLine2,
+    [address.city, address.stateProvince, address.postalCode].filter(Boolean).join(", "),
+    address.country
+  ].filter(Boolean).join(", ");
+}
+
+function comparableAddress(value) {
+  return text(value, 800).toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+}
+
+function ttrAddressMatches(submitted, returnedAddress) {
+  const returned = comparableAddress(returnedAddress);
+  const streetNumber = comparableAddress(submitted.addressLine1).split(" ")[0];
+  return Boolean(
+    returned
+    && streetNumber
+    && returned.split(" ").includes(streetNumber)
+    && returned.includes(comparableAddress(submitted.city))
+    && returned.includes(comparableAddress(submitted.postalCode))
+  );
+}
+
+function ttrComponentType(value) {
+  const type = upper(value, 80).replace(/[\s-]+/g, "_");
+  if (type === "STATE") return "STATE";
+  if (type === "COUNTY") return "COUNTY";
+  if (type === "CITY" || type === "MUNICIPALITY" || type === "MUNICIPAL") return "MUNICIPALITY";
+  if (type === "DISTRICT" || type === "SPECIAL_DISTRICT") return "SPECIAL_DISTRICT";
+  return "OTHER";
+}
+
+export function normalizeColoradoTtrResponse({ address, response, productServiceId, now = new Date() }) {
+  const submitted = validateBusinessAddress(address);
+  if (!submitted.valid) {
+    throw new TaxServiceError("A complete physical business address is required.", {
+      code: "TAX_ADDRESS_REQUIRED",
+      details: { missing: submitted.missing }
+    });
+  }
+  if (submitted.address.country !== "US" || submitted.address.stateProvince !== "CO") {
+    throw new TaxServiceError("This jurisdiction is not supported by the Colorado adapter.", {
+      status: 422,
+      code: "TAX_UNSUPPORTED_JURISDICTION"
+    });
+  }
+  const result = object(response);
+  const returnedAddress = text(result.address, 800);
+  const jurisdictionCode = upper(result.jurisdictionCode, 160);
+  if (!ttrAddressMatches(submitted.address, returnedAddress)) {
+    throw new TaxServiceError("TTR did not return a confidently matching Colorado address.", {
+      status: 422,
+      code: "TAX_ADDRESS_INVALID"
+    });
+  }
+  if (!jurisdictionCode || !Array.isArray(result.salesTax) || result.salesTax.length === 0) {
+    throw new TaxServiceError("TTR returned an incomplete rate response.", {
+      status: 502,
+      code: "TAX_PROVIDER_INVALID_RESPONSE"
+    });
+  }
+
+  const combinedRateBps = decimalTaxRateToBps(result.totalSalesTax);
+  let hasUnknownComponent = false;
+  const components = result.salesTax.map((item, index) => {
+    const component = object(item);
+    const name = text(component.jurisdiction, 120);
+    const providerType = text(component.type, 80);
+    const type = ttrComponentType(providerType);
+    const answer = upper(component.answer, 40);
+    if (!name || !providerType || !new Set(["TAXABLE", "EXEMPT"]).has(answer)) {
+      throw new TaxServiceError(`TTR tax component ${index + 1} is malformed.`, {
+        status: 502,
+        code: "TAX_PROVIDER_INVALID_RESPONSE"
+      });
+    }
+    if (type === "OTHER") hasUnknownComponent = true;
+    const providerRateBps = decimalTaxRateToBps(component.value);
+    return {
+      type,
+      name,
+      jurisdictionCode,
+      rateBps: answer === "TAXABLE" ? providerRateBps : 0,
+      answer,
+      providerType,
+      providerValue: text(component.value, 80),
+      providerRateBps
+    };
+  });
+  const applicableComponentBps = components.reduce((sum, component) => sum + component.rateBps, 0);
+  const componentReconciliationStatus = applicableComponentBps === combinedRateBps ? "RECONCILED" : "REVIEW_REQUIRED";
+  const explicitProductServiceId = productServiceId === undefined || productServiceId === null
+    ? null
+    : Number(productServiceId);
+  if (explicitProductServiceId !== null && (!Number.isSafeInteger(explicitProductServiceId) || explicitProductServiceId <= 0)) {
+    throw new TaxServiceError("TTR productServiceId must be a positive integer when supplied.", {
+      code: "TAX_PRODUCT_SERVICE_INVALID"
+    });
+  }
+  const categoryStatus = explicitProductServiceId === null
+    ? TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED
+    : componentReconciliationStatus === "RECONCILED" && !hasUnknownComponent
+      ? TAX_CATEGORY_STATUS.GENERAL_RATE_SUPPORTED
+      : TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED;
+  const stateComponent = components.find((component) => component.type === "STATE");
+  const countyComponent = components.find((component) => component.type === "COUNTY");
+  const municipalityComponent = components.find((component) => component.type === "MUNICIPALITY");
+  if (!stateComponent || !countyComponent) {
+    throw new TaxServiceError("TTR did not return required state and county jurisdiction components.", {
+      status: 502,
+      code: "TAX_PROVIDER_INVALID_RESPONSE"
+    });
+  }
+  const verifiedAt = requiredDate(now, "TAX_PROVIDER_INVALID_RESPONSE", "TTR lookup timestamp");
+  return {
+    addressMatch: { status: "VALIDATED" },
+    verifiedAddress: submitted.address,
+    providerReference: jurisdictionCode,
+    lookupTimestamp: verifiedAt,
+    effectiveAt: result.effectiveAt || verifiedAt,
+    expiresAt: result.expiresAt || null,
+    nextVerificationAt: result.nextVerificationAt || null,
+    jurisdictionCode,
+    jurisdictions: {
+      state: { name: stateComponent.name, code: "CO", locationCode: jurisdictionCode },
+      county: { name: countyComponent.name, code: jurisdictionCode, locationCode: jurisdictionCode },
+      municipality: municipalityComponent
+        ? { name: municipalityComponent.name, code: jurisdictionCode, locationCode: jurisdictionCode }
+        : null,
+      specialDistricts: components
+        .filter((component) => component.type === "SPECIAL_DISTRICT")
+        .map((component) => ({ name: component.name, code: jurisdictionCode, locationCode: jurisdictionCode }))
+    },
+    taxComponents: components,
+    combinedRateBps,
+    componentReconciliationStatus,
+    category: {
+      status: categoryStatus,
+      code: explicitProductServiceId === null ? "ADDRESS_ONLY" : `PRODUCT_SERVICE_${explicitProductServiceId}`
+    },
+    ttrMetadata: {
+      returnedAddress,
+      productService: canonicalValue(result.productService),
+      productServiceId: explicitProductServiceId,
+      applicableComponentBps,
+      componentReconciliationStatus
+    }
+  };
+}
+
+export function createColoradoTtrLookup({ fetchImpl = globalThis.fetch, endpoint = COLORADO_TTR_ENDPOINT } = {}) {
+  if (typeof fetchImpl !== "function") return null;
+  return async ({ apiKey, address, productServiceId, signal }) => {
+    const body = { address: coloradoTtrAddress(address) };
+    if (productServiceId !== undefined && productServiceId !== null) {
+      const normalizedProductServiceId = Number(productServiceId);
+      if (!Number.isSafeInteger(normalizedProductServiceId) || normalizedProductServiceId <= 0) {
+        throw new TaxServiceError("TTR productServiceId must be a positive integer when supplied.", {
+          code: "TAX_PRODUCT_SERVICE_INVALID"
+        });
+      }
+      body.productServiceId = normalizedProductServiceId;
+    }
+    let providerResponse;
+    try {
+      providerResponse = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (error) {
+      if (error?.name === "AbortError" || signal?.aborted) {
+        throw new TaxServiceError("The TTR tax provider request timed out.", {
+          status: 503,
+          code: "TAX_PROVIDER_TIMEOUT"
+        });
+      }
+      throw new TaxServiceError("The TTR tax provider is unavailable.", {
+        status: 503,
+        code: "TAX_PROVIDER_UNAVAILABLE"
+      });
+    }
+    if (providerResponse.status === 401 || providerResponse.status === 403) {
+      throw new TaxServiceError("TTR authentication failed.", { status: 502, code: "TAX_PROVIDER_AUTH_FAILED" });
+    }
+    if (providerResponse.status === 429) {
+      throw new TaxServiceError("TTR rate limit reached.", { status: 503, code: "TAX_PROVIDER_RATE_LIMITED" });
+    }
+    if (providerResponse.status === 400 || providerResponse.status === 404 || providerResponse.status === 422) {
+      throw new TaxServiceError("TTR could not validate this address.", { status: 422, code: "TAX_ADDRESS_INVALID" });
+    }
+    if (!providerResponse.ok) {
+      throw new TaxServiceError("The TTR tax provider is unavailable.", { status: 503, code: "TAX_PROVIDER_UNAVAILABLE" });
+    }
+    let response;
+    try {
+      response = await providerResponse.json();
+    } catch {
+      throw new TaxServiceError("TTR returned invalid JSON.", { status: 502, code: "TAX_PROVIDER_INVALID_RESPONSE" });
+    }
+    return normalizeColoradoTtrResponse({ address, response, productServiceId });
+  };
 }
 
 function requiredDate(value, code, label) {
@@ -220,6 +457,12 @@ function coloradoLookupError(error) {
   if (error instanceof TaxServiceError) return error;
   const status = Number(error?.status || error?.statusCode || error?.response?.status);
   const code = upper(error?.code, 80);
+  if (error?.name === "AbortError" || code === "ABORT_ERR") {
+    return new TaxServiceError("The Colorado tax provider request timed out.", {
+      status: 503,
+      code: "TAX_PROVIDER_TIMEOUT"
+    });
+  }
   if (status === 401 || status === 403 || code === "AUTH_FAILED" || code === "UNAUTHORIZED") {
     return new TaxServiceError("Colorado tax provider authentication failed.", {
       status: 502,
@@ -330,7 +573,15 @@ export function mapColoradoSutsLookupResult({ restaurantId, locationId, address,
   if (!validRate(taxRateBps)) {
     throw new TaxServiceError("The authoritative combined Colorado tax rate is invalid.", { code: "TAX_RATE_INVALID" });
   }
-  const taxComponents = normalizedComponents(response.taxComponents, taxRateBps);
+  const componentReconciliationStatus = upper(response.componentReconciliationStatus || "RECONCILED", 80);
+  if (!new Set(["RECONCILED", "REVIEW_REQUIRED"]).has(componentReconciliationStatus)) {
+    throw new TaxServiceError("The authoritative component reconciliation status is invalid.", {
+      code: "TAX_PROVIDER_INVALID_RESPONSE"
+    });
+  }
+  const taxComponents = normalizedComponents(response.taxComponents, taxRateBps, {
+    allowMismatch: componentReconciliationStatus === "REVIEW_REQUIRED"
+  });
   if (taxComponents.length === 0 && taxRateBps !== 0) {
     throw new TaxServiceError("Colorado tax components are required for a non-zero combined rate.", {
       code: "TAX_COMPONENT_INVALID"
@@ -346,12 +597,13 @@ export function mapColoradoSutsLookupResult({ restaurantId, locationId, address,
   const effectiveAt = requiredDate(response.effectiveAt, "TAX_RATE_NOT_EFFECTIVE", "Colorado rate effective date");
   const verifiedAt = requiredDate(response.lookupTimestamp || now, "TAX_PROVIDER_RESPONSE_INVALID", "Colorado lookup timestamp");
   const expiresAt = response.expiresAt ? requiredDate(response.expiresAt, "TAX_PROVIDER_RESPONSE_INVALID", "Colorado rate expiry") : null;
-  const nextVerificationAt = requiredDate(
-    response.nextVerificationAt,
-    "TAX_PROVIDER_RESPONSE_INVALID",
-    "Colorado next verification date"
-  );
-  const categoryStatus = coloradoCategoryStatus(response.category?.status || response.categoryStatus);
+  const nextVerificationAt = response.nextVerificationAt
+    ? requiredDate(response.nextVerificationAt, "TAX_PROVIDER_INVALID_RESPONSE", "Colorado next verification date")
+    : null;
+  let categoryStatus = coloradoCategoryStatus(response.category?.status || response.categoryStatus);
+  if (componentReconciliationStatus === "REVIEW_REQUIRED") {
+    categoryStatus = TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED;
+  }
   const jurisdictionCode = upper(response.jurisdictionCode || municipality.code || county.code, 160);
   if (!jurisdictionCode) {
     throw new TaxServiceError("The authoritative response is missing a jurisdiction code.", {
@@ -368,21 +620,29 @@ export function mapColoradoSutsLookupResult({ restaurantId, locationId, address,
     taxComponents,
     combinedRateBps: taxRateBps,
     categoryStatus,
+    componentReconciliationStatus,
     categoryCode: upper(response.category?.code, 120),
     effectiveAt: iso(effectiveAt),
     expiresAt: iso(expiresAt)
   };
-  const responseFingerprint = fingerprint({ providerReference, lookupTimestamp: iso(verifiedAt), ...material });
+  const responseFingerprint = fingerprint({
+    providerReference,
+    lookupTimestamp: iso(verifiedAt),
+    ttrMetadata: object(response.ttrMetadata),
+    ...material
+  });
   const materialFingerprint = fingerprint(material);
   const sourceMetadata = {
-    officialSource: "Colorado Department of Revenue SUTS/GIS",
+    officialSource: "Colorado SUTS / TTR Rate Automation API",
     sourceReference: providerReference,
     providerResponseFingerprint: responseFingerprint,
     materialFingerprint,
     lookupTimestamp: iso(verifiedAt),
     addressMatchStatus: matchStatus,
     categoryStatus,
-    categoryCode: upper(response.category?.code, 120) || null
+    categoryCode: upper(response.category?.code, 120) || null,
+    componentReconciliationStatus,
+    ttr: object(response.ttrMetadata)
   };
   const jurisdictionMetadata = {
     country: "US",
@@ -392,7 +652,8 @@ export function mapColoradoSutsLookupResult({ restaurantId, locationId, address,
     specialDistricts,
     submittedAddress: submitted.address,
     verifiedAddress: verifiedAddress.address,
-    categoryStatus
+    categoryStatus,
+    componentReconciliationStatus
   };
   const configuration = {
     provider: COLORADO_PROVIDER_ID,
@@ -465,7 +726,7 @@ export class TaxProvider {
 
 export class ColoradoTaxProvider extends TaxProvider {
   constructor({ enabled = false, apiKey = "", lookup = null, timeoutMs = 3000, maxRetries = 1 } = {}) {
-    super({ id: COLORADO_PROVIDER_ID, label: "Colorado Department of Revenue SUTS/GIS" });
+    super({ id: COLORADO_PROVIDER_ID, label: "Colorado SUTS / TTR Rate Automation API" });
     this.enabled = enabled === true;
     this.apiKey = text(apiKey, 4000);
     this.lookup = typeof lookup === "function" ? lookup : null;
@@ -490,7 +751,7 @@ export class ColoradoTaxProvider extends TaxProvider {
   async #boundedLookup(input) {
     if (!this.enabled || !this.apiKey || !this.lookup) {
       this.runtimeStatus = TAX_PROVIDER_STATUS.NOT_CONFIGURED;
-      throw new TaxServiceError("Colorado SUTS/GIS provider credentials and authenticated API contract are not configured.", {
+      throw new TaxServiceError("The Colorado TTR provider credential is not configured.", {
         status: 503,
         code: "TAX_PROVIDER_NOT_CONFIGURED"
       });
@@ -504,7 +765,7 @@ export class ColoradoTaxProvider extends TaxProvider {
             controller.abort();
             reject(new TaxServiceError("Colorado tax provider request timed out.", {
               status: 503,
-              code: "TAX_PROVIDER_UNAVAILABLE"
+              code: "TAX_PROVIDER_TIMEOUT"
             }));
           }, this.timeoutMs);
         });
@@ -513,6 +774,7 @@ export class ColoradoTaxProvider extends TaxProvider {
             apiKey: this.apiKey,
             address: input.address,
             effectiveAt: input.effectiveAt,
+            productServiceId: input.productServiceId,
             signal: controller.signal
           }),
           timeoutPromise
@@ -524,7 +786,7 @@ export class ColoradoTaxProvider extends TaxProvider {
         this.runtimeStatus = classified.code === "TAX_PROVIDER_AUTH_FAILED"
           ? TAX_PROVIDER_STATUS.AUTH_FAILED
           : TAX_PROVIDER_STATUS.UNAVAILABLE;
-        if (classified.code !== "TAX_PROVIDER_UNAVAILABLE" || attempt >= this.maxRetries) throw classified;
+        if (!["TAX_PROVIDER_UNAVAILABLE", "TAX_PROVIDER_TIMEOUT"].includes(classified.code) || attempt >= this.maxRetries) throw classified;
       } finally {
         clearTimeout(timeout);
       }
@@ -535,7 +797,7 @@ export class ColoradoTaxProvider extends TaxProvider {
     });
   }
 
-  async resolveJurisdiction({ restaurantId, locationId, address, effectiveAt = new Date() }) {
+  async resolveJurisdiction({ restaurantId, locationId, address, effectiveAt = new Date(), productServiceId }) {
     const validation = validateBusinessAddress(address);
     if (!validation.valid) {
       throw new TaxServiceError("A complete physical business address is required.", {
@@ -549,7 +811,7 @@ export class ColoradoTaxProvider extends TaxProvider {
         code: "TAX_UNSUPPORTED_JURISDICTION"
       });
     }
-    const result = await this.#boundedLookup({ address: validation.address, effectiveAt });
+    const result = await this.#boundedLookup({ address: validation.address, effectiveAt, productServiceId });
     return mapColoradoSutsLookupResult({
       restaurantId,
       locationId,
@@ -689,13 +951,14 @@ export class ManualVerifiedTaxProvider extends TaxProvider {
 export function taxProviderFor(providerId, env = process.env, options = {}) {
   const id = upper(providerId, 80);
   if (id === "MANUAL_VERIFIED" || id === "LOOHAR_MANUAL_VERIFIED") return new ManualVerifiedTaxProvider();
-  if (id === "COLORADO" || id === COLORADO_PROVIDER_ID) {
+  if (id === "COLORADO" || id === COLORADO_PROVIDER_ID || id === LEGACY_COLORADO_PROVIDER_ID) {
+    const apiKey = env.COLORADO_TTR_API_KEY;
     return new ColoradoTaxProvider({
-      enabled: env.COLORADO_SUTS_API_ENABLED === "true" || env.COLORADO_TAX_PROVIDER_ENABLED === "true",
-      apiKey: env.COLORADO_SUTS_API_KEY,
-      lookup: options.coloradoLookup,
-      timeoutMs: env.COLORADO_SUTS_REQUEST_TIMEOUT_MS,
-      maxRetries: env.COLORADO_SUTS_MAX_RETRIES
+      enabled: Boolean(apiKey),
+      apiKey,
+      lookup: options.coloradoLookup || createColoradoTtrLookup({ fetchImpl: options.fetchImpl }),
+      timeoutMs: env.COLORADO_TTR_REQUEST_TIMEOUT_MS,
+      maxRetries: env.COLORADO_TTR_MAX_RETRIES
     });
   }
   throw new TaxServiceError("Tax jurisdiction is not supported.", {
@@ -718,7 +981,7 @@ export function taxProviderOperationalStatus(providerId, env = process.env, opti
 }
 
 export function taxCategoryActivationError(profile) {
-  if (profile?.provider !== COLORADO_PROVIDER_ID) return null;
+  if (![COLORADO_PROVIDER_ID, LEGACY_COLORADO_PROVIDER_ID].includes(profile?.provider)) return null;
   const categoryStatus = profile.sourceMetadataJson?.categoryStatus
     || profile.sourceMetadata?.categoryStatus
     || TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED;

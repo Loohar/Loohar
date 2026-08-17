@@ -1,10 +1,10 @@
-# Colorado SUTS/GIS Tax Provider
+# Colorado SUTS/TTR Tax Provider
 
-Loohar's Colorado adapter is server-side and implements the existing universal `TaxProvider` contract. It resolves a complete physical location address into a review-required, versioned location tax profile. The POS and Offline v1 consume only acknowledged active profiles and never call Colorado SUTS/GIS during checkout.
+Loohar's Colorado adapter is server-side and implements the existing universal `TaxProvider` contract. It resolves a complete physical location address through the authenticated TTR Rate Automation API into a review-required, versioned location tax profile. The POS and Offline v1 consume only acknowledged active profiles and never call TTR during checkout.
 
 ## Official Source
 
-The authoritative source is the Colorado Department of Revenue Sales & Use Tax System Geographic Information System (SUTS/GIS). Colorado requires a SUTS account and an API key. The current API method documentation is provided inside the authenticated SUTS account where the key is generated. Loohar does not infer an endpoint, request method, or payload from the public lookup website.
+The authoritative integration contract uses `POST https://api.ttr.services/v1/automation.rates.list` with a backend-only bearer token. The body always contains the complete normalized `address`. `productServiceId` is optional and is omitted until Loohar has independently verified the intended restaurant or prepared-food classification. In particular, Loohar does not default to product service `626`, which the supplied documentation associates with occasional charitable sales.
 
 Official public references:
 
@@ -14,18 +14,17 @@ Official public references:
 
 ## Environment Names
 
-- `COLORADO_SUTS_API_ENABLED`
-- `COLORADO_SUTS_API_KEY`
-- `COLORADO_SUTS_REQUEST_TIMEOUT_MS`
-- `COLORADO_SUTS_MAX_RETRIES`
+- `COLORADO_TTR_API_KEY`
+- `COLORADO_TTR_REQUEST_TIMEOUT_MS`
+- `COLORADO_TTR_MAX_RETRIES`
 
 Do not expose these values to the web application, health response, logs, or audit metadata.
 
 ## Integration Boundary
 
-The adapter accepts an authenticated server-side lookup transport. That transport must be implemented from the API method documentation supplied in the authorized SUTS account. Until that contract and key are available, provider status is `NOT_CONFIGURED` and resolution fails closed with `TAX_PROVIDER_NOT_CONFIGURED`.
+The adapter sends the credential only in the server-side `Authorization: Bearer` header. The key is never returned in status, API responses, audit metadata, logs, frontend code, or stored profiles. Without the backend key, provider status is `NOT_CONFIGURED` and resolution fails closed with `TAX_PROVIDER_NOT_CONFIGURED`.
 
-The transport must normalize the official response into the strict Colorado lookup contract consumed by `mapColoradoSutsLookupResult`. Contract fixtures test address matching, jurisdiction components, category safety, rates, effective dates, fingerprints, failures, and tenant/location binding without claiming a live Colorado response.
+The transport validates the returned address, jurisdiction code, `totalSalesTax`, and every `salesTax` component before normalizing them into the existing Tax Service model. Decimal rates are converted exactly to basis points. Taxable components contribute to the applicable total; exempt components retain their provider value but contribute zero. Unreconciled or category-ambiguous results remain review-blocked and never become checkout tax silently.
 
 ## Activation Safety
 
