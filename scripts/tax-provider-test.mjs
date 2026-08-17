@@ -76,6 +76,26 @@ assert.equal(normalizedTtr.taxComponents.find((component) => component.answer ==
 assert.equal(normalizedTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED, "address-only rates must not claim universal restaurant category support");
 assert.equal(normalizedTtr.componentReconciliationStatus, "RECONCILED");
 
+const consolidatedDenverTtr = normalizeColoradoTtrResponse({
+  address: { ...address, addressLine1: "200 E Colfax Ave", addressLine2: "", postalCode: "80203" },
+  response: {
+    address: "200 E Colfax Ave, Denver, CO 80203, USA",
+    jurisdictionCode: "01-0006",
+    totalSalesTax: 0.0915,
+    salesTax: [
+      { jurisdiction: "Colorado", type: "state", answer: "", value: 0.029 },
+      { jurisdiction: "Denver, City and County", type: "city", answer: "", value: 0.0515 },
+      { jurisdiction: "Colorado RTD", type: "district", answer: "", value: 0.01 },
+      { jurisdiction: "Scientific and Cultural Facilities District", type: "district", answer: "", value: 0.001 }
+    ]
+  }
+});
+assert.equal(consolidatedDenverTtr.jurisdictions.county.name, "Denver, City and County");
+assert.equal(consolidatedDenverTtr.jurisdictions.municipality.name, "Denver, City and County");
+assert.equal(consolidatedDenverTtr.combinedRateBps, 915);
+assert.equal(consolidatedDenverTtr.componentReconciliationStatus, "RECONCILED");
+assert.equal(consolidatedDenverTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED);
+
 await ttrLookup({ apiKey: "transport-test-key", address, productServiceId: 777, signal: new AbortController().signal });
 assert.equal(JSON.parse(transportRequest.options.body).productServiceId, 777, "a verified productServiceId must remain an explicit optional input");
 

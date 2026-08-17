@@ -330,8 +330,9 @@ export function normalizeColoradoTtrResponse({ address, response, productService
       ? TAX_CATEGORY_STATUS.GENERAL_RATE_SUPPORTED
       : TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED;
   const stateComponent = components.find((component) => component.type === "STATE");
-  const countyComponent = components.find((component) => component.type === "COUNTY");
   const municipalityComponent = components.find((component) => component.type === "MUNICIPALITY");
+  const countyComponent = components.find((component) => component.type === "COUNTY")
+    || (municipalityComponent?.name.toUpperCase().includes("CITY AND COUNTY") ? municipalityComponent : null);
   if (!stateComponent || !countyComponent) {
     throw new TaxServiceError("TTR did not return required state and county jurisdiction components.", {
       status: 502,
