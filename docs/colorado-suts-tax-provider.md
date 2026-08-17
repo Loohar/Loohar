@@ -24,7 +24,7 @@ Do not expose these values to the web application, health response, logs, or aud
 
 The adapter sends the credential only in the server-side `Authorization: Bearer` header. The key is never returned in status, API responses, audit metadata, logs, frontend code, or stored profiles. Without the backend key, provider status is `NOT_CONFIGURED` and resolution fails closed with `TAX_PROVIDER_NOT_CONFIGURED`.
 
-The transport validates the returned address, jurisdiction code, `totalSalesTax`, and every `salesTax` component before normalizing them into the existing Tax Service model. Decimal rates are converted exactly to basis points. Taxable components contribute to the applicable total; exempt components retain their provider value but contribute zero. Unreconciled or category-ambiguous results remain review-blocked and never become checkout tax silently.
+The transport validates the returned address, jurisdiction code, `totalSalesTax`, and every `salesTax` component before normalizing them into the existing Tax Service model. Decimal rates are converted exactly to basis points. Taxable components contribute to the applicable total; exempt components retain their provider value but contribute zero. An empty address-only classification answer is retained as `UNSPECIFIED`, contributes only to the general-rate candidate, and keeps that candidate category-blocked. Unreconciled or category-ambiguous results never become checkout tax silently.
 
 ## Activation Safety
 

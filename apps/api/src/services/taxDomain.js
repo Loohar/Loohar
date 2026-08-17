@@ -294,8 +294,8 @@ export function normalizeColoradoTtrResponse({ address, response, productService
     const name = text(component.jurisdiction, 120);
     const providerType = text(component.type, 80);
     const type = ttrComponentType(providerType);
-    const answer = upper(component.answer, 40);
-    if (!name || !providerType || !new Set(["TAXABLE", "EXEMPT"]).has(answer)) {
+    const answer = upper(component.answer, 40) || "UNSPECIFIED";
+    if (!name || !providerType || !new Set(["TAXABLE", "EXEMPT", "UNSPECIFIED"]).has(answer)) {
       throw new TaxServiceError(`TTR tax component ${index + 1} is malformed.`, {
         status: 502,
         code: "TAX_PROVIDER_INVALID_RESPONSE"
@@ -307,7 +307,7 @@ export function normalizeColoradoTtrResponse({ address, response, productService
       type,
       name,
       jurisdictionCode,
-      rateBps: answer === "TAXABLE" ? providerRateBps : 0,
+      rateBps: answer === "EXEMPT" ? 0 : providerRateBps,
       answer,
       providerType,
       providerValue: text(component.value, 80),

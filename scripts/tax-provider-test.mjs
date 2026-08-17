@@ -40,7 +40,7 @@ function ttrFixture(overrides = {}) {
     productService: null,
     totalSalesTax: 0.085,
     salesTax: [
-      { jurisdiction: "Colorado", type: "state", answer: "taxable", value: 0.029 },
+      { jurisdiction: "Colorado", type: "state", answer: "", value: 0.029 },
       { jurisdiction: "Denver County", type: "county", answer: "taxable", value: 0.01 },
       { jurisdiction: "Denver", type: "city", answer: "taxable", value: 0.041 },
       { jurisdiction: "Contract District", type: "district", answer: "taxable", value: 0.005 },
@@ -69,6 +69,8 @@ assert.equal(transportRequest.options.headers["Content-Type"], "application/json
 assert.equal(transportRequest.options.headers.Accept, "application/json");
 assert.deepEqual(Object.keys(JSON.parse(transportRequest.options.body)), ["address"], "address-only requests must omit productServiceId");
 assert.equal(normalizedTtr.combinedRateBps, 850);
+assert.equal(normalizedTtr.taxComponents[0].answer, "UNSPECIFIED", "address-only components without a classification answer must remain explicit");
+assert.equal(normalizedTtr.taxComponents[0].rateBps, 290, "unspecified address-only general components remain available only in a category-blocked candidate");
 assert.equal(normalizedTtr.taxComponents.find((component) => component.answer === "EXEMPT").rateBps, 0, "exempt components must not contribute to the total");
 assert.equal(normalizedTtr.taxComponents.find((component) => component.answer === "EXEMPT").providerRateBps, 100, "the provider's exempt value must remain auditable");
 assert.equal(normalizedTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED, "address-only rates must not claim universal restaurant category support");
