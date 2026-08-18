@@ -36,6 +36,11 @@ import {
 } from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { isActiveTaxProfile } from "../services/taxDomain.js";
+import {
+  TAX_TREATMENT,
+  normalizeTaxRuleForStorage,
+  normalizeTaxTreatment
+} from "../../../shared/taxTreatment.js";
 
 const router = Router();
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -358,7 +363,7 @@ function pickEditable(body = {}, fields = []) {
   return Object.fromEntries(fields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]]));
 }
 
-const menuCategoryEditableFields = ["name", "sortOrder", "active"];
+const menuCategoryEditableFields = ["name", "sortOrder", "active", "taxTreatment", "taxRuleJson"];
 const menuItemEditableFields = [
   "categoryId",
   "name",
@@ -376,14 +381,30 @@ const menuItemEditableFields = [
   "isVegan",
   "isSpicy",
   "isDairyFree",
-  "isNutFree"
+  "isNutFree",
+  "taxTreatment",
+  "taxRuleJson"
 ];
+
+function normalizeMenuTaxFields(data) {
+  if (data.taxRuleJson !== undefined && data.taxTreatment === undefined) {
+    const error = new Error("Select the tax treatment when updating a custom tax rule.");
+    error.status = 400;
+    error.code = "TAX_TREATMENT_REQUIRED";
+    throw error;
+  }
+  if (data.taxTreatment !== undefined) {
+    data.taxTreatment = normalizeTaxTreatment(data.taxTreatment);
+    data.taxRuleJson = normalizeTaxRuleForStorage(data.taxTreatment, data.taxRuleJson);
+  }
+  return data;
+}
 
 function menuCategoryUpdateData(body = {}) {
   const data = pickEditable(body, menuCategoryEditableFields);
   if (data.name !== undefined) data.name = String(data.name || "").trim();
   if (data.sortOrder !== undefined) data.sortOrder = Number(data.sortOrder);
-  return data;
+  return normalizeMenuTaxFields(data);
 }
 
 function menuItemUpdateData(body = {}) {
@@ -395,7 +416,7 @@ function menuItemUpdateData(body = {}) {
   if (data.preparationTimeMins !== undefined) data.preparationTimeMins = Number(data.preparationTimeMins);
   if (data.calories !== undefined) data.calories = data.calories === null || data.calories === "" ? null : Number(data.calories);
   if (data.spiceLevel !== undefined) data.spiceLevel = data.spiceLevel ? String(data.spiceLevel).trim() : null;
-  return data;
+  return normalizeMenuTaxFields(data);
 }
 
 async function persistMenuItemPosSettings(restaurantId, itemId, { customizationMode, sendToKitchen } = {}) {
@@ -1275,11 +1296,19 @@ router.patch("/:restaurantId/branding", async (req, res, next) => {
   }
 });
 
+const menuTaxRuleSchema = z.object({
+  taxRateBps: z.coerce.number().int().min(0).max(10_000),
+  sourceReference: z.string().trim().min(1).max(240),
+  verifiedAt: z.string().datetime()
+}).strict();
+
 const categorySchema = z.object({
   body: z.object({
     name: z.string().trim().min(2),
     sortOrder: z.coerce.number().int().optional(),
-    active: z.boolean().optional()
+    active: z.boolean().optional(),
+    taxTreatment: z.enum(Object.values(TAX_TREATMENT)).optional(),
+    taxRuleJson: menuTaxRuleSchema.nullable().optional()
   })
 });
 
@@ -1352,6 +1381,8 @@ const menuItemSchema = z.object({
     isSpicy: z.boolean().optional(),
     isDairyFree: z.boolean().optional(),
     isNutFree: z.boolean().optional(),
+    taxTreatment: z.enum(Object.values(TAX_TREATMENT)).optional(),
+    taxRuleJson: menuTaxRuleSchema.nullable().optional(),
     customizationMode: z.enum(MENU_ITEM_CUSTOMIZATION_MODES).default("AUTO"),
     sendToKitchen: z.boolean().default(true),
     options: z.array(z.object({ name: z.string(), priceCents: z.number().int().default(0), required: z.boolean().default(false) })).default([])

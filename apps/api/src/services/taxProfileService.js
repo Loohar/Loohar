@@ -4,6 +4,7 @@ import {
   TAX_CATEGORY_STATUS,
   TAX_PROFILE_STATUS,
   TAX_VERIFICATION_STATUS,
+  TaxProviderRouter,
   TaxServiceError,
   isActiveTaxProfile,
   normalizeBusinessAddress,
@@ -15,7 +16,7 @@ import {
 } from "./taxDomain.js";
 
 function errorStatus(code) {
-  if (["TAX_ADDRESS_REQUIRED", "TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)) return TAX_PROFILE_STATUS.ADDRESS_REQUIRED;
+  if (["TAX_ADDRESS_REQUIRED", "TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND", "TAX_ADDRESS_AMBIGUOUS"].includes(code)) return TAX_PROFILE_STATUS.ADDRESS_REQUIRED;
   if (code === "TAX_UNSUPPORTED_JURISDICTION") return TAX_PROFILE_STATUS.UNSUPPORTED_JURISDICTION;
   if ([
     "TAX_PROVIDER_NOT_CONFIGURED",
@@ -25,7 +26,13 @@ function errorStatus(code) {
     "TAX_PROVIDER_RATE_LIMITED",
     "TAX_PROVIDER_INVALID_RESPONSE"
   ].includes(code)) return TAX_PROFILE_STATUS.PROVIDER_ERROR;
-  if (["TAX_CATEGORY_RULE_REQUIRED", "TAX_UNSUPPORTED_SPECIAL_RATE", "TAX_MANUAL_REVIEW_REQUIRED", "TAX_RATE_NOT_EFFECTIVE"].includes(code)) return TAX_PROFILE_STATUS.REVIEW_REQUIRED;
+  if ([
+    "TAX_CATEGORY_RULE_REQUIRED",
+    "TAX_UNSUPPORTED_SPECIAL_RATE",
+    "TAX_MANUAL_REVIEW_REQUIRED",
+    "PROVIDER_DISAGREEMENT_REVIEW_REQUIRED",
+    "TAX_RATE_NOT_EFFECTIVE"
+  ].includes(code)) return TAX_PROFILE_STATUS.REVIEW_REQUIRED;
   return TAX_PROFILE_STATUS.PROVIDER_ERROR;
 }
 
@@ -153,7 +160,7 @@ async function audit({ actorUserId, restaurantId, action, entityId, metadata = {
 }
 
 function autoProviderId(address) {
-  if (address.country === "US" && address.stateProvince === "CO") return "COLORADO";
+  if (address.country === "US") return "NATIONAL";
   throw new TaxServiceError("No tax provider supports this jurisdiction yet.", {
     status: 422,
     code: "TAX_UNSUPPORTED_JURISDICTION"
@@ -289,11 +296,16 @@ async function setCandidateLocationState({ location, profile, normalizedAddress 
       code: "TAX_PROFILE_VERSION_FINALIZED"
     });
   }
+  const reviewCode = taxCategoryActivationError(profile);
   await updateLocationTaxState({
     location,
     status: TAX_PROFILE_STATUS.REVIEW_REQUIRED,
-    code: "TAX_PROFILE_REVIEW_REQUIRED",
-    message: "Review and acknowledge the verified tax profile before activation.",
+    code: reviewCode || "TAX_PROFILE_REVIEW_REQUIRED",
+    message: reviewCode === "PROVIDER_DISAGREEMENT_REVIEW_REQUIRED"
+      ? "The national and Colorado validation providers disagree. Administrative review is required."
+      : reviewCode
+        ? "This provider result requires tax-category review before activation."
+        : "Review and acknowledge the verified tax profile before activation.",
     normalizedAddress,
     addressValidationStatus: normalizedAddress ? "VALID" : undefined
   });
@@ -326,8 +338,9 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
   });
   try {
     const resolvedProviderId = providerId || autoProviderId(validation.address);
-    const provider = taxProviderFor(resolvedProviderId);
-    const jurisdiction = await provider.resolveJurisdiction({
+    const router = new TaxProviderRouter();
+    const { provider, jurisdiction } = await router.resolveJurisdiction({
+      providerId: resolvedProviderId,
       restaurantId,
       locationId,
       address: validation.address,
@@ -342,8 +355,7 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
       effectiveAt: new Date()
     });
     const { profile } = await createCandidateProfile({ restaurantId, locationId, configuration, actorUserId });
-    const verifiedAddress = configuration.jurisdictionMetadata?.verifiedAddress || validation.address;
-    await setCandidateLocationState({ location, profile, normalizedAddress: verifiedAddress });
+    await setCandidateLocationState({ location, profile, normalizedAddress: validation.address });
     await audit({
       actorUserId,
       restaurantId,
@@ -361,7 +373,7 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
   } catch (error) {
     const code = error.code || "TAX_PROVIDER_ERROR";
     const status = errorStatus(code);
-    const addressValidationStatus = ["TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND"].includes(code)
+    const addressValidationStatus = ["TAX_ADDRESS_INVALID", "TAX_ADDRESS_NOT_FOUND", "TAX_ADDRESS_AMBIGUOUS"].includes(code)
       ? "INVALID"
       : [
           "TAX_PROVIDER_NOT_CONFIGURED",
@@ -470,11 +482,15 @@ function activationValidation(profile, now = new Date()) {
   }
   const categoryError = taxCategoryActivationError(profile);
   if (categoryError) {
-    throw new TaxServiceError("This Colorado result requires category-specific tax review before activation.", {
+    throw new TaxServiceError(
+      categoryError === "PROVIDER_DISAGREEMENT_REVIEW_REQUIRED"
+        ? "The national and validation providers disagree. Review is required before activation."
+        : "This tax result requires category-specific review before activation.", {
       status: 409,
       code: categoryError,
       details: { categoryStatus: profile.sourceMetadataJson?.categoryStatus || TAX_CATEGORY_STATUS.MANUAL_REVIEW_REQUIRED }
-    });
+      }
+    );
   }
 }
 
@@ -711,7 +727,7 @@ export async function getTaxWorkspace({ restaurantId }) {
       activeLocations: activeLocations.length,
       readyLocations: activeLocations.filter((location) => location.status === TAX_PROFILE_STATUS.ACTIVE).length
     },
-    providers: [taxProviderOperationalStatus("COLORADO")],
+    providers: [taxProviderOperationalStatus("NATIONAL"), taxProviderOperationalStatus("COLORADO")],
     locations: workspaceLocations
   };
 }

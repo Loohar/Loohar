@@ -10616,7 +10616,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       sendToKitchen: item.sendToKitchen !== false,
       available: item.available !== false,
       featured: Boolean(item.featured),
-      recommended: Boolean(item.recommended)
+      recommended: Boolean(item.recommended),
+      taxTreatment: item.taxTreatment || "LOCATION_DEFAULT",
+      taxRuleJson: item.taxTreatment === "CUSTOM_RULE" ? item.taxRuleJson : null
     };
   }
 
@@ -11128,7 +11130,17 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     }
     setCategories((current) => current.map((item) => item.id === category.id ? next : item).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)));
     try {
-      await api(`/api/restaurants/${restaurantId}/menu/categories/${category.id}`, { method: "PATCH", token, body: { name: next.name, sortOrder: Number(next.sortOrder || 0), active: next.active !== false } });
+      await api(`/api/restaurants/${restaurantId}/menu/categories/${category.id}`, {
+        method: "PATCH",
+        token,
+        body: {
+          name: next.name,
+          sortOrder: Number(next.sortOrder || 0),
+          active: next.active !== false,
+          taxTreatment: next.taxTreatment || "LOCATION_DEFAULT",
+          taxRuleJson: next.taxTreatment === "CUSTOM_RULE" ? next.taxRuleJson : null
+        }
+      });
       await loadRestaurant();
       showToast(message);
     } catch (updateError) {
@@ -11978,9 +11990,25 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                     <button className="button-muted" type="button" onClick={() => moveCategory(category, -1)} disabled={savingAction.startsWith("category:")}>Move up</button>
                     <button className="button-muted" type="button" onClick={() => moveCategory(category, 1)} disabled={savingAction.startsWith("category:")}>Move down</button>
                     <button className="button-muted" type="button" onClick={() => updateCategory(category, { active: category.active === false }, category.active === false ? "Category published." : "Category hidden.")}>{category.active === false ? "Publish" : "Hide"}</button>
-                    <button className="button-primary" type="button" onClick={() => updateCategory(category, { name: category.name, sortOrder: category.sortOrder || 0, active: category.active !== false })} disabled={savingAction === `category:${category.id}`}>{savingAction === `category:${category.id}` ? "Saving..." : "Save Category"}</button>
+                    <button className="button-primary" type="button" onClick={() => updateCategory(category, { name: category.name, sortOrder: category.sortOrder || 0, active: category.active !== false, taxTreatment: category.taxTreatment || "LOCATION_DEFAULT", taxRuleJson: category.taxRuleJson || null })} disabled={savingAction === `category:${category.id}`}>{savingAction === `category:${category.id}` ? "Saving..." : "Save Category"}</button>
                     <button className="button-muted" type="button" onClick={() => deleteCategory(category.id)}><Trash2 size={15} />Delete</button>
                   </div>
+                  <details className="mt-3 border-t border-line pt-3 text-sm lg:col-span-2">
+                    <summary className="cursor-pointer font-bold text-slate-600">Advanced tax treatment</summary>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <label className="font-semibold text-slate-600">Category treatment
+                        <select className="select mt-1" value={category.taxTreatment || "LOCATION_DEFAULT"} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxTreatment: event.target.value, taxRuleJson: event.target.value === "CUSTOM_RULE" ? (row.taxRuleJson || { taxRateBps: 0, sourceReference: "", verifiedAt: new Date().toISOString() }) : null } : row))}>
+                          <option value="LOCATION_DEFAULT">Use location default</option>
+                          <option value="EXEMPT">Exempt</option>
+                          <option value="CUSTOM_RULE">Custom rule</option>
+                        </select>
+                      </label>
+                      {category.taxTreatment === "CUSTOM_RULE" ? <>
+                        <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.01" value={Number(category.taxRuleJson?.taxRateBps || 0) / 100} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxRuleJson: { ...(row.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), verifiedAt: row.taxRuleJson?.verifiedAt || new Date().toISOString() } } : row))} /></label>
+                        <label className="font-semibold text-slate-600 sm:col-span-2">Verified source<input className="input mt-1" value={category.taxRuleJson?.sourceReference || ""} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxRuleJson: { ...(row.taxRuleJson || {}), sourceReference: event.target.value, verifiedAt: row.taxRuleJson?.verifiedAt || new Date().toISOString() } } : row))} /></label>
+                      </> : null}
+                    </div>
+                  </details>
                 </div>
                 <div className="space-y-2">
                   {items.filter((item) => item.categoryId === category.id || item.category?.id === category.id).length === 0 ? <p className="text-sm text-slate-500">No items in this category.</p> : items.filter((item) => item.categoryId === category.id || item.category?.id === category.id).map((item) => (
@@ -12033,6 +12061,22 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                             <input className="mt-1" type="checkbox" checked={item.sendToKitchen !== false} onChange={(event) => updateItemDraft(item.id, { sendToKitchen: event.target.checked })} />
                             <span><strong className="block text-ink">Kitchen preparation</strong><small className="mt-1 block font-medium">Enable for items that require kitchen or bar preparation.</small></span>
                           </label>
+                          <details className="border-t border-line pt-3 text-sm">
+                            <summary className="cursor-pointer font-bold text-slate-600">Advanced tax treatment</summary>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                              <label className="font-semibold text-slate-600">Item treatment
+                                <select className="select mt-1" value={item.taxTreatment || "LOCATION_DEFAULT"} onChange={(event) => updateItemDraft(item.id, { taxTreatment: event.target.value, taxRuleJson: event.target.value === "CUSTOM_RULE" ? (item.taxRuleJson || { taxRateBps: 0, sourceReference: "", verifiedAt: new Date().toISOString() }) : null })}>
+                                  <option value="LOCATION_DEFAULT">Use category/location default</option>
+                                  <option value="EXEMPT">Exempt</option>
+                                  <option value="CUSTOM_RULE">Custom rule</option>
+                                </select>
+                              </label>
+                              {item.taxTreatment === "CUSTOM_RULE" ? <>
+                                <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.01" value={Number(item.taxRuleJson?.taxRateBps || 0) / 100} onChange={(event) => updateItemDraft(item.id, { taxRuleJson: { ...(item.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), verifiedAt: item.taxRuleJson?.verifiedAt || new Date().toISOString() } })} /></label>
+                                <label className="font-semibold text-slate-600 sm:col-span-2">Verified source<input className="input mt-1" value={item.taxRuleJson?.sourceReference || ""} onChange={(event) => updateItemDraft(item.id, { taxRuleJson: { ...(item.taxRuleJson || {}), sourceReference: event.target.value, verifiedAt: item.taxRuleJson?.verifiedAt || new Date().toISOString() } })} /></label>
+                              </> : null}
+                            </div>
+                          </details>
                           <details className="menu-modifier-builder">
                             <summary>
                               <span>Modifiers</span>
@@ -12953,6 +12997,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
               const displayedTaxProfile = activeTaxProfile || reviewTaxProfile;
               const address = location.address || {};
               const categoryBlocksActivation = ["CATEGORY_RULE_REQUIRED", "UNSUPPORTED_SPECIAL_RATE", "MANUAL_REVIEW_REQUIRED"].includes(reviewTaxProfile?.categoryStatus);
+              const providerDisagreement = reviewTaxProfile?.sourceMetadata?.providerComparison?.status === "DISAGREEMENT";
               return (
                 <section className="py-5 first:pt-0 last:pb-0" key={location.id}>
                   <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
@@ -12976,7 +13021,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                     <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                       <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Verified address</span><strong className="text-ink">{displayedTaxProfile.jurisdictionMetadata?.verifiedAddress?.normalizedAddress || address.normalizedAddress}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Provider</span><strong className="text-ink">{readable(displayedTaxProfile.provider)}</strong></div>
-                      <div><span className="block font-semibold text-slate-500">Source</span><strong className="break-words text-ink">{displayedTaxProfile.sourceMetadata?.sourceReference || readable(displayedTaxProfile.source)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Source</span><strong className="break-words text-ink">{readable(displayedTaxProfile.source)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Jurisdiction ID</span><strong className="break-words text-ink">{displayedTaxProfile.jurisdictionCode}</strong></div>
                       <div><span className="block font-semibold text-slate-500">State</span><strong className="text-ink">{displayedTaxProfile.stateCode || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">County</span><strong className="text-ink">{displayedTaxProfile.county || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Municipality</span><strong className="text-ink">{displayedTaxProfile.municipality || "Not supplied"}</strong></div>
@@ -12995,12 +13041,12 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
 
                   {reviewTaxProfile && canManageTaxes ? (
                     <div className="mt-5 border-t border-line pt-4">
-                      {categoryBlocksActivation ? <p className="mb-3 text-sm font-bold text-rose-600">This provider result requires category-specific review and cannot be activated as a general restaurant rate.</p> : null}
+                      {categoryBlocksActivation || providerDisagreement ? <p className="mb-3 text-sm font-bold text-rose-600">{providerDisagreement ? "The national and Colorado validation providers disagree. Administrative review is required before activation." : "This provider result requires category-specific review and cannot be activated as a general restaurant rate."}</p> : null}
                       <label className="flex items-start gap-3 text-sm font-semibold text-slate-700">
-                        <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} disabled={categoryBlocksActivation} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
+                        <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} disabled={categoryBlocksActivation || providerDisagreement} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
                         <span>I confirm that this verified business location and tax information are correct for this location.</span>
                       </label>
-                      <button className="button-primary mt-4" type="button" onClick={() => acknowledgeTaxProfile(location, reviewTaxProfile)} disabled={categoryBlocksActivation || !taxAcknowledgements[reviewTaxProfile.id] || Boolean(savingTaxAction)}><CheckCircle2 size={16} />{categoryBlocksActivation ? "Category review required" : savingTaxAction === `acknowledge:${reviewTaxProfile.id}` ? "Activating..." : "Confirm & activate tax profile"}</button>
+                      <button className="button-primary mt-4" type="button" onClick={() => acknowledgeTaxProfile(location, reviewTaxProfile)} disabled={categoryBlocksActivation || providerDisagreement || !taxAcknowledgements[reviewTaxProfile.id] || Boolean(savingTaxAction)}><CheckCircle2 size={16} />{providerDisagreement ? "Provider review required" : categoryBlocksActivation ? "Category review required" : savingTaxAction === `acknowledge:${reviewTaxProfile.id}` ? "Activating..." : "Confirm & activate tax profile"}</button>
                     </div>
                   ) : null}
 
@@ -13024,6 +13070,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
             <div><strong className="text-ink">First-sale readiness</strong><p className="text-sm text-slate-500">{integer(taxWorkspace.counts?.readyLocations || 0)} of {integer(taxWorkspace.counts?.activeLocations || 0)} active locations are tax ready. {taxWorkspace.ready ? "All active locations have an acknowledged tax profile and financial checkout is tax ready." : "Register and menu setup may continue while tax is incomplete, but financial checkout remains unavailable."}</p></div>
             <button className="button-muted" type="button" onClick={() => reloadTaxWorkspace()} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />Reload status</button>
+          </div>
+          <div className="mt-4 border-t border-line pt-4 text-sm text-slate-500">
+            <strong className="text-ink">Default menu tax: Use location default.</strong> Normal items inherit the active location profile automatically. Use Advanced tax treatment only for verified category or item exceptions. Loohar determines the general location configuration through its provider; restaurant owners remain responsible for reviewing it and identifying special or exempt products. This is not legal or tax advice.
           </div>
         </div>
         ) : null}

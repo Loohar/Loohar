@@ -1,6 +1,8 @@
 import { prisma } from "../../config/prisma.js";
 import { normalizeTipInput } from "../../services/orderWorkflowService.js";
 import { findValidLocationTaxConfiguration } from "../../services/taxProfileService.js";
+import { calculatePosPricingSnapshot } from "../../../../shared/posOfflinePricing.js";
+import { resolveMenuItemTaxTreatment } from "../../../../shared/taxTreatment.js";
 
 const ORDERING_TYPES = new Set(["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"]);
 export const ZERO_LOOHAR_PLATFORM_FEE_DISCLOSURE =
@@ -68,6 +70,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     throw error;
   }
   const taxConfiguration = await findValidLocationTaxConfiguration({ restaurantId: restaurant.id, locationId: location.id });
+  const taxRateBps = configuredTaxRateBps(taxConfiguration);
 
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length === 0) {
@@ -76,7 +79,8 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     throw error;
   }
   const menuItems = await prisma.menuItem.findMany({
-    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true }
+    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true },
+    include: { category: true }
   });
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const missingItems = items.filter((item) => !menuById.has(item.menuItemId));
@@ -92,6 +96,11 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     const optionsTotalCents = selectedOptions.reduce((sum, option) => sum + nonnegativeInt(option.priceCents), 0);
     const quantity = nonnegativeInt(item.quantity, 1) || 1;
     const unitPriceCents = menuItem.priceCents + optionsTotalCents;
+    const taxTreatment = resolveMenuItemTaxTreatment({
+      item: menuItem,
+      category: menuItem.category,
+      locationTaxRateBps: taxRateBps
+    });
     return {
       menuItemId: menuItem.id,
       name: menuItem.name,
@@ -100,6 +109,10 @@ export async function calculateOrderQuote({ restaurantId, body }) {
       optionsTotalCents,
       unitPriceCents,
       lineTotalCents: unitPriceCents * quantity,
+      taxTreatment: taxTreatment.treatment,
+      taxTreatmentSource: taxTreatment.source,
+      resolvedTaxRateBps: taxTreatment.taxRateBps,
+      customTaxRule: taxTreatment.customRule,
       options: selectedOptions
     };
   });
@@ -135,15 +148,19 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   const configuredDeliveryFeeCents = deliveryRule?.deliveryFeeCents ?? restaurant.deliveryFeeCents ?? 0;
   const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");
   const deliveryFeeCents = orderType === "DELIVERY" && !freeDelivery ? nonnegativeInt(configuredDeliveryFeeCents) : 0;
-  const taxableAmountCents = Math.max(0, subtotalCents - discountCents);
-  const taxRateBps = configuredTaxRateBps(taxConfiguration);
   const taxInclusive = taxConfiguration.taxInclusive === true;
-  const taxCents = taxInclusive
-    ? Math.round((taxableAmountCents * taxRateBps) / (10000 + taxRateBps))
-    : Math.round((taxableAmountCents * taxRateBps) / 10000);
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
   const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
-  const totalCents = taxableAmountCents + deliveryFeeCents + (taxInclusive ? 0 : taxCents) + serviceFeeCents + tipBreakdown.tipCents;
+  const pricing = calculatePosPricingSnapshot({
+    lineItems: quoteItems,
+    discountCents,
+    deliveryFeeCents,
+    taxRateBps,
+    taxInclusive,
+    tipCents: tipBreakdown.tipCents
+  });
+  const { taxableAmountCents, taxCents } = pricing;
+  const totalCents = pricing.totalCents + serviceFeeCents;
   const feeCents = platformFeeCents();
   const restaurantGrossCents = totalCents - (tipBreakdown.driverTipCents || 0);
   const restaurantNetCents = restaurantGrossCents;

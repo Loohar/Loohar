@@ -22,6 +22,7 @@ import {
   resolvePosDeliveryPricingSnapshot,
   validatePosOfflinePricingSnapshot
 } from "../../../shared/posOfflinePricing.js";
+import { resolveMenuItemTaxTreatment } from "../../../shared/taxTreatment.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -902,51 +903,61 @@ export async function posConfig({ restaurant, user, deviceId, fingerprint, entit
 export function withPosOfflineMenuProofs({ restaurantId, menuVersion, categories = [] }) {
   return categories.map((category) => ({
     ...category,
-    items: (category.items || []).map((item) => ({
-      ...item,
-      offlinePricingProof: signPosOfflineMenuItemProof({
-        schemaVersion: POS_OFFLINE_SCHEMA_VERSION,
-        restaurantId,
-        menuVersion,
-        menuItem: {
-          id: item.id,
-          name: item.name,
-          priceCents: item.priceCents,
-          available: item.available !== false,
-          customizationMode: item.customizationMode || "AUTO",
-          sendToKitchen: item.sendToKitchen !== false,
-          options: (item.options || []).map((option) => ({
-            id: option.id,
-            menuItemId: option.menuItemId,
-            optionGroupId: option.optionGroupId || null,
-            name: option.name,
-            priceCents: option.priceCents,
-            required: Boolean(option.required),
-            isDefault: Boolean(option.isDefault),
-            sortOrder: option.sortOrder || 0
-          })),
-          optionGroups: (item.optionGroups || []).map((group) => ({
-            id: group.id,
-            menuItemId: group.menuItemId,
-            name: group.name,
-            required: Boolean(group.required),
-            minSelect: group.minSelect || 0,
-            maxSelect: group.maxSelect || 1,
-            sortOrder: group.sortOrder || 0,
-            options: (group.options || []).map((option) => ({
+    items: (category.items || []).map((item) => {
+      const taxPolicy = {
+        taxTreatment: item.taxTreatment || "LOCATION_DEFAULT",
+        taxRuleJson: item.taxRuleJson || null,
+        categoryTaxTreatment: category.taxTreatment || "LOCATION_DEFAULT",
+        categoryTaxRuleJson: category.taxRuleJson || null
+      };
+      return {
+        ...item,
+        ...taxPolicy,
+        offlinePricingProof: signPosOfflineMenuItemProof({
+          schemaVersion: POS_OFFLINE_SCHEMA_VERSION,
+          restaurantId,
+          menuVersion,
+          menuItem: {
+            id: item.id,
+            name: item.name,
+            priceCents: item.priceCents,
+            available: item.available !== false,
+            customizationMode: item.customizationMode || "AUTO",
+            sendToKitchen: item.sendToKitchen !== false,
+            ...taxPolicy,
+            options: (item.options || []).map((option) => ({
               id: option.id,
               menuItemId: option.menuItemId,
-              optionGroupId: option.optionGroupId || group.id,
+              optionGroupId: option.optionGroupId || null,
               name: option.name,
               priceCents: option.priceCents,
               required: Boolean(option.required),
               isDefault: Boolean(option.isDefault),
               sortOrder: option.sortOrder || 0
+            })),
+            optionGroups: (item.optionGroups || []).map((group) => ({
+              id: group.id,
+              menuItemId: group.menuItemId,
+              name: group.name,
+              required: Boolean(group.required),
+              minSelect: group.minSelect || 0,
+              maxSelect: group.maxSelect || 1,
+              sortOrder: group.sortOrder || 0,
+              options: (group.options || []).map((option) => ({
+                id: option.id,
+                menuItemId: option.menuItemId,
+                optionGroupId: option.optionGroupId || group.id,
+                name: option.name,
+                priceCents: option.priceCents,
+                required: Boolean(option.required),
+                isDefault: Boolean(option.isDefault),
+                sortOrder: option.sortOrder || 0
+              }))
             }))
-          }))
-        }
-      })
-    }))
+          }
+        })
+      };
+    })
   }));
 }
 
@@ -1059,6 +1070,7 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     prisma.menuItem.findMany({
       where: { restaurantId, id: { in: itemIds }, available: true },
       include: {
+        category: true,
         options: { orderBy: { sortOrder: "asc" } },
         optionGroups: {
           include: { options: { orderBy: { sortOrder: "asc" } } },
@@ -1077,6 +1089,11 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     if (!menuItem) throw httpError("Menu item is unavailable for this restaurant.", 400);
     const quantity = Math.min(99, Math.max(1, Number.parseInt(line.quantity, 10) || 1));
     const { optionIds, modifiers } = validateSelectedModifiers(menuItem, line);
+    const taxTreatment = resolveMenuItemTaxTreatment({
+      item: menuItem,
+      category: menuItem.category,
+      locationTaxRateBps: taxConfiguration.taxRateBps
+    });
     const unitPriceCents = menuItem.priceCents + modifiers.reduce((sum, option) => sum + option.priceCents, 0);
     return {
       menuItemId: menuItem.id,
@@ -1089,6 +1106,10 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
       modifiers,
       options: modifiers,
       sendToKitchen: menuItemSendToKitchen(orderConfiguration.settingsJson, menuItem.id),
+      taxTreatment: taxTreatment.treatment,
+      taxTreatmentSource: taxTreatment.source,
+      resolvedTaxRateBps: taxTreatment.taxRateBps,
+      customTaxRule: taxTreatment.customRule,
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
     };
@@ -1953,6 +1974,19 @@ function validatePosOfflineMenuLines({ transaction, configurationProof }) {
     if (unitPriceCents !== Number(line.unitPriceCents) || Number(line.basePriceCents) !== cents(menuItem.priceCents)) {
       throw posOfflineError("Offline menu item price does not match its signed snapshot.", "POS_OFFLINE_ITEM_PRICE_MISMATCH", 422, { index });
     }
+    let taxTreatment;
+    try {
+      taxTreatment = resolveMenuItemTaxTreatment({
+        item: { taxTreatment: menuItem.taxTreatment, taxRuleJson: menuItem.taxRuleJson },
+        category: {
+          taxTreatment: menuItem.categoryTaxTreatment,
+          taxRuleJson: menuItem.categoryTaxRuleJson
+        },
+        locationTaxRateBps: configurationProof.taxConfiguration.taxRateBps
+      });
+    } catch (error) {
+      throw posOfflineError(error.message, error.code || "POS_OFFLINE_LINE_TAX_INVALID", 422, { index });
+    }
     return {
       menuItemId: menuItem.id,
       name: menuItem.name,
@@ -1964,6 +1998,10 @@ function validatePosOfflineMenuLines({ transaction, configurationProof }) {
       modifiers: selected.modifiers,
       options: selected.modifiers,
       sendToKitchen: menuItem.sendToKitchen !== false,
+      taxTreatment: taxTreatment.treatment,
+      taxTreatmentSource: taxTreatment.source,
+      resolvedTaxRateBps: taxTreatment.taxRateBps,
+      customTaxRule: taxTreatment.customRule,
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
     };

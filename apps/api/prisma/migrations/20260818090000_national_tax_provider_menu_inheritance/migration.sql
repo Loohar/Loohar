@@ -1,0 +1,13 @@
+CREATE TYPE "TaxTreatment" AS ENUM (
+  'LOCATION_DEFAULT',
+  'EXEMPT',
+  'CUSTOM_RULE'
+);
+
+ALTER TABLE "MenuCategory"
+  ADD COLUMN "taxTreatment" "TaxTreatment" NOT NULL DEFAULT 'LOCATION_DEFAULT',
+  ADD COLUMN "taxRuleJson" JSONB;
+
+ALTER TABLE "MenuItem"
+  ADD COLUMN "taxTreatment" "TaxTreatment" NOT NULL DEFAULT 'LOCATION_DEFAULT',
+  ADD COLUMN "taxRuleJson" JSONB;

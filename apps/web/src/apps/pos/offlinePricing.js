@@ -4,6 +4,7 @@ import {
   calculatePosPricingSnapshot,
   resolvePosDeliveryPricingSnapshot
 } from "../../../../shared/posOfflinePricing.js";
+import { resolveMenuItemTaxTreatment } from "../../../../shared/taxTreatment.js";
 import { cashTenderSummary } from "./cashTender.js";
 
 function string(value, maximum = 200) {
@@ -47,6 +48,15 @@ function sanitizeGroup(group = {}) {
   };
 }
 
+function sanitizeTaxRule(rule) {
+  if (!rule || typeof rule !== "object" || Array.isArray(rule)) return null;
+  return {
+    taxRateBps: Number(rule.taxRateBps),
+    sourceReference: string(rule.sourceReference, 240),
+    verifiedAt: string(rule.verifiedAt, 80)
+  };
+}
+
 function sanitizeMenu(categories = []) {
   return categories.map((category) => ({
     id: string(category.id),
@@ -62,6 +72,10 @@ function sanitizeMenu(categories = []) {
       available: item.available !== false,
       customizationMode: string(item.customizationMode || "AUTO", 20),
       sendToKitchen: item.sendToKitchen !== false,
+      taxTreatment: string(item.taxTreatment || "LOCATION_DEFAULT", 40),
+      taxRuleJson: sanitizeTaxRule(item.taxRuleJson),
+      categoryTaxTreatment: string(item.categoryTaxTreatment || category.taxTreatment || "LOCATION_DEFAULT", 40),
+      categoryTaxRuleJson: sanitizeTaxRule(item.categoryTaxRuleJson || category.taxRuleJson),
       offlinePricingProof: string(item.offlinePricingProof, 64_000),
       options: (item.options || []).map(sanitizeOption),
       optionGroups: (item.optionGroups || []).map(sanitizeGroup)
@@ -258,6 +272,14 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
     }));
     const unitPriceCents = Number(menuItem.priceCents || 0) + modifiers.reduce((sum, modifier) => sum + Number(modifier.priceCents || 0), 0);
     if (unitPriceCents !== Number(line.priceCents)) throw new Error("Cart pricing no longer matches the synchronized menu.");
+    const taxTreatment = resolveMenuItemTaxTreatment({
+      item: { taxTreatment: menuItem.taxTreatment, taxRuleJson: menuItem.taxRuleJson },
+      category: {
+        taxTreatment: menuItem.categoryTaxTreatment,
+        taxRuleJson: menuItem.categoryTaxRuleJson
+      },
+      locationTaxRateBps: initialization.config.taxConfiguration.taxRateBps
+    });
     return {
       menuItemId: menuItem.id,
       name: menuItem.name,
@@ -269,6 +291,10 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
       options: modifiers,
       specialInstructions: string(line.specialInstructions, 500),
       sendToKitchen: menuItem.sendToKitchen !== false,
+      taxTreatment: taxTreatment.treatment,
+      taxTreatmentSource: taxTreatment.source,
+      resolvedTaxRateBps: taxTreatment.taxRateBps,
+      customTaxRule: taxTreatment.customRule,
       offlinePricingProof: menuItem.offlinePricingProof
     };
   });

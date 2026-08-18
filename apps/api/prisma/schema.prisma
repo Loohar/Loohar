@@ -653,6 +653,8 @@ model MenuCategory {
   name         String
   sortOrder    Int        @default(0)
   active       Boolean    @default(true)
+  taxTreatment TaxTreatment @default(LOCATION_DEFAULT)
+  taxRuleJson  Json?
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   items        MenuItem[]
   createdAt    DateTime   @default(now())
@@ -681,6 +683,8 @@ model MenuItem {
   isSpicy             Boolean               @default(false)
   isDairyFree         Boolean               @default(false)
   isNutFree           Boolean               @default(false)
+  taxTreatment        TaxTreatment          @default(LOCATION_DEFAULT)
+  taxRuleJson         Json?
   restaurant          Restaurant            @relation(fields: [restaurantId], references: [id])
   category            MenuCategory          @relation(fields: [categoryId], references: [id])
   options             MenuItemOption[]
@@ -690,6 +694,12 @@ model MenuItem {
   updatedAt           DateTime              @updatedAt
 
   @@unique([id, restaurantId])
+}
+
+enum TaxTreatment {
+  LOCATION_DEFAULT
+  EXEMPT
+  CUSTOM_RULE
 }
 
 model MenuItemOptionGroup {
