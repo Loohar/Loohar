@@ -43,7 +43,7 @@ assert.equal(shouldOpenCustomization({ id: "none", customizationMode: "NONE", op
 assert.equal(shouldOpenCustomization({ id: "auto-configured", customizationMode: "AUTO", optionGroups: groups }), true, "AUTO with choices should open Customize");
 assert.equal(shouldOpenCustomization({ id: "auto-simple", customizationMode: "AUTO" }), false, "AUTO without choices should direct-add");
 assert.equal(canModifyPosItem({ id: "none", customizationMode: "NONE", optionGroups: groups }), true, "direct-add item with choices should still expose Modify");
-assert.equal(canModifyPosItem({ id: "water", customizationMode: "NONE" }), false, "simple item should hide Modify");
+assert.equal(canModifyPosItem({ id: "water", customizationMode: "NONE" }), true, "simple item should expose Modify for line instructions");
 assert.equal(posCustomizationMode({ customizationMode: "invalid" }), "AUTO", "invalid client mode should fall back safely");
 
 const restaurantRoleBlock = restaurantRoutes.slice(restaurantRoutes.indexOf("const restaurantRoles"), restaurantRoutes.indexOf("router.use"));

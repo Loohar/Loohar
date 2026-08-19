@@ -110,9 +110,9 @@ const simpleLine = {
   specialInstructions: ""
 };
 
-assert.equal(shouldOpenCustomization(simpleItem), false, "simple item should not expose Modify");
+assert.equal(shouldOpenCustomization(simpleItem), false, "simple item should direct-add from the menu");
 assert.equal(shouldOpenCustomization(configurableItem), true, "configurable item should expose Modify");
-assert.equal(canModifyPosItem(simpleItem), false, "simple item should hide Modify");
+assert.equal(canModifyPosItem(simpleItem), true, "simple item should expose Modify for line instructions");
 assert.equal(canModifyPosItem(configurableItem), true, "configurable item should show Modify");
 
 const preloaded = posSelectionsFromOptionIds(
@@ -184,7 +184,7 @@ assert.ok(payBlock.indexOf("POS_EVENT.SELECT_PAYMENT") < payBlock.indexOf("globa
 assert.ok(screens.includes("Preparing the server-verified total...") && screens.includes("!quoteReady || !canAcceptCash"), "payment controls should remain disabled until the authoritative quote is ready");
 assert.ok(successBlock.includes("setPaymentResult({") && successBlock.includes("success: true") && successBlock.includes("POS_EVENT.PAYMENT_SUCCEEDED"), "successful payment should show confirmation and change before resetting");
 assert.ok(finishBlock.includes("resetCurrentOrder()") && finishBlock.includes("POS_EVENT.HOME"), "Done should clear the cart and return to Register Home");
-assert.ok(screens.includes("canModifyPosItem") && screens.includes("Modify ${line.name}"), "Modify should render only for meaningfully configurable cart lines");
+assert.ok(screens.includes("canModifyPosItem") && screens.includes("Modify ${line.name}"), "Modify should render for editable cart lines");
 assert.ok(screens.includes("Repeat ${line.name}") && screens.includes('title="Remove item"'), "cart lines should expose Repeat and a compact accessible delete icon");
 assert.ok(styles.includes(".pos-entry-cart-actions") && styles.includes("overflow-y-auto") && styles.includes(".pos-entry-cart-footer-actions"), "cart lines should scroll while the Pay footer remains outside the scroll region");
 assert.ok(app.includes("disabled={modifierSelectionErrors.length > 0}"), "required modifier validation should disable Add and Update");

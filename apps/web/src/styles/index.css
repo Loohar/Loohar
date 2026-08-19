@@ -942,15 +942,20 @@ textarea {
   }
 
   .pos-modifier-card {
-    @apply flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-line bg-white shadow-2xl;
+    @apply flex max-h-[calc(100dvh-2rem)] min-w-0 w-full max-w-3xl flex-col overflow-hidden rounded-md border border-line bg-white shadow-2xl;
   }
 
   .pos-modifier-head {
     @apply flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-start sm:justify-between;
   }
 
+  .pos-modifier-head > div {
+    @apply min-w-0;
+  }
+
   .pos-modifier-head h3 {
     @apply text-2xl font-black text-ink;
+    overflow-wrap: anywhere;
   }
 
   .pos-modifier-head p {
@@ -984,6 +989,10 @@ textarea {
     @apply rounded-md border border-line bg-slate-50 p-3;
   }
 
+  .pos-modifier-group.invalid {
+    @apply border-rose-200 bg-rose-50/60;
+  }
+
   .pos-modifier-group legend {
     @apply mb-3 flex flex-wrap items-center gap-2 text-sm font-black text-ink;
   }
@@ -1008,16 +1017,26 @@ textarea {
     @apply border-mint bg-mint/10 text-ink ring-1 ring-mint/30;
   }
 
-  .pos-modifier-option span {
-    @apply min-w-0;
+  .pos-modifier-option:disabled {
+    @apply cursor-not-allowed opacity-45;
   }
 
-  .pos-modifier-option b {
+  .pos-modifier-group-error {
+    @apply mt-2 text-xs font-black text-rose-600;
+  }
+
+  .pos-modifier-option span {
+    @apply min-w-0;
+    overflow-wrap: anywhere;
+  }
+
+  .pos-modifier-option b,
+  .pos-modifier-option strong {
     @apply shrink-0 text-xs font-black text-mint;
   }
 
   .pos-modifier-actions {
-    @apply grid gap-2 border-t border-line bg-white p-4 sm:grid-cols-[1fr_1fr];
+    @apply grid shrink-0 gap-2 border-t border-line bg-white p-4 sm:grid-cols-[1fr_1fr];
   }
 
   .menu-modifier-builder {
@@ -1025,7 +1044,7 @@ textarea {
   }
 
   .menu-modifier-builder summary {
-    @apply cursor-pointer list-none text-sm font-black text-ink;
+    @apply flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-ink;
   }
 
   .menu-modifier-builder summary::-webkit-details-marker {
@@ -1034,6 +1053,18 @@ textarea {
 
   .menu-modifier-list {
     @apply mt-3 grid gap-3;
+  }
+
+  .menu-modifier-library {
+    @apply bg-white;
+  }
+
+  .menu-modifier-assign {
+    @apply mt-3 flex flex-wrap gap-2 rounded-md border border-line bg-white p-3;
+  }
+
+  .menu-modifier-assign .active {
+    @apply border-mint bg-mint/10 text-mint;
   }
 
   .menu-modifier-panel {
@@ -5454,6 +5485,87 @@ textarea {
 
     .pos-home-action.primary {
       @apply col-span-2;
+    }
+
+    .pos-modifier-dialog {
+      display: block;
+      padding: 0;
+    }
+
+    .pos-modifier-card {
+      width: 100%;
+      max-width: none;
+      height: 100dvh;
+      max-height: 100dvh;
+      border: 0;
+      border-radius: 0;
+      padding-right: env(safe-area-inset-right);
+      padding-left: env(safe-area-inset-left);
+    }
+
+    .pos-modifier-head {
+      @apply flex-row items-start justify-between gap-2;
+      padding: 0.45rem 0.75rem;
+      padding-top: calc(0.45rem + env(safe-area-inset-top));
+    }
+
+    .pos-modifier-head h3 {
+      font-size: 1.125rem;
+      line-height: 1.35;
+    }
+
+    .pos-modifier-head p,
+    .pos-modifier-head span {
+      font-size: 0.75rem;
+      line-height: 1rem;
+    }
+
+    .pos-modifier-scroll {
+      scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    }
+
+    .pos-modifier-groups {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem;
+      padding: 0.5rem;
+    }
+
+    .pos-modifier-group {
+      padding: 0.5rem;
+    }
+
+    .pos-modifier-group legend {
+      margin-bottom: 0.5rem;
+    }
+
+    .pos-modifier-options {
+      gap: 0.375rem;
+    }
+
+    .pos-modifier-option {
+      min-height: 44px;
+      padding: 0.45rem 0.6rem;
+    }
+
+    .pos-modifier-instructions {
+      padding-right: 0.5rem;
+      padding-bottom: 0.5rem;
+      padding-left: 0.5rem;
+      scroll-margin-bottom: calc(6rem + env(safe-area-inset-bottom));
+    }
+
+    .pos-modifier-instructions textarea {
+      min-height: 3.25rem;
+    }
+
+    .pos-modifier-actions {
+      grid-template-columns: 1fr 1fr;
+      padding: 0.5rem;
+      padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    }
+
+    .pos-modifier-actions button {
+      min-height: 44px;
     }
   }
 

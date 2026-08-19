@@ -384,7 +384,7 @@ export function OrderEntryScreen({
           </div>
           {selectedLine ? (
             <div className="pos-entry-action-dock" aria-label={`Actions for ${selectedLine.name}`}>
-              <button type="button" onClick={() => onModify(selectedLine, selectedItem)} disabled={!selectedLineCanModify} title={selectedLineCanModify ? `Modify ${selectedLine.name}` : "This item has no customizable options"}><SlidersHorizontal size={17} />Modify</button>
+              <button type="button" onClick={() => onModify(selectedLine, selectedItem)} disabled={!selectedLineCanModify} title={selectedLineCanModify ? `Modify ${selectedLine.name}` : "Menu details are unavailable for this item"}><SlidersHorizontal size={17} />Modify</button>
               <button type="button" onClick={() => onRepeat(selectedLine.cartLineId)}><Repeat2 size={17} />Repeat</button>
               <div className="pos-entry-dock-quantity" aria-label={`${selectedLine.name} quantity controls`}>
                 <button type="button" onClick={() => onDecrease(selectedLine.cartLineId)} aria-label={`Decrease ${selectedLine.name}`}><Minus size={17} /></button>

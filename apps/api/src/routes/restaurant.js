@@ -1498,7 +1498,8 @@ function sanitizeModifierOptions(options = []) {
       priceCents: intInRange(option?.priceCents, 0, 0, 999999),
       required: Boolean(option?.required),
       isDefault: Boolean(option?.isDefault),
-      sortOrder: intInRange(option?.sortOrder, index, 0, 999)
+      sortOrder: intInRange(option?.sortOrder, index, 0, 999),
+      enabled: option?.enabled === undefined ? option?.available !== false && option?.active !== false : Boolean(option.enabled)
     }))
     .filter((option) => option.name);
 }
@@ -1522,6 +1523,247 @@ function sanitizeModifierGroupPayload(body = {}, { partial = false } = {}) {
   };
 }
 
+function modifierLibraryId() {
+  return `modlib_${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(12).toString("hex")}`;
+}
+
+function modifierLibraryFromSettings(settingsJson) {
+  const settings = asObject(settingsJson);
+  const library = asObject(settings.modifierGroupLibrary);
+  const groups = Array.isArray(library.groups) ? library.groups : [];
+  return groups
+    .filter((group) => group && typeof group === "object")
+    .map((group, index) => {
+      const name = String(group.name || "").trim().slice(0, 120);
+      if (!name) return null;
+      const maxSelect = intInRange(group.maxSelect, 1, 1, 99);
+      const minSelect = Math.min(maxSelect, intInRange(group.minSelect, 0, 0, 99));
+      const options = sanitizeModifierOptions(group.options || []).map((option, optionIndex) => ({
+        id: option.id || modifierLibraryId(),
+        name: option.name,
+        priceCents: option.priceCents,
+        required: Boolean(option.required),
+        isDefault: Boolean(option.isDefault),
+        enabled: option.enabled !== false,
+        sortOrder: intInRange(option.sortOrder, optionIndex, 0, 999)
+      }));
+      return {
+        id: String(group.id || modifierLibraryId()).slice(0, 80),
+        name,
+        description: String(group.description || "").trim().slice(0, 500),
+        enabled: group.enabled !== false,
+        required: Boolean(group.required),
+        minSelect,
+        maxSelect,
+        sortOrder: intInRange(group.sortOrder, index, 0, 999),
+        options
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || left.name.localeCompare(right.name));
+}
+
+function settingsWithModifierLibrary(settingsJson, groups) {
+  const settings = asObject(settingsJson);
+  return {
+    ...settings,
+    modifierGroupLibrary: {
+      ...asObject(settings.modifierGroupLibrary),
+      version: 1,
+      groups
+    }
+  };
+}
+
+function modifierLibraryAssignments(settingsJson) {
+  const settings = asObject(settingsJson);
+  return asObject(settings.modifierGroupLibraryAssignments);
+}
+
+function settingsWithModifierLibraryAssignment(settingsJson, itemId, libraryGroupId, itemOptionGroupId) {
+  const settings = asObject(settingsJson);
+  const assignments = modifierLibraryAssignments(settingsJson);
+  return {
+    ...settings,
+    modifierGroupLibraryAssignments: {
+      ...assignments,
+      [itemId]: {
+        ...asObject(assignments[itemId]),
+        [libraryGroupId]: itemOptionGroupId
+      }
+    }
+  };
+}
+
+function sanitizeModifierLibraryGroupPayload(body = {}, existing = {}) {
+  const { groupData, options = [] } = sanitizeModifierGroupPayload(body);
+  if (!options.length) throw modifierHttpError("At least one modifier option is required.", "MENU_MODIFIER_OPTION_REQUIRED");
+  return {
+    id: existing.id || String(body.id || modifierLibraryId()).slice(0, 80),
+    name: groupData.name || existing.name,
+    description: String(body.description ?? existing.description ?? "").trim().slice(0, 500),
+    enabled: body.enabled === undefined ? existing.enabled !== false : Boolean(body.enabled),
+    required: groupData.required ?? Boolean(existing.required),
+    minSelect: groupData.minSelect ?? Number(existing.minSelect || 0),
+    maxSelect: groupData.maxSelect ?? Number(existing.maxSelect || 1),
+    sortOrder: groupData.sortOrder ?? Number(existing.sortOrder || 0),
+    options: options.map((option, index) => ({
+      id: option.id || modifierLibraryId(),
+      name: option.name,
+      priceCents: option.priceCents,
+      required: Boolean(option.required),
+      isDefault: Boolean(option.isDefault),
+      enabled: option.enabled !== false,
+      sortOrder: option.sortOrder ?? index
+    }))
+  };
+}
+
+function itemModifierGroupCreateDataFromLibrary(libraryGroup, itemId, sortOrder = 0) {
+  const options = (libraryGroup.options || [])
+    .filter((option) => option.enabled !== false)
+    .map((option, index) => ({
+      name: option.name,
+      priceCents: intInRange(option.priceCents, 0, 0, 999999),
+      required: Boolean(option.required),
+      isDefault: Boolean(option.isDefault),
+      sortOrder: intInRange(option.sortOrder, index, 0, 999),
+      menuItemId: itemId
+    }));
+  if (!options.length) throw modifierHttpError("At least one enabled modifier option is required.", "MENU_MODIFIER_OPTION_REQUIRED");
+  const maxSelect = intInRange(libraryGroup.maxSelect, 1, 1, 99);
+  const minSelect = Math.min(maxSelect, intInRange(libraryGroup.minSelect, 0, 0, 99));
+  return {
+    name: libraryGroup.name,
+    required: Boolean(libraryGroup.required),
+    minSelect: Boolean(libraryGroup.required) ? Math.max(1, minSelect) : minSelect,
+    maxSelect,
+    sortOrder: intInRange(sortOrder, libraryGroup.sortOrder || 0, 0, 999),
+    menuItemId: itemId,
+    options: { create: options }
+  };
+}
+
+function modifierOptionCreateData(option, itemId, index = 0) {
+  return {
+    name: option.name,
+    priceCents: option.priceCents,
+    required: Boolean(option.required),
+    isDefault: Boolean(option.isDefault),
+    sortOrder: option.sortOrder ?? index,
+    menuItemId: itemId
+  };
+}
+
+async function getModifierLibrary(req, res, next) {
+  try {
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantIdFor(req) }, select: { settingsJson: true } });
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    res.json({ modifierGroups: modifierLibraryFromSettings(restaurant.settingsJson) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function createModifierLibraryGroup(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const groups = modifierLibraryFromSettings(restaurant.settingsJson);
+    const nextGroup = sanitizeModifierLibraryGroupPayload({ ...req.body, sortOrder: req.body.sortOrder ?? groups.length + 1 });
+    const nextSettings = settingsWithModifierLibrary(restaurant.settingsJson, [...groups, nextGroup]);
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.modifierLibrary.created", entityType: "ModifierGroupLibrary", entityId: nextGroup.id, metadata: { optionCount: nextGroup.options.length } });
+    res.status(201).json({ modifierGroup: nextGroup, modifierGroups: modifierLibraryFromSettings(nextSettings) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateModifierLibraryGroup(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const groups = modifierLibraryFromSettings(restaurant.settingsJson);
+    const existing = groups.find((group) => group.id === req.params.libraryGroupId);
+    if (!existing) return res.status(404).json({ error: "Modifier library group not found" });
+    const nextGroup = sanitizeModifierLibraryGroupPayload(req.body, existing);
+    const nextGroups = groups.map((group) => group.id === existing.id ? nextGroup : group);
+    const nextSettings = settingsWithModifierLibrary(restaurant.settingsJson, nextGroups);
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.modifierLibrary.updated", entityType: "ModifierGroupLibrary", entityId: nextGroup.id, metadata: { optionCount: nextGroup.options.length } });
+    res.json({ modifierGroup: nextGroup, modifierGroups: modifierLibraryFromSettings(nextSettings) });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function deleteModifierLibraryGroup(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } });
+    if (!restaurant) return res.status(404).json({ error: "Restaurant not found" });
+    const groups = modifierLibraryFromSettings(restaurant.settingsJson);
+    const existing = groups.find((group) => group.id === req.params.libraryGroupId);
+    if (!existing) return res.status(404).json({ error: "Modifier library group not found" });
+    const nextSettings = settingsWithModifierLibrary(restaurant.settingsJson, groups.filter((group) => group.id !== existing.id));
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.modifierLibrary.deleted", entityType: "ModifierGroupLibrary", entityId: existing.id });
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function assignModifierLibraryGroupToItem(req, res, next) {
+  try {
+    const restaurantId = restaurantIdFor(req);
+    const [restaurant, item] = await Promise.all([
+      prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { settingsJson: true } }),
+      prisma.menuItem.findUnique({ where: { id_restaurantId: { id: req.params.itemId, restaurantId } } })
+    ]);
+    if (!restaurant || !item) return res.status(404).json({ error: "Menu item not found" });
+    const libraryGroup = modifierLibraryFromSettings(restaurant.settingsJson).find((group) => group.id === req.params.libraryGroupId);
+    if (!libraryGroup || libraryGroup.enabled === false) return res.status(404).json({ error: "Modifier library group not found" });
+
+    const assignment = asObject(modifierLibraryAssignments(restaurant.settingsJson)[item.id]);
+    const mappedGroupId = assignment[libraryGroup.id];
+    const existing = mappedGroupId
+      ? await prisma.menuItemOptionGroup.findFirst({ where: { id: mappedGroupId, menuItemId: item.id } })
+      : await prisma.menuItemOptionGroup.findFirst({ where: { menuItemId: item.id, name: libraryGroup.name } });
+    const sortOrder = intInRange(req.body?.sortOrder, existing?.sortOrder ?? libraryGroup.sortOrder ?? 0, 0, 999);
+    const data = itemModifierGroupCreateDataFromLibrary(libraryGroup, item.id, sortOrder);
+    const optionGroup = existing
+      ? await prisma.$transaction(async (tx) => {
+          await tx.menuItemOption.deleteMany({ where: { optionGroupId: existing.id } });
+          return tx.menuItemOptionGroup.update({
+            where: { id: existing.id },
+            data: {
+              name: data.name,
+              required: data.required,
+              minSelect: data.minSelect,
+              maxSelect: data.maxSelect,
+              sortOrder: data.sortOrder,
+              options: data.options
+            },
+            include: { options: { orderBy: { sortOrder: "asc" } } }
+          });
+        })
+      : await prisma.menuItemOptionGroup.create({
+          data,
+          include: { options: { orderBy: { sortOrder: "asc" } } }
+        });
+    const nextSettings = settingsWithModifierLibraryAssignment(restaurant.settingsJson, item.id, libraryGroup.id, optionGroup.id);
+    await prisma.restaurant.update({ where: { id: restaurantId }, data: { settingsJson: nextSettings } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "menu.modifierLibrary.assigned", entityType: "MenuItemOptionGroup", entityId: optionGroup.id, metadata: { itemId: item.id, libraryGroupId: libraryGroup.id, optionCount: optionGroup.options.length } });
+    res.json({ optionGroup });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function createItemOptionGroup(req, res, next) {
   try {
     const restaurantId = restaurantIdFor(req);
@@ -1533,7 +1775,7 @@ async function createItemOptionGroup(req, res, next) {
       data: {
         ...groupData,
         menuItemId: item.id,
-        options: { create: options.map((option, index) => ({ ...option, menuItemId: item.id, sortOrder: option.sortOrder ?? index })) }
+        options: { create: options.map((option, index) => modifierOptionCreateData(option, item.id, index)) }
       },
       include: { options: { orderBy: { sortOrder: "asc" } } }
     });
@@ -1564,7 +1806,7 @@ async function updateItemOptionGroup(req, res, next) {
       where: { id: existing.id },
       data: {
         ...groupData,
-        ...(options ? { options: { create: options.map((option, index) => ({ ...option, menuItemId: item.id, sortOrder: option.sortOrder ?? index })) } } : {})
+        ...(options ? { options: { create: options.map((option, index) => modifierOptionCreateData(option, item.id, index)) } } : {})
       },
       include: { options: { orderBy: { sortOrder: "asc" } } }
     });
@@ -1609,10 +1851,20 @@ router.get("/:restaurantId/menu-items/:itemId/options", getItemOptionGroups);
 router.post("/:restaurantId/menu-items/:itemId/options", createItemOptionGroup);
 router.patch("/:restaurantId/menu-items/:itemId/options/:optionGroupId", updateItemOptionGroup);
 router.delete("/:restaurantId/menu-items/:itemId/options/:optionGroupId", deleteItemOptionGroup);
+router.get("/:restaurantId/menu/modifier-library", getModifierLibrary);
+router.post("/:restaurantId/menu/modifier-library", createModifierLibraryGroup);
+router.patch("/:restaurantId/menu/modifier-library/:libraryGroupId", updateModifierLibraryGroup);
+router.delete("/:restaurantId/menu/modifier-library/:libraryGroupId", deleteModifierLibraryGroup);
+router.post("/:restaurantId/menu/items/:itemId/modifier-library/:libraryGroupId/assign", assignModifierLibraryGroupToItem);
 router.get("/menu-items/:itemId/options", getItemOptionGroups);
 router.post("/menu-items/:itemId/options", createItemOptionGroup);
 router.patch("/menu-items/:itemId/options/:optionGroupId", updateItemOptionGroup);
 router.delete("/menu-items/:itemId/options/:optionGroupId", deleteItemOptionGroup);
+router.get("/menu/modifier-library", getModifierLibrary);
+router.post("/menu/modifier-library", createModifierLibraryGroup);
+router.patch("/menu/modifier-library/:libraryGroupId", updateModifierLibraryGroup);
+router.delete("/menu/modifier-library/:libraryGroupId", deleteModifierLibraryGroup);
+router.post("/menu/items/:itemId/modifier-library/:libraryGroupId/assign", assignModifierLibraryGroupToItem);
 
 router.get("/:restaurantId/orders", async (req, res, next) => {
   try {

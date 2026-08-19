@@ -136,10 +136,18 @@ export function shouldOpenCustomization(item = {}) {
   return normalizePosModifierGroups(item).length > 0;
 }
 
+export function posLineInstructionsSupported(item = {}) {
+  if (!item || !(item.id || item.menuItemId)) return false;
+  return item.allowSpecialInstructions !== false
+    && item.specialInstructionsEnabled !== false
+    && item.disableSpecialInstructions !== true;
+}
+
 export function canModifyPosItem(item = {}) {
   if (!item || posModifierConfigurationError(item)) return false;
   const mode = posCustomizationMode(item);
   return normalizePosModifierGroups(item).length > 0
+    || posLineInstructionsSupported(item)
     || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode);
 }
 
@@ -159,7 +167,11 @@ export function posMenuInteractionMetadata(item = {}) {
     directAddConfigurationError: directAddErrors.length
       ? `${item.name || "This item"} needs a default modifier selection before No customization can be used.`
       : "",
-    canModify: !configurationError && (modifierGroups.length > 0 || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode)),
+    canModify: !configurationError && (
+      modifierGroups.length > 0
+      || posLineInstructionsSupported(item)
+      || [POS_CUSTOMIZATION_MODE.REQUIRED, POS_CUSTOMIZATION_MODE.OPTIONAL].includes(mode)
+    ),
     opensCustomization
   };
 }

@@ -38,6 +38,7 @@ const requiredScripts = [
 ];
 
 assertCheck(requiredScripts.every((scriptName) => packageJson.scripts?.[scriptName]?.includes("pos-modifiers-test.mjs")), "POS modifier release scripts are registered");
+assertCheck(packageJson.scripts?.["test:modifier-library"]?.includes("pos-modifier-library-test.mjs"), "POS modifier library regression script is registered");
 
 if (mode === "all" || mode === "performance") {
   assertCheck(includesAll(posService, [
@@ -75,10 +76,15 @@ if (mode === "all" || mode === "menu-admin") {
     "router.delete(\"/:restaurantId/menu-items/:itemId/options/:optionGroupId\"",
     "menu.item.modifiers.created",
     "menu.item.modifiers.updated",
-    "menu.item.modifiers.deleted"
-  ]), "Restaurant menu API supports create, update, delete, and audit logging for modifier groups");
+    "menu.item.modifiers.deleted",
+    "modifierGroupLibrary",
+    "assignModifierLibraryGroupToItem",
+    "menu.modifierLibrary.assigned"
+  ]), "Restaurant menu API supports item-owned modifiers plus reusable modifier library assignment");
   assertCheck(includesAll(app, [
     "menu-modifier-builder",
+    "Reusable modifier library",
+    "assignModifierLibraryGroup(item, group)",
     "modifierPayloadFromDraft",
     "saveModifierGroup",
     "deleteModifierGroup",

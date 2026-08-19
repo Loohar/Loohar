@@ -110,6 +110,33 @@ function customizationModeDetail(value) {
     || POS_CUSTOMIZATION_MODE_OPTIONS[0].detail;
 }
 
+function modifierLibraryFromSettings(settingsJson = {}) {
+  const library = settingsJson?.modifierGroupLibrary;
+  return Array.isArray(library?.groups)
+    ? library.groups
+        .filter((group) => group?.id && group?.name)
+        .map((group, index) => ({
+          ...group,
+          enabled: group.enabled !== false,
+          minSelect: Number(group.minSelect || 0),
+          maxSelect: Math.max(1, Number(group.maxSelect || 1)),
+          sortOrder: Number(group.sortOrder ?? index),
+          options: Array.isArray(group.options) ? group.options : []
+        }))
+        .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0) || String(left.name || "").localeCompare(String(right.name || "")))
+    : [];
+}
+
+function modifierOptionsText(options = []) {
+  return (options || []).map((option) => {
+    const flags = [
+      option.isDefault ? "default" : "",
+      option.enabled === false ? "disabled" : ""
+    ].filter(Boolean);
+    return [option.name, option.priceCents || 0, ...flags].join(" | ");
+  }).join("\n");
+}
+
 let qrCodeLoader;
 let socketIoLoader;
 
@@ -8914,7 +8941,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       : cart.find((candidate) => candidate.cartLineId === cartLineOrId);
     const item = menuItem || menuItemById.get(line?.menuItemId);
     if (!line || !item || !(item.posCanModify ?? canModifyPosItem(item))) {
-      setError("This item has no customizable options.");
+      setError("This cart line cannot be modified because its menu details are unavailable.");
       return;
     }
     openModifierDialog(item, line);
@@ -10058,20 +10085,28 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
                   const selectedIds = modifierSelections[group.id] || [];
                   const maximum = Math.max(1, Number(group.maxSelect || 1));
                   const minimum = group.required ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+                  const groupError = selectedIds.length < minimum
+                    ? `Choose ${minimum === 1 ? "one option" : `at least ${minimum} options`}.`
+                    : selectedIds.length > maximum
+                      ? `Choose up to ${maximum} option${maximum === 1 ? "" : "s"}.`
+                      : "";
+                  const maxReached = maximum > 1 && selectedIds.length >= maximum;
                   return (
-                    <fieldset className="pos-modifier-group" key={group.id}>
-                      <legend><strong>{group.name}</strong><span>{minimum ? `Choose at least ${minimum}` : "Optional"}{maximum ? ` · max ${maximum}` : ""}</span></legend>
+                    <fieldset className={`pos-modifier-group${groupError ? " invalid" : ""}`} key={group.id}>
+                      <legend><strong>{group.name}</strong><span>{minimum ? "Required" : "Optional"} · {maximum === 1 ? "Choose one" : `Choose up to ${maximum}`}</span></legend>
                       <div className="pos-modifier-options">
                         {group.options.map((option) => {
                           const selected = selectedIds.includes(option.id);
+                          const disabled = !selected && maxReached;
                           return (
-                            <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected}>
+                            <button className={`pos-modifier-option ${selected ? "selected" : ""}`} type="button" key={option.id} onClick={() => toggleModifierSelection(group, option)} aria-pressed={selected} disabled={disabled} title={disabled ? `Choose up to ${maximum} options.` : undefined}>
                               <span>{option.name}</span>
                               <strong>{option.priceCents ? `+${money(option.priceCents)}` : "Included"}</strong>
                             </button>
                           );
                         })}
                       </div>
+                      {groupError ? <p className="pos-modifier-group-error">{groupError}</p> : null}
                     </fieldset>
                   );
                 })}
@@ -10487,6 +10522,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const [savingAction, setSavingAction] = useState("");
   const [menuValidation, setMenuValidation] = useState({});
   const [modifierDrafts, setModifierDrafts] = useState({});
+  const [modifierLibrary, setModifierLibrary] = useState(() => modifierLibraryFromSettings(initialProfile.settingsJson));
   const [websiteSaveState, setWebsiteSaveState] = useState("idle");
   const [websiteDirty, setWebsiteDirty] = useState(false);
   const [websiteLastSavedAt, setWebsiteLastSavedAt] = useState(null);
@@ -10536,6 +10572,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     setGallery([]);
     setSocialLinks([]);
     setEmployees([]);
+    setModifierLibrary(modifierLibraryFromSettings(nextProfile?.settingsJson));
     setDispatch(emptyDispatchCenter());
     setDeliveryZones([]);
     setInventoryItems([]);
@@ -10642,10 +10679,13 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     return {
       id: group.id || "",
       name: group.name || "",
+      description: group.description || "",
+      enabled: group.enabled !== false,
       required: Boolean(group.required),
       minSelect: Number(group.minSelect || 0),
       maxSelect: Number(group.maxSelect || 1),
-      optionsText: (group.options || []).map((option) => `${option.name}${option.priceCents ? ` | ${option.priceCents}` : ""}`).join("\n")
+      sortOrder: Number(group.sortOrder || 0),
+      optionsText: modifierOptionsText(group.options || [])
     };
   }
 
@@ -10660,17 +10700,34 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     setModifierDrafts((current) => ({ ...current, [key]: { ...fallback, ...(current[key] || {}), ...data } }));
   }
 
+  function modifierLibraryDraftKey(groupId = "new") {
+    return `library:${groupId || "new"}`;
+  }
+
+  function modifierLibraryDraftFor(group = null) {
+    const key = modifierLibraryDraftKey(group?.id || "new");
+    return modifierDrafts[key] || draftFromModifierGroup(group || { name: "", maxSelect: 1, enabled: true, options: [] });
+  }
+
+  function updateModifierLibraryDraft(groupId, data) {
+    const key = modifierLibraryDraftKey(groupId || "new");
+    const fallback = groupId ? draftFromModifierGroup(modifierLibrary.find((group) => group.id === groupId) || {}) : modifierLibraryDraftFor();
+    setModifierDrafts((current) => ({ ...current, [key]: { ...fallback, ...(current[key] || {}), ...data } }));
+  }
+
   function parseModifierOptionsText(optionsText = "") {
     return String(optionsText)
       .split(/\n|,/)
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line, index) => {
-        const [namePart, pricePart = "0"] = line.split("|").map((part) => part.trim());
+        const [namePart, pricePart = "0", ...flagParts] = line.split("|").map((part) => part.trim());
+        const flags = new Set(flagParts.flatMap((part) => part.toLowerCase().split(/\s+/)).filter(Boolean));
         return {
           name: namePart,
           priceCents: Math.max(0, Number(pricePart.replace(/[^0-9.-]/g, "")) || 0),
-          available: true,
+          isDefault: flags.has("default") || flags.has("selected"),
+          enabled: !(flags.has("disabled") || flags.has("off") || flags.has("inactive")),
           sortOrder: index + 1
         };
       })
@@ -10682,10 +10739,12 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     const minSelect = Math.max(0, Math.min(maxSelect, Number(draft.minSelect || 0)));
     return {
       name: String(draft.name || "").trim(),
+      description: String(draft.description || "").trim(),
+      enabled: draft.enabled !== false,
       required: Boolean(draft.required),
       minSelect: draft.required ? Math.max(1, minSelect) : minSelect,
       maxSelect,
-      sortOrder: 0,
+      sortOrder: Number(draft.sortOrder || 0),
       options: parseModifierOptionsText(draft.optionsText)
     };
   }
@@ -10796,6 +10855,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       setFeatureLocks(lockedFeatures);
       setStats(dashboardPayload);
       setProfile(nextProfile);
+      setModifierLibrary(modifierLibraryFromSettings(nextProfile.settingsJson));
       setCategories(categoriesPayload.categories || []);
       setItems(itemsPayload.items || []);
       setOrders(ordersPayload.orders || []);
@@ -11349,6 +11409,110 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       setItems((current) => current.map((row) => row.id === item.id ? { ...row, optionGroups: (row.optionGroups || []).filter((currentGroup) => currentGroup.id !== group.id) } : row));
       showToast("Modifier group deleted.");
       await loadRestaurant();
+    } catch (modifierError) {
+      setError(modifierError.message);
+      showToast(modifierError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function saveModifierLibraryGroup(group = null) {
+    const draft = modifierLibraryDraftFor(group);
+    const payload = modifierPayloadFromDraft(draft);
+    if (!payload.name || payload.name.length < 2) {
+      return showToast("Modifier group name must be at least 2 characters.", "bad");
+    }
+    if (!payload.options.length) {
+      return showToast("Add at least one modifier option.", "bad");
+    }
+    if (!apiOnline || !token || !restaurantId) {
+      return showToast("Live API connection and restaurant login are required to save the modifier library.", "bad");
+    }
+    const actionKey = `modifier-library:${group?.id || "new"}`;
+    setSavingAction(actionKey);
+    try {
+      const path = group?.id
+        ? `/api/restaurants/${restaurantId}/menu/modifier-library/${group.id}`
+        : `/api/restaurants/${restaurantId}/menu/modifier-library`;
+      const result = await api(path, { method: group?.id ? "PATCH" : "POST", token, body: payload });
+      setModifierLibrary(result.modifierGroups || (result.modifierGroup ? [...modifierLibrary.filter((row) => row.id !== result.modifierGroup.id), result.modifierGroup] : modifierLibrary));
+      setProfile((current) => ({
+        ...current,
+        settingsJson: {
+          ...(current.settingsJson || {}),
+          modifierGroupLibrary: {
+            ...(current.settingsJson?.modifierGroupLibrary || {}),
+            version: 1,
+            groups: result.modifierGroups || modifierLibrary
+          }
+        }
+      }));
+      if (!group?.id) {
+        const key = modifierLibraryDraftKey("new");
+        setModifierDrafts((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }
+      showToast(group?.id ? "Reusable modifier group updated." : "Reusable modifier group created.");
+      await loadRestaurant({ force: true });
+    } catch (modifierError) {
+      setError(modifierError.message);
+      showToast(modifierError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function deleteModifierLibraryGroup(group) {
+    if (!group?.id) return;
+    if (!apiOnline || !token || !restaurantId) {
+      return showToast("Live API connection and restaurant login are required to delete the modifier library.", "bad");
+    }
+    const actionKey = `modifier-library:${group.id}:delete`;
+    setSavingAction(actionKey);
+    try {
+      await api(`/api/restaurants/${restaurantId}/menu/modifier-library/${group.id}`, { method: "DELETE", token });
+      const nextGroups = modifierLibrary.filter((row) => row.id !== group.id);
+      setModifierLibrary(nextGroups);
+      showToast("Reusable modifier group deleted.");
+      await loadRestaurant({ force: true });
+    } catch (modifierError) {
+      setError(modifierError.message);
+      showToast(modifierError.message, "bad");
+    } finally {
+      setSavingAction("");
+    }
+  }
+
+  async function assignModifierLibraryGroup(item, group) {
+    if (!item?.id || !group?.id) return;
+    if (!apiOnline || !token || !restaurantId) {
+      return showToast("Live API connection and restaurant login are required to assign reusable modifiers.", "bad");
+    }
+    const actionKey = `modifier-library:${group.id}:assign:${item.id}`;
+    setSavingAction(actionKey);
+    try {
+      const result = await api(`/api/restaurants/${restaurantId}/menu/items/${item.id}/modifier-library/${group.id}/assign`, {
+        method: "POST",
+        token,
+        body: { sortOrder: (item.optionGroups || []).length + 1 }
+      });
+      if (result.optionGroup) {
+        setItems((current) => current.map((row) => {
+          if (row.id !== item.id) return row;
+          const groups = row.optionGroups || [];
+          const exists = groups.some((currentGroup) => currentGroup.id === result.optionGroup.id || currentGroup.name === result.optionGroup.name);
+          const nextGroups = exists
+            ? groups.map((currentGroup) => currentGroup.id === result.optionGroup.id || currentGroup.name === result.optionGroup.name ? result.optionGroup : currentGroup)
+            : [...groups, result.optionGroup];
+          return { ...row, optionGroups: nextGroups };
+        }));
+      }
+      showToast(`${group.name} assigned to ${item.name}.`);
+      await loadRestaurant({ force: true });
     } catch (modifierError) {
       setError(modifierError.message);
       showToast(modifierError.message, "bad");
@@ -11966,6 +12130,63 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
             {newItemImage ? <button className="button-muted justify-center" type="button" onClick={() => { setNewItemImage(null); setItemFileInputKey((key) => key + 1); }}>Remove selected image</button> : null}
             <button className="button-primary" type="submit" disabled={savingAction === "item:create"}><MenuIcon size={16} />{savingAction === "item:create" ? "Saving..." : "Create Item"}</button>
           </form>
+          <details className="menu-modifier-builder menu-modifier-library mt-5" open>
+            <summary>
+              <span>Reusable modifier library</span>
+              <StatusPill tone={modifierLibrary.length ? "good" : "neutral"}>{modifierLibrary.length ? `${modifierLibrary.length} groups` : "None"}</StatusPill>
+            </summary>
+            <div className="menu-modifier-list">
+              {modifierLibrary.map((group) => {
+                const draft = modifierLibraryDraftFor(group);
+                const actionKey = `modifier-library:${group.id}`;
+                return (
+                  <div className="menu-modifier-panel" key={group.id}>
+                    <div className="menu-modifier-panel-head">
+                      <strong>{group.name}</strong>
+                      <span>{group.enabled === false ? "Disabled" : group.required ? "Required" : "Optional"} · max {group.maxSelect || 1}</span>
+                    </div>
+                    <div className="menu-modifier-form">
+                      <input className="input" value={draft.name} placeholder="Group name" onChange={(event) => updateModifierLibraryDraft(group.id, { name: event.target.value })} />
+                      <input className="input" value={draft.description} placeholder="Description" onChange={(event) => updateModifierLibraryDraft(group.id, { description: event.target.value })} />
+                      <label className="seg"><input type="checkbox" checked={draft.enabled !== false} onChange={(event) => updateModifierLibraryDraft(group.id, { enabled: event.target.checked })} />Enabled</label>
+                      <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierLibraryDraft(group.id, { required: event.target.checked })} />Required</label>
+                      <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierLibraryDraft(group.id, { minSelect: event.target.value })} />
+                      <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierLibraryDraft(group.id, { maxSelect: event.target.value })} />
+                      <input className="input" type="number" min="0" value={draft.sortOrder} aria-label="Display order" onChange={(event) => updateModifierLibraryDraft(group.id, { sortOrder: event.target.value })} />
+                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents | default\nExtra cheese | 125\nNo ice | 0 | disabled"} onChange={(event) => updateModifierLibraryDraft(group.id, { optionsText: event.target.value })} />
+                    </div>
+                    <div className="menu-modifier-actions">
+                      <button className="button-primary" type="button" onClick={() => saveModifierLibraryGroup(group)} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Save reusable group"}</button>
+                      <button className="button-muted" type="button" onClick={() => deleteModifierLibraryGroup(group)} disabled={savingAction === `${actionKey}:delete`}><Trash2 size={15} />Delete reusable group</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {(() => {
+                const draft = modifierLibraryDraftFor();
+                const actionKey = "modifier-library:new";
+                return (
+                  <div className="menu-modifier-panel new">
+                    <div className="menu-modifier-panel-head">
+                      <strong>Create reusable group</strong>
+                      <span>Protein, cheese, pour size, garnish</span>
+                    </div>
+                    <div className="menu-modifier-form">
+                      <input className="input" value={draft.name} placeholder="Group name" onChange={(event) => updateModifierLibraryDraft("new", { name: event.target.value })} />
+                      <input className="input" value={draft.description} placeholder="Description" onChange={(event) => updateModifierLibraryDraft("new", { description: event.target.value })} />
+                      <label className="seg"><input type="checkbox" checked={draft.enabled !== false} onChange={(event) => updateModifierLibraryDraft("new", { enabled: event.target.checked })} />Enabled</label>
+                      <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierLibraryDraft("new", { required: event.target.checked })} />Required</label>
+                      <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierLibraryDraft("new", { minSelect: event.target.value })} />
+                      <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierLibraryDraft("new", { maxSelect: event.target.value })} />
+                      <input className="input" type="number" min="0" value={draft.sortOrder} aria-label="Display order" onChange={(event) => updateModifierLibraryDraft("new", { sortOrder: event.target.value })} />
+                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents | default\nChicken | 0 | default\nLamb | 200"} onChange={(event) => updateModifierLibraryDraft("new", { optionsText: event.target.value })} />
+                    </div>
+                    <button className="button-primary menu-modifier-save" type="button" onClick={() => saveModifierLibraryGroup()} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Create reusable group"}</button>
+                  </div>
+                );
+              })()}
+            </div>
+          </details>
           <div className="mt-5 space-y-4">
             {categories.length === 0 ? <EmptyState title="No menu categories" detail="Add a category before creating menu items." /> : categories.map((category) => (
               <div key={category.id}>
@@ -12038,6 +12259,19 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                               <span>Modifiers</span>
                               <StatusPill tone={(item.optionGroups || []).length ? "good" : "neutral"}>{(item.optionGroups || []).length ? `${(item.optionGroups || []).length} groups` : "None"}</StatusPill>
                             </summary>
+                            {modifierLibrary.filter((group) => group.enabled !== false).length ? (
+                              <div className="menu-modifier-assign">
+                                {modifierLibrary.filter((group) => group.enabled !== false).map((group) => {
+                                  const actionKey = `modifier-library:${group.id}:assign:${item.id}`;
+                                  const assigned = (item.optionGroups || []).some((itemGroup) => itemGroup.name === group.name);
+                                  return (
+                                    <button className={`button-muted ${assigned ? "active" : ""}`} type="button" key={group.id} onClick={() => assignModifierLibraryGroup(item, group)} disabled={savingAction === actionKey}>
+                                      {savingAction === actionKey ? "Applying..." : assigned ? `Update ${group.name}` : `Apply ${group.name}`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
                             <div className="menu-modifier-list">
                               {(item.optionGroups || []).map((group) => {
                                 const draft = modifierDraftFor(item, group);
@@ -12053,7 +12287,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                                       <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierDraft(item, group.id, { required: event.target.checked })} />Required</label>
                                       <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierDraft(item, group.id, { minSelect: event.target.value })} />
                                       <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierDraft(item, group.id, { maxSelect: event.target.value })} />
-                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents\nExtra cheese | 150"} onChange={(event) => updateModifierDraft(item, group.id, { optionsText: event.target.value })} />
+                                      <input className="input" type="number" min="0" value={draft.sortOrder} aria-label="Display order" onChange={(event) => updateModifierDraft(item, group.id, { sortOrder: event.target.value })} />
+                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents | default\nExtra cheese | 150"} onChange={(event) => updateModifierDraft(item, group.id, { optionsText: event.target.value })} />
                                     </div>
                                     <div className="menu-modifier-actions">
                                       <button className="button-primary" type="button" onClick={() => saveModifierGroup(item, group)} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Save modifiers"}</button>
@@ -12076,7 +12311,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                                       <label className="seg"><input type="checkbox" checked={draft.required} onChange={(event) => updateModifierDraft(item, "new", { required: event.target.checked })} />Required</label>
                                       <input className="input" type="number" min="0" value={draft.minSelect} aria-label="Minimum selections" onChange={(event) => updateModifierDraft(item, "new", { minSelect: event.target.value })} />
                                       <input className="input" type="number" min="1" value={draft.maxSelect} aria-label="Maximum selections" onChange={(event) => updateModifierDraft(item, "new", { maxSelect: event.target.value })} />
-                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents\nMild | 0\nMedium | 0\nExtra spicy | 50"} onChange={(event) => updateModifierDraft(item, "new", { optionsText: event.target.value })} />
+                                      <input className="input" type="number" min="0" value={draft.sortOrder} aria-label="Display order" onChange={(event) => updateModifierDraft(item, "new", { sortOrder: event.target.value })} />
+                                      <textarea className="input menu-modifier-options-input" value={draft.optionsText} placeholder={"Option name | price cents | default\nMild | 0\nMedium | 0\nExtra spicy | 50"} onChange={(event) => updateModifierDraft(item, "new", { optionsText: event.target.value })} />
                                     </div>
                                     <button className="button-primary menu-modifier-save" type="button" onClick={() => saveModifierGroup(item)} disabled={savingAction === actionKey}>{savingAction === actionKey ? "Saving..." : "Create modifier group"}</button>
                                   </div>
