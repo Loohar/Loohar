@@ -23,6 +23,7 @@ import {
   validatePosOfflinePricingSnapshot
 } from "../../../shared/posOfflinePricing.js";
 import { resolveMenuItemTaxTreatment } from "../../../shared/taxTreatment.js";
+import { resolveTaxRateMicros } from "../../../shared/taxRate.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -731,6 +732,14 @@ function requireLocationTaxConfiguration(taxConfiguration) {
   return taxConfiguration;
 }
 
+function taxRatesMatch(left, right) {
+  try {
+    return resolveTaxRateMicros(left) === resolveTaxRateMicros(right);
+  } catch {
+    return false;
+  }
+}
+
 function requireCurrentQuoteTaxSnapshot(quote, asOf = new Date()) {
   const tax = quote?.taxSnapshotJson;
   const now = new Date(asOf);
@@ -751,6 +760,8 @@ function requireCurrentQuoteTaxSnapshot(quote, asOf = new Date()) {
     || typeof tax.taxInclusive !== "boolean"
     || !Number.isSafeInteger(tax.taxRateBps)
     || tax.taxRateBps < 0
+    || !Number.isSafeInteger(tax.taxRateMicros)
+    || tax.taxRateMicros < 0
     || !tax.provider
     || !tax.source
     || !tax.jurisdictionCode
@@ -784,6 +795,7 @@ function posOfflineConfigurationSnapshot({ restaurant, staff, device, shift, tax
       provider: taxConfiguration.provider,
       source: taxConfiguration.source,
       taxRateBps: taxConfiguration.taxRateBps,
+      taxRateMicros: taxConfiguration.taxRateMicros,
       taxInclusive: taxConfiguration.taxInclusive,
       enabled: taxConfiguration.enabled,
       countryCode: taxConfiguration.countryCode,
@@ -1092,7 +1104,8 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     const taxTreatment = resolveMenuItemTaxTreatment({
       item: menuItem,
       category: menuItem.category,
-      locationTaxRateBps: taxConfiguration.taxRateBps
+      locationTaxRateBps: taxConfiguration.taxRateBps,
+      locationTaxRateMicros: taxConfiguration.taxRateMicros
     });
     const unitPriceCents = menuItem.priceCents + modifiers.reduce((sum, option) => sum + option.priceCents, 0);
     return {
@@ -1109,6 +1122,7 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
       taxTreatment: taxTreatment.treatment,
       taxTreatmentSource: taxTreatment.source,
       resolvedTaxRateBps: taxTreatment.taxRateBps,
+      resolvedTaxRateMicros: taxTreatment.taxRateMicros,
       customTaxRule: taxTreatment.customRule,
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
@@ -1123,6 +1137,7 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     discountCents,
     deliveryFeeCents,
     taxRateBps: taxConfiguration.taxRateBps,
+    taxRateMicros: taxConfiguration.taxRateMicros,
     taxInclusive: taxConfiguration.taxInclusive,
     tipCents: 0
   });
@@ -1319,6 +1334,7 @@ async function createPosOrderTransaction({
         source: taxSnapshot.source,
         taxableAmountCents: Math.max(0, quote.subtotalCents - quote.discountCents),
         taxRateBps: taxSnapshot.taxRateBps,
+        taxRateMicros: taxSnapshot.taxRateMicros,
         taxCents: quote.taxCents,
         jurisdictionJson: {
           jurisdictionCode: taxSnapshot.jurisdictionCode,
@@ -1982,7 +1998,8 @@ function validatePosOfflineMenuLines({ transaction, configurationProof }) {
           taxTreatment: menuItem.categoryTaxTreatment,
           taxRuleJson: menuItem.categoryTaxRuleJson
         },
-        locationTaxRateBps: configurationProof.taxConfiguration.taxRateBps
+        locationTaxRateBps: configurationProof.taxConfiguration.taxRateBps,
+        locationTaxRateMicros: configurationProof.taxConfiguration.taxRateMicros
       });
     } catch (error) {
       throw posOfflineError(error.message, error.code || "POS_OFFLINE_LINE_TAX_INVALID", 422, { index });
@@ -2001,6 +2018,7 @@ function validatePosOfflineMenuLines({ transaction, configurationProof }) {
       taxTreatment: taxTreatment.treatment,
       taxTreatmentSource: taxTreatment.source,
       resolvedTaxRateBps: taxTreatment.taxRateBps,
+      resolvedTaxRateMicros: taxTreatment.taxRateMicros,
       customTaxRule: taxTreatment.customRule,
       specialInstructions: String(line.specialInstructions || "").slice(0, 500),
       lineTotalCents: unitPriceCents * quantity
@@ -2088,6 +2106,7 @@ function validatePosOfflineTransaction({ transaction, restaurantId, user, sessio
     !configurationProof.taxConfiguration
     || configurationProof.taxConfiguration.locationId !== locationId
     || Number(configurationProof.taxConfiguration.taxRateBps) !== Number(transaction.taxSnapshot?.taxRateBps)
+    || !taxRatesMatch(configurationProof.taxConfiguration, transaction.taxSnapshot)
     || String(configurationProof.taxConfiguration.provider || "manual") !== String(transaction.taxSnapshot?.provider || "manual")
     || String(configurationProof.taxConfiguration.source || "") !== String(transaction.taxSnapshot?.source || "")
     || String(configurationProof.taxConfiguration.jurisdictionCode || "") !== String(transaction.taxSnapshot?.jurisdictionCode || "")
@@ -2303,6 +2322,7 @@ export async function reconcilePosOfflineCashTransaction({
           source: validated.configurationProof.taxConfiguration.source,
           taxableAmountCents: validated.transaction.taxSnapshot.taxableAmountCents,
           taxRateBps: validated.transaction.taxSnapshot.taxRateBps,
+          taxRateMicros: validated.transaction.taxSnapshot.taxRateMicros,
           taxCents: validated.transaction.taxSnapshot.taxCents,
           jurisdictionJson: {
             source: validated.configurationProof.taxConfiguration.source,

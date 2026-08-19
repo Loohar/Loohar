@@ -100,6 +100,7 @@ function providerResponse(fixture) {
   };
 }
 
+const fixtureConfigurationVersions = [];
 for (const [index, fixture] of fixtures.entries()) {
   const configuration = normalizeTaxJarResponse({
     restaurantId: "tenant-national",
@@ -116,13 +117,17 @@ for (const [index, fixture] of fixtures.entries()) {
   assert.equal(configuration.sourceMetadata.taxSource, "DESTINATION");
   assert.equal(configuration.sourceMetadata.defaultProductTreatment, "FULLY_TAXABLE_NO_PRODUCT_CODE");
   assert.equal(configuration.sourceMetadata.jurisdictionCodeType, "LOOHAR_NORMALIZED_LOCATION_KEY");
+  assert.equal(configuration.taxRateMicros, Math.round(fixture.rate * 1_000_000));
+  assert.equal(configuration.taxComponents.reduce((sum, component) => sum + component.rateMicros, 0), configuration.taxRateMicros);
   assert.equal(configuration.categoryStatus, TAX_CATEGORY_STATUS.GENERAL_RATE_SUPPORTED);
   assert.ok(configuration.taxComponents.some((component) => component.type === "STATE"));
   assert.ok(configuration.taxComponents.some((component) => component.type === "COUNTY"));
   assert.ok(configuration.taxComponents.some((component) => component.type === "MUNICIPALITY"));
   if (fixture.components[3] > 0) assert.ok(configuration.specialDistricts.length > 0);
   assert.match(configuration.configurationVersion, /^tax-v1-[a-f0-9]{24}$/);
+  fixtureConfigurationVersions.push(configuration.configurationVersion);
 }
+assert.equal(new Set(fixtureConfigurationVersions).size, fixtures.length, "each location fixture must retain an independent profile version");
 
 const unincorporatedResponse = providerResponse(fixtures[4]);
 unincorporatedResponse.tax.jurisdictions.city = "";
@@ -309,13 +314,14 @@ const normalItem = resolveMenuItemTaxTreatment({
   category: {},
   locationTaxRateBps: 825
 });
-assert.deepEqual(normalItem, { treatment: TAX_TREATMENT.LOCATION_DEFAULT, taxRateBps: 825, source: "LOCATION", customRule: null });
+assert.deepEqual(normalItem, { treatment: TAX_TREATMENT.LOCATION_DEFAULT, taxRateBps: 825, taxRateMicros: 82_500, source: "LOCATION", customRule: null });
 const categoryExempt = resolveMenuItemTaxTreatment({
   item: {},
   category: { taxTreatment: "EXEMPT" },
   locationTaxRateBps: 825
 });
 assert.equal(categoryExempt.taxRateBps, 0);
+assert.equal(categoryExempt.taxRateMicros, 0);
 assert.equal(categoryExempt.source, "CATEGORY");
 const itemOverride = resolveMenuItemTaxTreatment({
   item: { taxTreatment: "CUSTOM_RULE", taxRuleJson: { taxRateBps: 500, sourceReference: "verified-rule-1", verifiedAt: "2026-08-18T00:00:00.000Z" } },
@@ -323,6 +329,7 @@ const itemOverride = resolveMenuItemTaxTreatment({
   locationTaxRateBps: 825
 });
 assert.equal(itemOverride.taxRateBps, 500);
+assert.equal(itemOverride.taxRateMicros, 50_000);
 assert.equal(itemOverride.source, "ITEM");
 assert.equal(normalizeTaxRuleForStorage("LOCATION_DEFAULT", { taxRateBps: 999 }), null);
 assert.throws(() => normalizeTaxRuleForStorage("CUSTOM_RULE", {}), (error) => error.code === "TAX_CUSTOM_RULE_REQUIRED");
@@ -333,6 +340,11 @@ const oneHundredItems = Array.from({ length: 100 }, () => resolveMenuItemTaxTrea
   locationTaxRateBps: 825
 }));
 assert.equal(oneHundredItems.filter((item) => item.treatment === "LOCATION_DEFAULT" && item.taxRateBps === 825).length, 100);
+const oneItemExempt = oneHundredItems.map((item, index) => index === 42
+  ? resolveMenuItemTaxTreatment({ item: { taxTreatment: "EXEMPT" }, category: {}, locationTaxRateBps: 825 })
+  : item);
+assert.equal(oneItemExempt.filter((item) => item.treatment === "EXEMPT").length, 1);
+assert.equal(oneItemExempt.filter((item) => item.treatment === "LOCATION_DEFAULT" && item.taxRateBps === 825).length, 99);
 
 const pricing = calculatePosPricingSnapshot({
   lineItems: [
@@ -361,6 +373,7 @@ assert.ok(
   "Activation must remain bound to the submitted location address when the provider normalizes street or ZIP formatting"
 );
 assert.ok(schema.includes("enum TaxTreatment") && schema.match(/taxTreatment\s+TaxTreatment\s+@default\(LOCATION_DEFAULT\)/g)?.length === 2);
+assert.match(schema, /model LocationTaxProfile[\s\S]*?taxRateMicros\s+Int\?/);
 assert.ok(posService.includes("resolveMenuItemTaxTreatment") && onlineQuote.includes("resolveMenuItemTaxTreatment") && offlineClient.includes("resolveMenuItemTaxTreatment"));
 assert.ok(offlineClient.includes("categoryTaxTreatment") && offlineClient.includes("sanitizeTaxRule"), "Offline menu caching must retain signed item/category tax policy");
 assert.equal(posService.includes("createTaxJarLookup"), false, "POS hot path must not import or call a provider");
@@ -376,4 +389,4 @@ assert.equal(domain.includes("8.25"), false, "national provider logic must not h
 assert.equal(domain.includes("NewYorkRules"), false);
 assert.equal(domain.includes("CaliforniaRules"), false);
 
-console.log("national-tax-provider-test passed (six-state normalization, full-address transport, routing, failure modes, tenant/location scope, provider comparison, inheritance, pricing, Offline v1, UX, and secret isolation).\n");
+console.log("national-tax-provider-test passed (FIXTURE / CONTRACT TEST: six-state normalization, full-address transport, routing, failure modes, tenant/location scope, provider comparison, inheritance, pricing, Offline v1, UX, and secret isolation).\n");

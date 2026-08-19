@@ -1152,9 +1152,13 @@ function locationDraftFrom(location = {}, profile = {}) {
   };
 }
 
-function taxRateLabel(taxRateBps) {
-  const rate = Number(taxRateBps);
-  return Number.isFinite(rate) ? `${(rate / 100).toFixed(2)}%` : "Not available";
+function taxRateLabel(taxRateBps, taxRateMicros = null) {
+  const micros = taxRateMicros === null || taxRateMicros === undefined
+    ? Number(taxRateBps) * 100
+    : Number(taxRateMicros);
+  if (!Number.isSafeInteger(micros)) return "Not available";
+  const percentage = (micros / 10_000).toFixed(4).replace(/\.?0+$/, "");
+  return `${percentage}%`;
 }
 
 function taxDateLabel(value) {
@@ -12004,7 +12008,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                         </select>
                       </label>
                       {category.taxTreatment === "CUSTOM_RULE" ? <>
-                        <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.01" value={Number(category.taxRuleJson?.taxRateBps || 0) / 100} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxRuleJson: { ...(row.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), verifiedAt: row.taxRuleJson?.verifiedAt || new Date().toISOString() } } : row))} /></label>
+                        <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.0001" value={Number(category.taxRuleJson?.taxRateMicros ?? Number(category.taxRuleJson?.taxRateBps || 0) * 100) / 10_000} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxRuleJson: { ...(row.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), taxRateMicros: Math.round(Number(event.target.value || 0) * 10_000), verifiedAt: row.taxRuleJson?.verifiedAt || new Date().toISOString() } } : row))} /></label>
                         <label className="font-semibold text-slate-600 sm:col-span-2">Verified source<input className="input mt-1" value={category.taxRuleJson?.sourceReference || ""} onChange={(event) => setCategories((current) => current.map((row) => row.id === category.id ? { ...row, taxRuleJson: { ...(row.taxRuleJson || {}), sourceReference: event.target.value, verifiedAt: row.taxRuleJson?.verifiedAt || new Date().toISOString() } } : row))} /></label>
                       </> : null}
                     </div>
@@ -12072,7 +12076,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                                 </select>
                               </label>
                               {item.taxTreatment === "CUSTOM_RULE" ? <>
-                                <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.01" value={Number(item.taxRuleJson?.taxRateBps || 0) / 100} onChange={(event) => updateItemDraft(item.id, { taxRuleJson: { ...(item.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), verifiedAt: item.taxRuleJson?.verifiedAt || new Date().toISOString() } })} /></label>
+                                <label className="font-semibold text-slate-600">Rate (%)<input className="input mt-1" type="number" min="0" max="100" step="0.0001" value={Number(item.taxRuleJson?.taxRateMicros ?? Number(item.taxRuleJson?.taxRateBps || 0) * 100) / 10_000} onChange={(event) => updateItemDraft(item.id, { taxRuleJson: { ...(item.taxRuleJson || {}), taxRateBps: Math.round(Number(event.target.value || 0) * 100), taxRateMicros: Math.round(Number(event.target.value || 0) * 10_000), verifiedAt: item.taxRuleJson?.verifiedAt || new Date().toISOString() } })} /></label>
                                 <label className="font-semibold text-slate-600 sm:col-span-2">Verified source<input className="input mt-1" value={item.taxRuleJson?.sourceReference || ""} onChange={(event) => updateItemDraft(item.id, { taxRuleJson: { ...(item.taxRuleJson || {}), sourceReference: event.target.value, verifiedAt: item.taxRuleJson?.verifiedAt || new Date().toISOString() } })} /></label>
                               </> : null}
                             </div>
@@ -13027,7 +13031,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                       <div><span className="block font-semibold text-slate-500">County</span><strong className="text-ink">{displayedTaxProfile.county || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Municipality</span><strong className="text-ink">{displayedTaxProfile.municipality || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Special districts</span><strong className="text-ink">{(displayedTaxProfile.specialDistricts || []).map((district) => district.name).filter(Boolean).join(", ") || "None listed"}</strong></div>
-                      <div><span className="block font-semibold text-slate-500">Current rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Current rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps, displayedTaxProfile.taxRateMicros)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Category safety</span><strong className="text-ink">{readable(displayedTaxProfile.categoryStatus || "MANUAL_VERIFIED")}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Version</span><strong className="break-all text-ink">{displayedTaxProfile.configurationVersion}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Effective</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.effectiveAt)}</strong></div>
@@ -13035,7 +13039,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                       <div><span className="block font-semibold text-slate-500">Acknowledged</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.acknowledgedAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Next verification</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.nextVerificationAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Pricing</span><strong className="text-ink">{displayedTaxProfile.taxInclusive ? "Tax inclusive" : "Tax added at checkout"}</strong></div>
-                      <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Components</span><strong className="text-ink">{(displayedTaxProfile.taxComponents || []).map((component) => `${component.name} ${taxRateLabel(component.rateBps)}`).join(" + ") || (displayedTaxProfile.taxRateBps === 0 ? "Verified zero rate" : "No component breakdown supplied")}</strong></div>
+                      <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Components</span><strong className="text-ink">{(displayedTaxProfile.taxComponents || []).map((component) => `${component.name} ${taxRateLabel(component.rateBps, component.rateMicros)}`).join(" + ") || (displayedTaxProfile.taxRateBps === 0 ? "Verified zero rate" : "No component breakdown supplied")}</strong></div>
                     </div>
                   ) : null}
 
@@ -13057,7 +13061,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                         {location.history.map((profile) => (
                           <div className="summary-line" key={profile.id}>
                             <span>{readable(profile.status)} - {taxDateLabel(profile.effectiveAt)}</span>
-                            <strong>{taxRateLabel(profile.taxRateBps)} - {profile.configurationVersion}</strong>
+                            <strong>{taxRateLabel(profile.taxRateBps, profile.taxRateMicros)} - {profile.configurationVersion}</strong>
                           </div>
                         ))}
                       </div>

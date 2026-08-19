@@ -8,6 +8,7 @@ import {
   TAX_PROVIDER_STATUS,
   createColoradoTtrLookup,
   decimalTaxRateToBps,
+  decimalTaxRateToMicros,
   mapColoradoSutsLookupResult,
   normalizeColoradoTtrResponse,
   taxCategoryActivationError,
@@ -52,7 +53,8 @@ function ttrFixture(overrides = {}) {
 
 assert.equal(decimalTaxRateToBps(0.0431), 431, "TTR decimal rates must convert exactly to basis points");
 assert.equal(decimalTaxRateToBps("0.0290"), 290);
-assert.throws(() => decimalTaxRateToBps("0.04315"), (error) => error.code === "TAX_PROVIDER_INVALID_RESPONSE");
+assert.equal(decimalTaxRateToMicros("0.04315"), 43_150, "sub-basis-point provider rates must remain exact");
+assert.equal(decimalTaxRateToBps("0.04315"), 432, "legacy basis points remain a rounded compatibility projection");
 
 let transportRequest;
 const ttrLookup = createColoradoTtrLookup({
@@ -69,6 +71,7 @@ assert.equal(transportRequest.options.headers["Content-Type"], "application/json
 assert.equal(transportRequest.options.headers.Accept, "application/json");
 assert.deepEqual(Object.keys(JSON.parse(transportRequest.options.body)), ["address"], "address-only requests must omit productServiceId");
 assert.equal(normalizedTtr.combinedRateBps, 850);
+assert.equal(normalizedTtr.combinedRateMicros, 85_000);
 assert.equal(normalizedTtr.taxComponents[0].answer, "UNSPECIFIED", "address-only components without a classification answer must remain explicit");
 assert.equal(normalizedTtr.taxComponents[0].rateBps, 290, "unspecified address-only general components remain available only in a category-blocked candidate");
 assert.equal(normalizedTtr.taxComponents.find((component) => component.answer === "EXEMPT").rateBps, 0, "exempt components must not contribute to the total");
@@ -93,6 +96,7 @@ const consolidatedDenverTtr = normalizeColoradoTtrResponse({
 assert.equal(consolidatedDenverTtr.jurisdictions.county.name, "Denver, City and County");
 assert.equal(consolidatedDenverTtr.jurisdictions.municipality.name, "Denver, City and County");
 assert.equal(consolidatedDenverTtr.combinedRateBps, 915);
+assert.equal(consolidatedDenverTtr.combinedRateMicros, 91_500);
 assert.equal(consolidatedDenverTtr.componentReconciliationStatus, "RECONCILED");
 assert.equal(consolidatedDenverTtr.category.status, TAX_CATEGORY_STATUS.CATEGORY_RULE_REQUIRED);
 

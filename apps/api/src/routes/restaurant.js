@@ -1298,6 +1298,7 @@ router.patch("/:restaurantId/branding", async (req, res, next) => {
 
 const menuTaxRuleSchema = z.object({
   taxRateBps: z.coerce.number().int().min(0).max(10_000),
+  taxRateMicros: z.coerce.number().int().min(0).max(1_000_000).optional(),
   sourceReference: z.string().trim().min(1).max(240),
   verifiedAt: z.string().datetime()
 }).strict();

@@ -5,6 +5,7 @@ import {
   resolvePosDeliveryPricingSnapshot
 } from "../../../../shared/posOfflinePricing.js";
 import { resolveMenuItemTaxTreatment } from "../../../../shared/taxTreatment.js";
+import { resolveTaxRateMicros } from "../../../../shared/taxRate.js";
 import { cashTenderSummary } from "./cashTender.js";
 
 function string(value, maximum = 200) {
@@ -52,6 +53,9 @@ function sanitizeTaxRule(rule) {
   if (!rule || typeof rule !== "object" || Array.isArray(rule)) return null;
   return {
     taxRateBps: Number(rule.taxRateBps),
+    taxRateMicros: rule.taxRateMicros === null || rule.taxRateMicros === undefined
+      ? undefined
+      : Number(rule.taxRateMicros),
     sourceReference: string(rule.sourceReference, 240),
     verifiedAt: string(rule.verifiedAt, 80)
   };
@@ -138,6 +142,7 @@ function sanitizeConfig(config = {}) {
       provider: string(config.taxConfiguration.provider || "manual", 80),
       source: string(config.taxConfiguration.source, 120),
       taxRateBps: Number(config.taxConfiguration.taxRateBps),
+      taxRateMicros: resolveTaxRateMicros(config.taxConfiguration),
       taxInclusive: Boolean(config.taxConfiguration.taxInclusive),
       enabled: config.taxConfiguration.enabled === true,
       countryCode: string(config.taxConfiguration.countryCode, 8),
@@ -175,7 +180,11 @@ export function buildPosOfflineInitialization({ config, menu, registerKey }) {
   const locationId = safeConfig.device?.locationId || safeConfig.locations[0]?.id || null;
   if (!restaurantId || !terminalId || !locationId || !safeMenu.length || !menuItems.length) throw new Error("Offline initialization is incomplete.");
   if (menuItems.some((item) => !item.offlinePricingProof)) throw new Error("Offline menu pricing proof is incomplete.");
-  if (!safeConfig.taxConfiguration?.enabled || !Number.isSafeInteger(safeConfig.taxConfiguration.taxRateBps)) {
+  if (
+    !safeConfig.taxConfiguration?.enabled
+    || !Number.isSafeInteger(safeConfig.taxConfiguration.taxRateBps)
+    || !Number.isSafeInteger(safeConfig.taxConfiguration.taxRateMicros)
+  ) {
     throw new Error("Offline sales require a synchronized tax configuration.");
   }
   if (
@@ -278,7 +287,8 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
         taxTreatment: menuItem.categoryTaxTreatment,
         taxRuleJson: menuItem.categoryTaxRuleJson
       },
-      locationTaxRateBps: initialization.config.taxConfiguration.taxRateBps
+      locationTaxRateBps: initialization.config.taxConfiguration.taxRateBps,
+      locationTaxRateMicros: initialization.config.taxConfiguration.taxRateMicros
     });
     return {
       menuItemId: menuItem.id,
@@ -294,6 +304,7 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
       taxTreatment: taxTreatment.treatment,
       taxTreatmentSource: taxTreatment.source,
       resolvedTaxRateBps: taxTreatment.taxRateBps,
+      resolvedTaxRateMicros: taxTreatment.taxRateMicros,
       customTaxRule: taxTreatment.customRule,
       offlinePricingProof: menuItem.offlinePricingProof
     };
@@ -311,6 +322,7 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
     discountCents: 0,
     deliveryFeeCents: delivery.deliveryFeeCents,
     taxRateBps: initialization.config.taxConfiguration.taxRateBps,
+    taxRateMicros: initialization.config.taxConfiguration.taxRateMicros,
     taxInclusive: initialization.config.taxConfiguration.taxInclusive,
     tipCents: 0
   });
@@ -338,6 +350,7 @@ export function calculatePosOfflineQuote({ initialization, cart, orderType, cust
       verifiedAt: initialization.config.taxConfiguration.verifiedAt,
       taxInclusive: initialization.config.taxConfiguration.taxInclusive,
       taxRateBps: pricing.taxRateBps,
+      taxRateMicros: pricing.taxRateMicros,
       taxableAmountCents: pricing.taxableAmountCents,
       taxCents: pricing.taxCents,
       configurationVersion: initialization.configurationVersion

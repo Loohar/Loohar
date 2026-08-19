@@ -1,3 +1,10 @@
+import {
+  MAX_TAX_RATE_MICROS,
+  calculateTaxCents,
+  resolveTaxRateMicros,
+  taxRateBpsFromMicros
+} from "./taxRate.js";
+
 export const POS_OFFLINE_SCHEMA_VERSION = 1;
 
 export const POS_OFFLINE_SYNC_STATUS = Object.freeze({
@@ -71,16 +78,23 @@ export function calculatePosPricingSnapshot({
   discountCents = 0,
   deliveryFeeCents = 0,
   taxRateBps,
+  taxRateMicros,
   taxInclusive = false,
   tipCents = 0
 } = {}) {
   if (!Array.isArray(lineItems) || !lineItems.length) {
     throw new PosOfflinePricingError("At least one menu item is required.", "POS_OFFLINE_ITEMS_REQUIRED");
   }
-  const rate = Number(taxRateBps);
-  if (!Number.isSafeInteger(rate) || rate < 0 || rate > 100_000) {
+  let preciseRate;
+  try {
+    preciseRate = resolveTaxRateMicros({ taxRateMicros, taxRateBps });
+  } catch {
     throw new PosOfflinePricingError("A valid synchronized tax rate is required.", "POS_OFFLINE_TAX_INVALID");
   }
+  if (preciseRate > MAX_TAX_RATE_MICROS) {
+    throw new PosOfflinePricingError("A valid synchronized tax rate is required.", "POS_OFFLINE_TAX_INVALID");
+  }
+  const rate = taxRateBpsFromMicros(preciseRate);
   const normalizedLines = lineItems.map((line, index) => {
     const quantity = Number(line?.quantity);
     const unitPriceCents = integerCents(line?.unitPriceCents, `lineItems[${index}].unitPriceCents`);
@@ -88,10 +102,15 @@ export function calculatePosPricingSnapshot({
       throw new PosOfflinePricingError("Item quantity must be between 1 and 99.", "POS_OFFLINE_QUANTITY_INVALID", { index });
     }
     const treatment = String(line?.taxTreatment || "LOCATION_DEFAULT").toUpperCase();
-    const resolvedRate = treatment === "EXEMPT"
-      ? 0
-      : Number(line?.resolvedTaxRateBps ?? line?.taxRateBps ?? rate);
-    if (!Number.isSafeInteger(resolvedRate) || resolvedRate < 0 || resolvedRate > 100_000) {
+    let resolvedRateMicros;
+    try {
+      resolvedRateMicros = treatment === "EXEMPT"
+        ? 0
+        : resolveTaxRateMicros({
+            taxRateMicros: line?.resolvedTaxRateMicros ?? line?.taxRateMicros ?? preciseRate,
+            taxRateBps: line?.resolvedTaxRateBps ?? line?.taxRateBps ?? rate
+          });
+    } catch {
       throw new PosOfflinePricingError("A line item tax treatment is invalid.", "POS_OFFLINE_LINE_TAX_INVALID", { index });
     }
     return {
@@ -99,7 +118,8 @@ export function calculatePosPricingSnapshot({
       quantity,
       unitPriceCents,
       taxTreatment: treatment,
-      resolvedTaxRateBps: resolvedRate,
+      resolvedTaxRateMicros: resolvedRateMicros,
+      resolvedTaxRateBps: taxRateBpsFromMicros(resolvedRateMicros),
       lineTotalCents: unitPriceCents * quantity
     };
   });
@@ -109,8 +129,12 @@ export function calculatePosPricingSnapshot({
   const tip = integerCents(tipCents, "tipCents");
   const appliedDiscountCents = Math.min(discount, subtotalCents);
   const groups = [...normalizedLines.reduce((map, line) => {
-    const key = String(line.resolvedTaxRateBps);
-    const group = map.get(key) || { taxRateBps: line.resolvedTaxRateBps, subtotalCents: 0 };
+    const key = String(line.resolvedTaxRateMicros);
+    const group = map.get(key) || {
+      taxRateMicros: line.resolvedTaxRateMicros,
+      taxRateBps: line.resolvedTaxRateBps,
+      subtotalCents: 0
+    };
     group.subtotalCents += line.lineTotalCents;
     map.set(key, group);
     return map;
@@ -129,16 +153,16 @@ export function calculatePosPricingSnapshot({
     };
   });
   const taxableAmountCents = taxGroups
-    .filter((group) => group.taxRateBps > 0)
+    .filter((group) => group.taxRateMicros > 0)
     .reduce((sum, group) => sum + group.taxableAmountCents, 0);
   const inclusive = taxInclusive === true;
   const taxBreakdown = taxGroups.map((group) => ({
     ...group,
-    taxCents: group.taxRateBps === 0
-      ? 0
-      : inclusive
-        ? Math.round((group.taxableAmountCents * group.taxRateBps) / (10_000 + group.taxRateBps))
-        : Math.round((group.taxableAmountCents * group.taxRateBps) / 10_000)
+    taxCents: calculateTaxCents({
+      taxableAmountCents: group.taxableAmountCents,
+      taxRateMicros: group.taxRateMicros,
+      taxInclusive: inclusive
+    })
   }));
   const taxCents = taxBreakdown.reduce((sum, group) => sum + group.taxCents, 0);
   const netSubtotalCents = Math.max(0, subtotalCents - discount);
@@ -150,6 +174,7 @@ export function calculatePosPricingSnapshot({
     taxableAmountCents,
     deliveryFeeCents: deliveryFee,
     taxRateBps: rate,
+    taxRateMicros: preciseRate,
     taxInclusive: inclusive,
     taxCents,
     taxBreakdown,
@@ -166,6 +191,7 @@ export function validatePosOfflinePricingSnapshot(transaction = {}) {
     discountCents: order.discountCents,
     deliveryFeeCents: order.deliveryFeeCents,
     taxRateBps: tax.taxRateBps,
+    taxRateMicros: tax.taxRateMicros,
     taxInclusive: tax.taxInclusive,
     tipCents: order.tipCents
   });

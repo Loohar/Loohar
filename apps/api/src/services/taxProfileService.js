@@ -1,5 +1,6 @@
 import { prisma } from "../config/prisma.js";
 import { recordAudit } from "./auditService.js";
+import { resolveTaxRateMicros, taxRateBpsFromMicros } from "../../../shared/taxRate.js";
 import {
   TAX_CATEGORY_STATUS,
   TAX_PROFILE_STATUS,
@@ -24,7 +25,10 @@ function errorStatus(code) {
     "TAX_PROVIDER_AUTH_FAILED",
     "TAX_PROVIDER_TIMEOUT",
     "TAX_PROVIDER_RATE_LIMITED",
-    "TAX_PROVIDER_INVALID_RESPONSE"
+    "TAX_PROVIDER_INVALID_RESPONSE",
+    "TAX_PROVIDER_UNSUPPORTED_RESULT",
+    "TAX_PROVIDER_CONFIGURATION_INVALID",
+    "TAX_PROVIDER_ENVIRONMENT_INVALID"
   ].includes(code)) return TAX_PROFILE_STATUS.PROVIDER_ERROR;
   if ([
     "TAX_CATEGORY_RULE_REQUIRED",
@@ -57,6 +61,7 @@ function profileShape(profile) {
     provider: profile.provider,
     source: profile.source,
     taxRateBps: profile.taxRateBps,
+    taxRateMicros: resolveTaxRateMicros({ taxRateMicros: profile.taxRateMicros, taxRateBps: profile.taxRateBps }),
     taxInclusive: profile.taxInclusive,
     enabled: profile.enabled,
     countryCode: profile.countryCode,
@@ -96,6 +101,7 @@ function taxSnapshot(profile) {
     provider: shaped.provider,
     source: shaped.source,
     taxRateBps: shaped.taxRateBps,
+    taxRateMicros: shaped.taxRateMicros,
     taxInclusive: shaped.taxInclusive,
     enabled: shaped.enabled,
     countryCode: shaped.countryCode,
@@ -228,6 +234,7 @@ async function createCandidateProfile({ restaurantId, locationId, configuration,
         provider: configuration.provider,
         source: configuration.source,
         taxRateBps: configuration.taxRateBps,
+        taxRateMicros: configuration.taxRateMicros ?? null,
         taxInclusive: configuration.taxInclusive,
         enabled: false,
         countryCode: configuration.countryCode,
@@ -381,7 +388,10 @@ export async function resolveLocationTaxProfile({ restaurantId, locationId, acto
           "TAX_PROVIDER_AUTH_FAILED",
           "TAX_PROVIDER_TIMEOUT",
           "TAX_PROVIDER_RATE_LIMITED",
-          "TAX_PROVIDER_INVALID_RESPONSE"
+          "TAX_PROVIDER_INVALID_RESPONSE",
+          "TAX_PROVIDER_UNSUPPORTED_RESULT",
+          "TAX_PROVIDER_CONFIGURATION_INVALID",
+          "TAX_PROVIDER_ENVIRONMENT_INVALID"
         ].includes(code)
         ? "PROVIDER_UNAVAILABLE"
         : undefined;
@@ -454,10 +464,15 @@ function activationValidation(profile, now = new Date()) {
   if (profile.verificationStatus !== TAX_VERIFICATION_STATUS.VERIFIED) {
     throw new TaxServiceError("Tax profile verification is incomplete.", { status: 409, code: "TAX_PROFILE_NOT_VERIFIED" });
   }
+  let preciseTaxRate;
+  try {
+    preciseTaxRate = resolveTaxRateMicros({ taxRateMicros: profile.taxRateMicros, taxRateBps: profile.taxRateBps });
+  } catch {
+    preciseTaxRate = null;
+  }
   if (
-    !Number.isSafeInteger(profile.taxRateBps)
-    || profile.taxRateBps < 0
-    || profile.taxRateBps > 100_000
+    preciseTaxRate === null
+    || taxRateBpsFromMicros(preciseTaxRate) !== profile.taxRateBps
     || !String(profile.provider || "").trim()
     || !String(profile.source || "").trim()
     || !String(profile.countryCode || "").trim()

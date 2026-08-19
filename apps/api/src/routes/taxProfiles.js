@@ -53,6 +53,7 @@ const manualSchema = z.object({
   params: locationParams,
   body: z.object({
     taxRateBps: z.number().int().min(0).max(100000),
+    taxRateMicros: z.number().int().min(0).max(10000000).optional(),
     taxInclusive: z.boolean().default(false),
     jurisdictionCode: z.string().min(2).max(160),
     county: z.string().max(120).default(""),
@@ -71,7 +72,8 @@ const manualSchema = z.object({
       type: z.string().min(1).max(40),
       name: z.string().min(1).max(120),
       jurisdictionCode: z.string().min(1).max(160),
-      rateBps: z.number().int().min(0).max(100000)
+      rateBps: z.number().int().min(0).max(100000),
+      rateMicros: z.number().int().min(0).max(10000000).optional()
     })).default([]),
     exemption: z.record(z.unknown()).optional()
   })

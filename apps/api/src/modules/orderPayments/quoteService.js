@@ -99,7 +99,8 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     const taxTreatment = resolveMenuItemTaxTreatment({
       item: menuItem,
       category: menuItem.category,
-      locationTaxRateBps: taxRateBps
+      locationTaxRateBps: taxRateBps,
+      locationTaxRateMicros: taxConfiguration.taxRateMicros
     });
     return {
       menuItemId: menuItem.id,
@@ -112,6 +113,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
       taxTreatment: taxTreatment.treatment,
       taxTreatmentSource: taxTreatment.source,
       resolvedTaxRateBps: taxTreatment.taxRateBps,
+      resolvedTaxRateMicros: taxTreatment.taxRateMicros,
       customTaxRule: taxTreatment.customRule,
       options: selectedOptions
     };
@@ -156,6 +158,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     discountCents,
     deliveryFeeCents,
     taxRateBps,
+    taxRateMicros: taxConfiguration.taxRateMicros,
     taxInclusive,
     tipCents: tipBreakdown.tipCents
   });
@@ -179,6 +182,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     taxConfiguration,
     taxableAmountCents,
     taxRateBps,
+    taxRateMicros: taxConfiguration.taxRateMicros,
     taxInclusive,
     taxCents,
     deliveryFeeCents,

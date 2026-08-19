@@ -1,3 +1,5 @@
+import { resolveTaxRateMicros, taxRateBpsFromMicros } from "./taxRate.js";
+
 export const TAX_TREATMENT = Object.freeze({
   LOCATION_DEFAULT: "LOCATION_DEFAULT",
   EXEMPT: "EXEMPT",
@@ -24,13 +26,18 @@ export function normalizeTaxTreatment(value) {
 }
 
 export function verifiedCustomTaxRule(rule = {}) {
-  const rateBps = Number(rule?.taxRateBps);
+  let rateMicros;
+  try {
+    rateMicros = resolveTaxRateMicros({ taxRateMicros: rule?.taxRateMicros, taxRateBps: rule?.taxRateBps });
+  } catch {
+    rateMicros = null;
+  }
+  const rateBps = rateMicros === null ? null : taxRateBpsFromMicros(rateMicros);
   const sourceReference = String(rule?.sourceReference || "").trim().slice(0, 240);
   const verifiedAt = rule?.verifiedAt ? new Date(rule.verifiedAt) : null;
   if (
-    !Number.isSafeInteger(rateBps)
-    || rateBps < 0
-    || rateBps > 10_000
+    rateMicros === null
+    || rateMicros > 1_000_000
     || !sourceReference
     || !verifiedAt
     || Number.isNaN(verifiedAt.getTime())
@@ -40,7 +47,7 @@ export function verifiedCustomTaxRule(rule = {}) {
       "TAX_CUSTOM_RULE_REQUIRED"
     );
   }
-  return { taxRateBps: rateBps, sourceReference, verifiedAt: verifiedAt.toISOString() };
+  return { taxRateBps: rateBps, taxRateMicros: rateMicros, sourceReference, verifiedAt: verifiedAt.toISOString() };
 }
 
 export function normalizeTaxRuleForStorage(treatment, rule) {
@@ -48,7 +55,7 @@ export function normalizeTaxRuleForStorage(treatment, rule) {
   return normalizedTreatment === TAX_TREATMENT.CUSTOM_RULE ? verifiedCustomTaxRule(rule) : null;
 }
 
-export function resolveMenuItemTaxTreatment({ item = {}, category = {}, locationTaxRateBps }) {
+export function resolveMenuItemTaxTreatment({ item = {}, category = {}, locationTaxRateBps, locationTaxRateMicros }) {
   const itemTreatment = normalizeTaxTreatment(item.taxTreatment);
   const categoryTreatment = normalizeTaxTreatment(category.taxTreatment);
   const treatment = itemTreatment !== TAX_TREATMENT.LOCATION_DEFAULT
@@ -56,20 +63,29 @@ export function resolveMenuItemTaxTreatment({ item = {}, category = {}, location
     : categoryTreatment;
 
   if (treatment === TAX_TREATMENT.EXEMPT) {
-    return { treatment, taxRateBps: 0, source: itemTreatment === treatment ? "ITEM" : "CATEGORY", customRule: null };
+    return { treatment, taxRateBps: 0, taxRateMicros: 0, source: itemTreatment === treatment ? "ITEM" : "CATEGORY", customRule: null };
   }
   if (treatment === TAX_TREATMENT.CUSTOM_RULE) {
     const customRule = verifiedCustomTaxRule(itemTreatment === treatment ? item.taxRuleJson : category.taxRuleJson);
     return {
       treatment,
       taxRateBps: customRule.taxRateBps,
+      taxRateMicros: customRule.taxRateMicros,
       source: itemTreatment === treatment ? "ITEM" : "CATEGORY",
       customRule
     };
   }
-  const rateBps = Number(locationTaxRateBps);
-  if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 100_000) {
+  let rateMicros;
+  try {
+    rateMicros = resolveTaxRateMicros({ taxRateMicros: locationTaxRateMicros, taxRateBps: locationTaxRateBps });
+  } catch {
     throw new TaxTreatmentError("An active location tax profile is required.", "TAX_LOCATION_DEFAULT_REQUIRED");
   }
-  return { treatment: TAX_TREATMENT.LOCATION_DEFAULT, taxRateBps: rateBps, source: "LOCATION", customRule: null };
+  return {
+    treatment: TAX_TREATMENT.LOCATION_DEFAULT,
+    taxRateBps: taxRateBpsFromMicros(rateMicros),
+    taxRateMicros: rateMicros,
+    source: "LOCATION",
+    customRule: null
+  };
 }

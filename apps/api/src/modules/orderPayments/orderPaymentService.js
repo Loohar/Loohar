@@ -194,6 +194,7 @@ export async function createOrderPayment({ body }) {
           breakdown: quote.breakdown,
           couponCode: quote.couponCode,
           taxRateBps: quote.taxRateBps,
+          taxRateMicros: quote.taxRateMicros,
           taxInclusive: quote.taxInclusive,
           locationId: quote.locationId,
           taxProfileId: quote.taxProfileId,
@@ -216,6 +217,7 @@ export async function createOrderPayment({ body }) {
         source: quote.taxConfiguration.source,
         taxableAmountCents: quote.taxableAmountCents,
         taxRateBps: quote.taxRateBps,
+        taxRateMicros: quote.taxRateMicros,
         taxCents: quote.taxCents,
         jurisdictionJson: {
           jurisdictionCode: quote.taxConfiguration.jurisdictionCode,
