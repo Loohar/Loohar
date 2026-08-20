@@ -118,7 +118,10 @@ function deviceContext(req) {
 
 function summarizePosMenu(categories = []) {
   const items = categories.flatMap((category) => category.items || []);
-  const latestUpdatedAt = [categories, items]
+  const optionGroups = items.flatMap((item) => item.optionGroups || []);
+  const groupOptions = optionGroups.flatMap((group) => group.options || []);
+  const looseOptions = items.flatMap((item) => item.options || []);
+  const latestUpdatedAt = [categories, items, optionGroups, groupOptions, looseOptions]
     .flat()
     .map((record) => record?.updatedAt || record?.createdAt)
     .filter(Boolean)
@@ -130,8 +133,10 @@ function summarizePosMenu(categories = []) {
   return {
     categoryCount: categories.length,
     itemCount: items.length,
+    modifierGroupCount: optionGroups.length,
+    modifierOptionCount: groupOptions.length + looseOptions.filter((option) => !option.optionGroupId).length,
     availableItems,
-    menuVersion: `${categories.length}:${items.length}:${latestUpdatedAt}`
+    menuVersion: `${categories.length}:${items.length}:${optionGroups.length}:${groupOptions.length}:${latestUpdatedAt}`
   };
 }
 

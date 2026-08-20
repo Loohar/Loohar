@@ -64,5 +64,8 @@ assert(!restaurantApp.includes('id="kitchen-summary"'), "RestaurantApp must not 
 assert(!source.includes(".restaurant-dashboard-settings :is"), "Settings route does not rely on CSS-hidden unrelated panels.");
 assert(source.includes("Settings center"), "Settings center panel is missing.");
 assert(source.includes("Configuration and editing tools live here"), "Settings center needs context for restaurant owners.");
+assert(source.includes("const resilientApi = async (path, fallback)"), "Settings loader should keep core menu data when non-critical requests fail.");
+assert(source.indexOf('api(`/api/restaurants/${restaurantId}/menu/categories`, { token })') < source.indexOf('resilientApi(`/api/restaurants/${restaurantId}/dashboard`'), "Menu categories should load in the critical first wave before ancillary dashboard requests.");
+assert(source.includes("[Loohar restaurant settings] optional request failed"), "Optional settings requests should degrade to fallback data instead of clearing the menu editor.");
 
 console.log("Restaurant settings routing contract passed.");

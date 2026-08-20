@@ -10797,7 +10797,10 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
             String(payload.code || "").startsWith("SUBSCRIPTION_") ||
             payload.code === "PLAN_NOT_INCLUDED"
           );
-          if (!isEntitlementError) throw optionalError;
+          if (!isEntitlementError) {
+            globalThis.console?.warn?.("[Loohar restaurant settings] optional request failed", feature, optionalError?.message || optionalError);
+            return fallback;
+          }
           lockedFeatures[feature] = {
             feature,
             featureLabel: payload.featureLabel || featureLabels[feature],
@@ -10810,19 +10813,29 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
           return fallback;
         }
       };
+      const resilientApi = async (path, fallback) => {
+        try {
+          return await api(path, { token });
+        } catch (loadError) {
+          globalThis.console?.warn?.("[Loohar restaurant settings] non-critical request failed", path, loadError?.message || loadError);
+          return fallback;
+        }
+      };
       const reportParams = new window.URLSearchParams();
       if (reportRange) reportParams.set("range", reportRange);
       const reportQuery = reportParams.toString() ? `?${reportParams.toString()}` : "";
       const customerParams = new window.URLSearchParams(reportParams);
       customerParams.set("pageSize", "100");
       const customerQuery = `?${customerParams.toString()}`;
-      const [dashboardPayload, profilePayload, mePayload, categoriesPayload, itemsPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload, taxWorkspacePayload] = await Promise.all([
-        api(`/api/restaurants/${restaurantId}/dashboard`, { token }),
+      const [profilePayload, mePayload, categoriesPayload, itemsPayload] = await Promise.all([
         api(`/api/restaurants/${restaurantId}/profile`, { token }),
         api("/api/restaurants/me", { token }),
         api(`/api/restaurants/${restaurantId}/menu/categories`, { token }),
-        api(`/api/restaurants/${restaurantId}/menu/items`, { token }),
-        api(`/api/restaurants/${restaurantId}/orders`, { token }),
+        api(`/api/restaurants/${restaurantId}/menu/items`, { token })
+      ]);
+      const [dashboardPayload, ordersPayload, driversPayload, customersPayload, customerSummaryPayload, loyaltyPayload, promotionsPayload, analyticsPayload, menuInsightsPayload, locationsPayload, websitePayload, domainPayload, galleryPayload, socialPayload, employeesPayload, dispatchPayload, zonesPayload, inventoryPayload, printingPayload, notificationsPayload, operationsPayload, taxWorkspacePayload] = await Promise.all([
+        resilientApi(`/api/restaurants/${restaurantId}/dashboard`, emptyRestaurantStats()),
+        resilientApi(`/api/restaurants/${restaurantId}/orders`, { orders: [] }),
         optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/drivers${reportQuery}`, { drivers: [], summary: emptyDispatchCenter().summary }),
         optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers${customerQuery}`, { customers: [], summary: emptyCustomerSummary() }),
         optionalApi("CUSTOMER_CRM", `/api/restaurants/${restaurantId}/customers/summary${reportQuery}`, emptyCustomerSummary()),
@@ -10830,11 +10843,11 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
         optionalApi("COUPONS", `/api/restaurants/${restaurantId}/promotions/analytics`, { activePromotions: [], redemptions: [], performance: {} }),
         optionalApi("ANALYTICS", `/api/restaurants/${restaurantId}/analytics${reportQuery}`, { metrics: {}, salesTrend: [], ordersTrend: [], customerGrowth: [], loyaltyGrowth: [] }),
         optionalApi("MENU_INSIGHTS", `/api/restaurants/${restaurantId}/menu/insights`, { bestSellingItems: [], worstSellingItems: [], categoryPerformance: [] }),
-        api(`/api/restaurants/${restaurantId}/locations`, { token }),
-        api(`/api/restaurants/${restaurantId}/website`, { token }),
+        resilientApi(`/api/restaurants/${restaurantId}/locations`, { locations: [] }),
+        resilientApi(`/api/restaurants/${restaurantId}/website`, { website: emptyWebsiteSettings() }),
         optionalApi("CUSTOM_DOMAIN", `/api/restaurants/${restaurantId}/domain`, { domain: emptyDomainSettings(initialProfile.slug) }),
-        api(`/api/restaurants/${restaurantId}/gallery`, { token }),
-        api(`/api/restaurants/${restaurantId}/social-links`, { token }),
+        resilientApi(`/api/restaurants/${restaurantId}/gallery`, { gallery: [] }),
+        resilientApi(`/api/restaurants/${restaurantId}/social-links`, { socialLinks: [] }),
         optionalApi("EMPLOYEE_MANAGEMENT", `/api/restaurants/${restaurantId}/employees`, { employees: [] }),
         optionalApi("DRIVER_MANAGEMENT", `/api/restaurants/${restaurantId}/dispatch${reportQuery}`, emptyDispatchCenter()),
         optionalApi("DELIVERY_ZONES", `/api/restaurants/${restaurantId}/delivery-zones`, { zones: [] }),
@@ -10842,7 +10855,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
         optionalApi("PRINTING", `/api/restaurants/${restaurantId}/printing`, { settings: {} }),
         optionalApi("NOTIFICATIONS", `/api/restaurants/${restaurantId}/notification-settings`, { settings: {} }),
         optionalApi("REPORTS", `/api/restaurants/${restaurantId}/reports/operations${reportQuery}`, emptyOperationsReport()),
-        activePage === "settings" ? api(`/api/restaurants/${restaurantId}/tax-profiles`, { token }) : Promise.resolve({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] })
+        activePage === "settings" ? resilientApi(`/api/restaurants/${restaurantId}/tax-profiles`, { ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] }) : Promise.resolve({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] })
       ]);
       if (requestId !== loadRestaurantRequestIdRef.current) return null;
       const profileBase = profilePayload.restaurant || initialProfile;

@@ -77,7 +77,11 @@ if (mode === "all" || mode === "availability") {
     "locationId",
     "entitlement",
     "categories",
-    "visibleItems"
+    "visibleItems",
+    "modifierGroupCount",
+    "modifierOptionCount",
+    "const optionGroups = items.flatMap",
+    "const groupOptions = optionGroups.flatMap"
   ]), "POS menu endpoint returns tenant, version, availability, entitlement, and category payload metadata");
   assertCheck(includesAll(app, [
     "normalizePosMenuPayload",
