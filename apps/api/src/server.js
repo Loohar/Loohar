@@ -27,6 +27,8 @@ import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
 import { refreshSchemaCompatibility, schemaCompatibilitySnapshot } from "./utils/schemaCompatibility.js";
+import { apiDeploymentMetadata } from "./utils/deploymentMetadata.js";
+import { buildHealthPayload } from "./utils/healthPayload.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
 import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
@@ -169,15 +171,19 @@ app.use((req, res, next) => {
   next();
 });
 
-const baseHealthPayload = { service: "api", platform: process.env.PLATFORM_NAME || "Loohar", domain: process.env.PLATFORM_DOMAIN || "loohar.com" };
 function healthHandler(req, res) {
-  const schema = schemaCompatibilitySnapshot();
-  const ok = Boolean(schema.ok);
-  res.status(ok ? 200 : 503).json({ ok, ...baseHealthPayload, schema });
+  const payload = buildHealthPayload({ schema: schemaCompatibilitySnapshot() });
+  const ok = payload.ok;
+  res.status(ok ? 200 : 503).json(payload);
   void refreshSchemaCompatibility();
+}
+function versionHandler(req, res) {
+  res.json(apiDeploymentMetadata());
 }
 app.get("/health", healthHandler);
 app.get("/api/health", healthHandler);
+app.get("/version", versionHandler);
+app.get("/api/version", versionHandler);
 app.use("/public", publicRoutes);
 app.use("/admin", superAdminRoutes);
 app.use("/restaurant", restaurantRoutes);
