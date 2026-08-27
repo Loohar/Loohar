@@ -29,11 +29,13 @@ import { sanitizeSensitiveFields } from "./utils/sanitize.js";
 import { refreshSchemaCompatibility, schemaCompatibilitySnapshot } from "./utils/schemaCompatibility.js";
 import { apiDeploymentMetadata } from "./utils/deploymentMetadata.js";
 import { buildHealthPayload } from "./utils/healthPayload.js";
+import { configureTrustProxy } from "./config/trustProxy.js";
 import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
 import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
 
 const app = express();
+configureTrustProxy(app);
 const isProduction = process.env.NODE_ENV === "production";
 
 function splitOriginConfig(value = "") {
