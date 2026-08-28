@@ -43,7 +43,10 @@ const locationParams = z.object({
 
 const resolveSchema = z.object({
   params: locationParams,
-  body: z.object({ providerId: z.string().min(1).max(80).optional() }).default({})
+  body: z.object({
+    providerId: z.string().min(1).max(80).optional(),
+    productServiceId: z.number().int().positive().optional()
+  }).default({})
 });
 
 const manualSchema = z.object({
@@ -121,7 +124,8 @@ router.post("/:restaurantId/locations/:locationId/tax-profile/resolve", requireR
       restaurantId: req.resolvedRestaurantId,
       locationId: req.params.locationId,
       actorUserId: req.user.id,
-      providerId: req.body.providerId
+      providerId: req.body.providerId,
+      productServiceId: req.body.productServiceId
     });
     res.status(201).json({ profile });
   } catch (error) {
