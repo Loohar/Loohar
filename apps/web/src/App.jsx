@@ -1196,6 +1196,56 @@ function taxStatusTone(status = "UNCONFIGURED") {
   return "warn";
 }
 
+const taxCategoryReviewBlockingStatuses = new Set([
+  "CATEGORY_RULE_REQUIRED",
+  "UNSUPPORTED_SPECIAL_RATE",
+  "MANUAL_REVIEW_REQUIRED",
+  "REVIEW_REQUIRED"
+]);
+
+function taxCategoryStatusFor(profile = {}) {
+  return profile?.categoryStatus || profile?.sourceMetadata?.categoryStatus || (profile?.provider === "LOOHAR_MANUAL_VERIFIED" ? "MANUAL_VERIFIED" : "GENERAL_RATE_SUPPORTED");
+}
+
+function taxCategoryReviewState(profile = {}) {
+  const categoryStatus = taxCategoryStatusFor(profile);
+  if (categoryStatus === "CATEGORY_RULE_REQUIRED") {
+    return {
+      label: "Category review required",
+      tone: "warn",
+      detail: "Your location and general tax rate have been verified. Review special or exempt product/category treatment before activation."
+    };
+  }
+  if (categoryStatus === "UNSUPPORTED_SPECIAL_RATE") {
+    return {
+      label: "Special-rate review required",
+      tone: "warn",
+      detail: "Your location and general tax rate have been verified. Review special-rate products or categories before activation."
+    };
+  }
+  if (categoryStatus === "MANUAL_REVIEW_REQUIRED" || categoryStatus === "REVIEW_REQUIRED") {
+    return {
+      label: "Review required",
+      tone: "warn",
+      detail: "Your location has been verified. Review this tax configuration before activation."
+    };
+  }
+  if (categoryStatus === "MANUAL_VERIFIED") return { label: "Manual verified", tone: "neutral", detail: "" };
+  if (categoryStatus === "GENERAL_RATE_SUPPORTED") return { label: "General rate supported", tone: "good", detail: "" };
+  return { label: readable(categoryStatus || "GENERAL_RATE_SUPPORTED"), tone: "neutral", detail: "" };
+}
+
+function taxProfileNeedsCategoryReview(profile = {}) {
+  return taxCategoryReviewBlockingStatuses.has(taxCategoryStatusFor(profile));
+}
+
+function taxLocationVerificationLabel(profile = {}) {
+  if (profile?.provider === "COLORADO_TTR") return "Location verified by Colorado TTR";
+  if (profile?.provider === "LOOHAR_MANUAL_VERIFIED") return "Manual verified profile";
+  if (profile?.provider) return `${readable(profile.provider)} profile`;
+  return "Location verification not available";
+}
+
 function planFor(restaurant = {}) {
   return restaurant.subscriptions?.find((subscription) => subscription.active !== false)?.plan?.code || restaurant.subscriptions?.[0]?.plan?.code || "STARTER";
 }
@@ -13201,7 +13251,11 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
               const reviewTaxProfile = location.reviewProfile;
               const displayedTaxProfile = activeTaxProfile || reviewTaxProfile;
               const address = location.address || {};
-              const categoryBlocksActivation = ["CATEGORY_RULE_REQUIRED", "UNSUPPORTED_SPECIAL_RATE", "MANUAL_REVIEW_REQUIRED"].includes(reviewTaxProfile?.categoryStatus);
+              const categoryReviewProfile = [reviewTaxProfile, activeTaxProfile, ...(location.history || [])].filter(Boolean).find(taxProfileNeedsCategoryReview);
+              const categoryReviewState = taxCategoryReviewState(categoryReviewProfile);
+              const displayedCategoryState = displayedTaxProfile ? taxCategoryReviewState(displayedTaxProfile) : null;
+              const displayedLocationVerification = displayedTaxProfile ? taxLocationVerificationLabel(displayedTaxProfile) : "";
+              const categoryBlocksActivation = taxProfileNeedsCategoryReview(reviewTaxProfile);
               return (
                 <section className="py-5 first:pt-0 last:pb-0" key={location.id}>
                   <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
@@ -13213,6 +13267,13 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                       </div>
                       <p className="mt-2 text-sm text-slate-500">{address.normalizedAddress || "Complete the location address before verification."}</p>
                       {location.statusMessage ? <p className="mt-2 text-sm font-bold text-rose-600">{location.statusMessage}</p> : null}
+                      {categoryReviewProfile ? (
+                        <div className="mt-3 max-w-3xl rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status" aria-live="polite">
+                          <strong className="block text-amber-950">{categoryReviewState.label}</strong>
+                          <span className="block">{categoryReviewState.detail}</span>
+                          <span className="mt-1 block font-semibold text-amber-950">{taxLocationVerificationLabel(categoryReviewProfile)}</span>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {canManageTaxes && activeTaxProfile ? <button className="button-muted" type="button" onClick={() => refreshTaxProfileForLocation(location)} disabled={Boolean(savingTaxAction)}><RefreshCw size={16} />{savingTaxAction === `refresh:${location.id}` ? "Refreshing..." : "Refresh verification"}</button> : null}
@@ -13226,12 +13287,17 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                       <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Verified address</span><strong className="text-ink">{displayedTaxProfile.jurisdictionMetadata?.verifiedAddress?.normalizedAddress || address.normalizedAddress}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Provider</span><strong className="text-ink">{readable(displayedTaxProfile.provider)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Source</span><strong className="break-words text-ink">{displayedTaxProfile.sourceMetadata?.sourceReference || readable(displayedTaxProfile.source)}</strong></div>
+                      <div><span className="block font-semibold text-slate-500">Location verification</span><strong className="text-ink">{displayedLocationVerification}</strong></div>
                       <div><span className="block font-semibold text-slate-500">State</span><strong className="text-ink">{displayedTaxProfile.stateCode || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">County</span><strong className="text-ink">{displayedTaxProfile.county || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Municipality</span><strong className="text-ink">{displayedTaxProfile.municipality || "Not supplied"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Special districts</span><strong className="text-ink">{(displayedTaxProfile.specialDistricts || []).map((district) => district.name).filter(Boolean).join(", ") || "None listed"}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Current rate</span><strong className="text-ink">{taxRateLabel(displayedTaxProfile.taxRateBps)}</strong></div>
-                      <div><span className="block font-semibold text-slate-500">Category safety</span><strong className="text-ink">{readable(displayedTaxProfile.categoryStatus || "MANUAL_VERIFIED")}</strong></div>
+                      <div>
+                        <span className="block font-semibold text-slate-500">Product/category treatment</span>
+                        <strong className="text-ink">{displayedCategoryState.label}</strong>
+                        {displayedCategoryState.detail ? <small className="mt-1 block text-slate-500">{displayedCategoryState.detail}</small> : null}
+                      </div>
                       <div><span className="block font-semibold text-slate-500">Version</span><strong className="break-all text-ink">{displayedTaxProfile.configurationVersion}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Effective</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.effectiveAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Last verified</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.lastVerifiedAt || displayedTaxProfile.verifiedAt)}</strong></div>
@@ -13244,7 +13310,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
 
                   {reviewTaxProfile && canManageTaxes ? (
                     <div className="mt-5 border-t border-line pt-4">
-                      {categoryBlocksActivation ? <p className="mb-3 text-sm font-bold text-rose-600">This provider result requires category-specific review and cannot be activated as a general restaurant rate.</p> : null}
+                      {categoryBlocksActivation ? <p className="mb-3 text-sm font-bold text-rose-600"><strong>{taxCategoryReviewState(reviewTaxProfile).label}.</strong> {taxCategoryReviewState(reviewTaxProfile).detail}</p> : null}
                       <label className="flex items-start gap-3 text-sm font-semibold text-slate-700">
                         <input className="mt-1 h-4 w-4" type="checkbox" checked={Boolean(taxAcknowledgements[reviewTaxProfile.id])} disabled={categoryBlocksActivation} onChange={(event) => setTaxAcknowledgements((current) => ({ ...current, [reviewTaxProfile.id]: event.target.checked }))} />
                         <span>I confirm that this verified business location and tax information are correct for this location.</span>
@@ -13257,12 +13323,20 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                     <details className="mt-4 border-t border-line pt-4">
                       <summary className="cursor-pointer text-sm font-bold text-slate-600">Profile history ({integer(location.history.length)})</summary>
                       <div className="mt-3 grid gap-2 text-sm">
-                        {location.history.map((profile) => (
-                          <div className="summary-line" key={profile.id}>
-                            <span>{readable(profile.status)} - {taxDateLabel(profile.effectiveAt)}</span>
-                            <strong>{taxRateLabel(profile.taxRateBps)} - {profile.configurationVersion}</strong>
-                          </div>
-                        ))}
+                        {location.history.map((profile) => {
+                          const historyCategoryState = taxCategoryReviewState(profile);
+                          return (
+                            <div className="summary-line items-start gap-3" key={profile.id}>
+                              <span className="min-w-0">
+                                <span className="block">{readable(profile.status)} - {taxDateLabel(profile.effectiveAt)}</span>
+                                <span className="mt-1 inline-flex"><StatusPill tone={historyCategoryState.tone}>{historyCategoryState.label}</StatusPill></span>
+                                {historyCategoryState.detail ? <span className="mt-1 block text-xs text-slate-500">{historyCategoryState.detail}</span> : null}
+                                <span className="mt-1 block text-xs font-semibold text-slate-500">{taxLocationVerificationLabel(profile)}</span>
+                              </span>
+                              <strong className="min-w-0 break-all text-right">{taxRateLabel(profile.taxRateBps)} - {profile.configurationVersion}</strong>
+                            </div>
+                          );
+                        })}
                       </div>
                     </details>
                   ) : null}
