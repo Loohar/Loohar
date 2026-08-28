@@ -27,6 +27,9 @@ router.param("restaurantId", async (req, res, next, value) => {
       select: { id: true, slug: true, status: true }
     });
     if (!restaurant) return res.status(404).json({ error: "Restaurant not found", code: "TAX_RESTAURANT_NOT_FOUND" });
+    if (req.user?.role !== "SUPER_ADMIN" && req.tenantId !== restaurant.id) {
+      return res.status(403).json({ error: "Tenant access denied", code: "AUTH_TENANT_FORBIDDEN" });
+    }
     req.resolvedRestaurantId = restaurant.id;
     next();
   } catch (error) {
