@@ -1246,6 +1246,82 @@ function taxLocationVerificationLabel(profile = {}) {
   return "Location verification not available";
 }
 
+function taxProfileFingerprint(profile = {}) {
+  return profile?.materialFingerprint || profile?.sourceMetadata?.materialFingerprint || null;
+}
+
+function sameTaxProfileVersion(profile = {}, candidate = {}) {
+  if (!profile || !candidate) return false;
+  if (profile.id && candidate.id && profile.id === candidate.id) return true;
+  if (profile.configurationVersion && candidate.configurationVersion && profile.configurationVersion === candidate.configurationVersion) return true;
+  const profileFingerprint = taxProfileFingerprint(profile);
+  const candidateFingerprint = taxProfileFingerprint(candidate);
+  return Boolean(profileFingerprint && candidateFingerprint && profileFingerprint === candidateFingerprint);
+}
+
+function taxComponentRows(profile = {}) {
+  const components = Array.isArray(profile?.taxComponents) ? profile.taxComponents : [];
+  return components
+    .map((component, index) => {
+      const rateBps = Number(component?.rateBps);
+      const name = String(component?.name || component?.label || readable(component?.type || `Component ${index + 1}`)).trim();
+      if (!name || !Number.isSafeInteger(rateBps)) return null;
+      return {
+        key: `${component?.jurisdictionCode || component?.type || name}-${index}`,
+        name,
+        rateBps
+      };
+    })
+    .filter(Boolean);
+}
+
+function taxComponentBreakdownProfile(displayedProfile, history = []) {
+  if (!displayedProfile) return null;
+  if (taxComponentRows(displayedProfile).length) return displayedProfile;
+  return (history || []).find((profile) => sameTaxProfileVersion(displayedProfile, profile) && taxComponentRows(profile).length) || displayedProfile;
+}
+
+function taxComponentBreakdown(profile = {}) {
+  const rows = taxComponentRows(profile);
+  const combinedRateBps = Number(profile?.taxRateBps);
+  const hasCombinedRate = Number.isSafeInteger(combinedRateBps);
+  const componentTotalBps = rows.reduce((sum, component) => sum + component.rateBps, 0);
+  return {
+    rows,
+    combinedRateBps,
+    hasCombinedRate,
+    reconciled: rows.length === 0 || !hasCombinedRate || componentTotalBps === combinedRateBps
+  };
+}
+
+function TaxComponentBreakdown({ profile, compact = false }) {
+  const breakdown = taxComponentBreakdown(profile);
+  return (
+    <div className={compact ? "mt-2 text-xs text-slate-500" : "mt-4 border-t border-line pt-3 text-sm"}>
+      <span className="block font-semibold text-slate-500">Tax breakdown</span>
+      {breakdown.rows.length ? (
+        <div className="mt-2 grid gap-1">
+          {breakdown.rows.map((component) => (
+            <div className="summary-line items-start gap-3" key={component.key}>
+              <span className="min-w-0 break-words">{component.name}</span>
+              <strong className="shrink-0 text-ink">{taxRateLabel(component.rateBps)}</strong>
+            </div>
+          ))}
+          {breakdown.hasCombinedRate ? (
+            <div className="summary-line mt-1 items-start gap-3 border-t border-line pt-2">
+              <span className="min-w-0 font-semibold text-slate-600">Combined</span>
+              <strong className="shrink-0 text-ink">{taxRateLabel(breakdown.combinedRateBps)}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1 text-slate-500">Detailed jurisdiction breakdown is not available for this saved profile.</p>
+      )}
+      {!breakdown.reconciled ? <p className="mt-1 text-xs font-semibold text-amber-700">Stored component rates require review against the saved combined rate.</p> : null}
+    </div>
+  );
+}
+
 function planFor(restaurant = {}) {
   return restaurant.subscriptions?.find((subscription) => subscription.active !== false)?.plan?.code || restaurant.subscriptions?.[0]?.plan?.code || "STARTER";
 }
@@ -13255,6 +13331,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
               const categoryReviewState = taxCategoryReviewState(categoryReviewProfile);
               const displayedCategoryState = displayedTaxProfile ? taxCategoryReviewState(displayedTaxProfile) : null;
               const displayedLocationVerification = displayedTaxProfile ? taxLocationVerificationLabel(displayedTaxProfile) : "";
+              const componentReferenceProfile = displayedTaxProfile || categoryReviewProfile || (location.history || [])[0] || null;
+              const displayedComponentProfile = taxComponentBreakdownProfile(componentReferenceProfile, location.history);
               const categoryBlocksActivation = taxProfileNeedsCategoryReview(reviewTaxProfile);
               return (
                 <section className="py-5 first:pt-0 last:pb-0" key={location.id}>
@@ -13304,9 +13382,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                       <div><span className="block font-semibold text-slate-500">Acknowledged</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.acknowledgedAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Next verification</span><strong className="text-ink">{taxDateLabel(displayedTaxProfile.nextVerificationAt)}</strong></div>
                       <div><span className="block font-semibold text-slate-500">Pricing</span><strong className="text-ink">{displayedTaxProfile.taxInclusive ? "Tax inclusive" : "Tax added at checkout"}</strong></div>
-                      <div className="md:col-span-2 xl:col-span-4"><span className="block font-semibold text-slate-500">Components</span><strong className="text-ink">{(displayedTaxProfile.taxComponents || []).map((component) => `${component.name} ${taxRateLabel(component.rateBps)}`).join(" + ") || (displayedTaxProfile.taxRateBps === 0 ? "Verified zero rate" : "No component breakdown supplied")}</strong></div>
                     </div>
                   ) : null}
+                  {displayedComponentProfile ? <TaxComponentBreakdown profile={displayedComponentProfile} /> : null}
 
                   {reviewTaxProfile && canManageTaxes ? (
                     <div className="mt-5 border-t border-line pt-4">
@@ -13327,12 +13405,13 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                           const historyCategoryState = taxCategoryReviewState(profile);
                           return (
                             <div className="summary-line items-start gap-3" key={profile.id}>
-                              <span className="min-w-0">
+                              <div className="min-w-0">
                                 <span className="block">{readable(profile.status)} - {taxDateLabel(profile.effectiveAt)}</span>
                                 <span className="mt-1 inline-flex"><StatusPill tone={historyCategoryState.tone}>{historyCategoryState.label}</StatusPill></span>
                                 {historyCategoryState.detail ? <span className="mt-1 block text-xs text-slate-500">{historyCategoryState.detail}</span> : null}
                                 <span className="mt-1 block text-xs font-semibold text-slate-500">{taxLocationVerificationLabel(profile)}</span>
-                              </span>
+                                <TaxComponentBreakdown profile={profile} compact />
+                              </div>
                               <strong className="min-w-0 break-all text-right">{taxRateLabel(profile.taxRateBps)} - {profile.configurationVersion}</strong>
                             </div>
                           );
