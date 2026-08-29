@@ -3868,7 +3868,7 @@ const publicFeatureCards = [
     plan: "Enterprise",
     mockup: "analytics",
     eyebrow: "Analytics and reports",
-    description: "Review sales trends, order volume, customer growth, menu performance, driver tips, and operating patterns.",
+    description: "Track sales trends, order volume, average ticket, customer growth, menu performance, and operating patterns from one dashboard.",
     hero: "Make decisions from restaurant-owned order, customer, delivery, loyalty, and menu performance data.",
     benefits: [
       "Understand daily, weekly, and monthly restaurant performance.",
@@ -3969,6 +3969,56 @@ function featureSlugFromPath(path = "") {
   const normalizedPath = String(path || "").replace(/\/+$/, "") || "/";
   const match = normalizedPath.match(/^\/features\/([^/?#]+)$/);
   return match?.[1] || "";
+}
+
+function HomepageAnalyticsPreview() {
+  return (
+    <figure className="homepage-analytics-preview" aria-label="Product demo analytics dashboard preview">
+      <div className="homepage-analytics-topline">
+        <span>Today</span>
+        <span>Product demo</span>
+      </div>
+      <div className="homepage-analytics-value-row">
+        <div>
+          <span>Net Sales</span>
+          <strong>$4,286</strong>
+        </div>
+        <span className="homepage-analytics-change">+12.4% vs yesterday</span>
+      </div>
+      <div className="homepage-analytics-chart" aria-hidden="true">
+        <svg viewBox="0 0 160 86" focusable="false">
+          <defs>
+            <linearGradient id="homepageAnalyticsArea" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#14b8a6" stopOpacity="0.24" />
+              <stop offset="100%" stopColor="#14b8a6" stopOpacity="0.03" />
+            </linearGradient>
+          </defs>
+          <path className="homepage-analytics-gridline" d="M8 18H152" />
+          <path className="homepage-analytics-gridline" d="M8 42H152" />
+          <path className="homepage-analytics-gridline" d="M8 66H152" />
+          <path className="homepage-analytics-area" d="M8 66 C19 54 28 49 41 50 C53 51 58 58 70 53 C83 47 85 34 99 32 C111 30 118 43 129 37 C139 31 143 20 148 16 L148 76 L8 76 Z" />
+          <path className="homepage-analytics-line" d="M8 66 C19 54 28 49 41 50 C53 51 58 58 70 53 C83 47 85 34 99 32 C111 30 118 43 129 37 C139 31 143 20 148 16" />
+          <circle className="homepage-analytics-point" cx="148" cy="16" r="4.5" />
+          <circle className="homepage-analytics-point-ring" cx="148" cy="16" r="7.5" />
+        </svg>
+        <div className="homepage-analytics-axis">
+          <span>9a</span>
+          <span>12p</span>
+          <span>3p</span>
+        </div>
+      </div>
+      <dl className="homepage-analytics-kpis">
+        <div>
+          <dt>Orders</dt>
+          <dd>156</dd>
+        </div>
+        <div>
+          <dt>Avg ticket</dt>
+          <dd>$27.47</dd>
+        </div>
+      </dl>
+    </figure>
+  );
 }
 
 function MarketingFeatureMockup({ type }) {
@@ -4091,7 +4141,7 @@ function PublicHome({ user, onLogout }) {
                 <p>{description}</p>
                 <span className="learn-more-link marketing-card-learn-more"><span>Learn more</span><ArrowRight size={15} aria-hidden="true" /></span>
               </div>
-              <MarketingFeatureMockup type={mockup} />
+              {mockup === "analytics" ? <HomepageAnalyticsPreview /> : <MarketingFeatureMockup type={mockup} />}
             </PublicLink>
           ))}
         </section>

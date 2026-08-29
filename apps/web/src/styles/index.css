@@ -2451,6 +2451,7 @@ textarea {
   .marketing-route,
   .marketing-loyalty,
   .marketing-chart,
+  .homepage-analytics-preview,
   .marketing-menu-card {
     align-self: center;
     justify-self: end;
@@ -2638,6 +2639,166 @@ textarea {
   .chart-bars span:nth-child(3) { height: 50%; }
   .chart-bars span:nth-child(4) { height: 76%; }
   .chart-bars span:nth-child(5) { height: 90%; }
+
+  .homepage-analytics-preview {
+    box-sizing: border-box;
+    display: flex;
+    min-height: 11.3rem;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0.75rem;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 248, 245, 0.98));
+    color: #111827;
+  }
+
+  .homepage-analytics-preview * {
+    box-sizing: border-box;
+  }
+
+  .homepage-analytics-topline,
+  .homepage-analytics-value-row,
+  .homepage-analytics-axis {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem;
+  }
+
+  .homepage-analytics-topline span {
+    color: #64748b;
+    font-size: 0.56rem;
+    font-weight: 850;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
+  .homepage-analytics-topline span:last-child {
+    border: 1px solid rgba(15, 118, 110, 0.18);
+    border-radius: 999px;
+    background: #eef7f4;
+    padding: 0.15rem 0.35rem;
+    color: #0f766e;
+    white-space: nowrap;
+  }
+
+  .homepage-analytics-value-row {
+    align-items: end;
+  }
+
+  .homepage-analytics-value-row div {
+    min-width: 0;
+  }
+
+  .homepage-analytics-value-row div > span {
+    display: block;
+    color: #475569;
+    font-size: 0.58rem;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .homepage-analytics-value-row strong {
+    display: block;
+    margin-top: 0.08rem;
+    color: #111827;
+    font-size: 1.05rem;
+    font-weight: 950;
+    line-height: 1.08;
+  }
+
+  .homepage-analytics-change {
+    flex: 0 0 auto;
+    max-width: 4rem;
+    border-radius: 999px;
+    background: rgba(20, 184, 166, 0.11);
+    padding: 0.22rem 0.3rem;
+    color: #0f766e;
+    font-size: 0.5rem;
+    font-weight: 900;
+    line-height: 1.15;
+    text-align: right;
+  }
+
+  .homepage-analytics-chart {
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .homepage-analytics-chart svg {
+    display: block;
+    width: 100%;
+    height: 4.3rem;
+    overflow: visible;
+  }
+
+  .homepage-analytics-gridline {
+    fill: none;
+    stroke: #dbe3ec;
+    stroke-width: 1;
+  }
+
+  .homepage-analytics-area {
+    fill: url(#homepageAnalyticsArea);
+  }
+
+  .homepage-analytics-line {
+    fill: none;
+    stroke: #0f9f8f;
+    stroke-linecap: round;
+    stroke-width: 4;
+  }
+
+  .homepage-analytics-point {
+    fill: #ffffff;
+    stroke: #0f766e;
+    stroke-width: 3;
+  }
+
+  .homepage-analytics-point-ring {
+    fill: none;
+    stroke: rgba(15, 118, 110, 0.18);
+    stroke-width: 2;
+  }
+
+  .homepage-analytics-axis span {
+    color: #64748b;
+    font-size: 0.52rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .homepage-analytics-kpis {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+    margin: 0;
+  }
+
+  .homepage-analytics-kpis div {
+    min-width: 0;
+    border: 1px solid rgba(220, 228, 232, 0.9);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.82);
+    padding: 0.43rem;
+  }
+
+  .homepage-analytics-kpis dt {
+    color: #64748b;
+    font-size: 0.52rem;
+    font-weight: 850;
+    line-height: 1.1;
+    text-transform: uppercase;
+  }
+
+  .homepage-analytics-kpis dd {
+    margin: 0.15rem 0 0;
+    color: #111827;
+    font-size: 0.84rem;
+    font-weight: 950;
+    line-height: 1.05;
+  }
 
   .marketing-menu-card {
     display: grid;
@@ -3303,6 +3464,7 @@ textarea {
     .marketing-route,
     .marketing-loyalty,
     .marketing-chart,
+    .homepage-analytics-preview,
     .marketing-menu-card {
       justify-self: stretch;
       max-width: none;
