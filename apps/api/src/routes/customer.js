@@ -2,13 +2,27 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { authenticateAccessToken, requireAuth, requireRole } from "../middleware/auth.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { findOrderForTracking, limitedTrackingOrder } from "../services/orderWorkflowService.js";
 import { createOrderPayment } from "../modules/orderPayments/orderPaymentService.js";
 
 const router = Router();
+const statusReaderRoles = new Set(["SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER"]);
+
+function bearerTokenFor(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7) : null;
+}
+
+function canReadCustomerOrderStatus(user, order) {
+  if (!user) return false;
+  if (user.role === "SUPER_ADMIN") return true;
+  if (statusReaderRoles.has(user.role)) return user.restaurantId === order.restaurantId;
+  if (user.role === "CUSTOMER") return order.customer?.userId === user.id;
+  return false;
+}
 
 router.get("/restaurants/:slug", async (req, res, next) => {
   try {
@@ -120,12 +134,16 @@ export async function getOrderStatus(req, res, next) {
       if (req.params.slug && tracked.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
       return res.json({ order: limitedTrackingOrder(tracked) });
     }
+    const bearerToken = bearerTokenFor(req);
+    if (!bearerToken) return res.status(403).json({ error: "Valid order access token is required", code: "ORDER_ACCESS_TOKEN_REQUIRED" });
+    const user = await authenticateAccessToken(bearerToken);
     const order = await prisma.order.findUnique({
       where: { id: req.params.orderId },
       include: { restaurant: true, customer: true, items: true, statusHistory: true, delivery: { include: { statusHistory: true, driver: { include: { user: true } } } } }
     });
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (req.params.slug && order.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
+    if (!canReadCustomerOrderStatus(user, order)) return res.status(403).json({ error: "Order access denied", code: "ORDER_ACCESS_DENIED" });
     res.json({ order: limitedTrackingOrder(order) });
   } catch (error) {
     next(error);
