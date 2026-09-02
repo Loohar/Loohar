@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
-import { createTrackingToken, customerTrackingUrls, hashToken, trackingExpiresAt } from "../../services/orderWorkflowService.js";
+import { buildReceiptPayload, createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, stripeConnectPublishableKey, stripeRequest, stripeForm } from "../paymentProviders/stripeRest.js";
 import { calculateOrderQuote } from "./quoteService.js";
@@ -12,6 +12,48 @@ function merchantReady(merchant) {
 
 function orderInclude() {
   return { items: true, customer: true, restaurant: { include: { domains: true } }, statusHistory: true };
+}
+
+const orderPaymentReaderRoles = new Set(["SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER"]);
+
+function accessError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
+function canReadOrderPayment(user, order) {
+  if (!user || !orderPaymentReaderRoles.has(user.role)) return false;
+  if (user.role === "SUPER_ADMIN") return true;
+  return user.restaurantId === order.restaurantId;
+}
+
+export function publicOrderPaymentStatus(payment) {
+  if (!payment) return null;
+  const refundedCents = Array.isArray(payment.refunds)
+    ? payment.refunds
+      .filter((refund) => refund.status === "SUCCEEDED")
+      .reduce((sum, refund) => sum + (refund.amountCents || 0), 0)
+    : 0;
+  return {
+    provider: payment.provider || null,
+    status: payment.status || null,
+    currency: payment.currency || "usd",
+    subtotalCents: payment.subtotalCents ?? null,
+    discountCents: payment.discountCents ?? 0,
+    taxableAmountCents: payment.taxableAmountCents ?? null,
+    taxCents: payment.taxCents ?? 0,
+    deliveryFeeCents: payment.deliveryFeeCents ?? 0,
+    serviceFeeCents: payment.serviceFeeCents ?? 0,
+    restaurantTipCents: payment.restaurantTipCents ?? 0,
+    driverTipCents: payment.driverTipCents ?? 0,
+    totalCents: payment.totalCents ?? payment.amountCents ?? null,
+    refundedCents,
+    authorizedAt: payment.authorizedAt || null,
+    paidAt: payment.paidAt || null,
+    refundedAt: payment.refundedAt || null
+  };
 }
 
 export async function getMerchantAccount({ user }) {
@@ -372,21 +414,32 @@ export async function refundOrderPayment({ orderId, amountCents, reason, user })
   return restaurantRefund;
 }
 
-export async function statusForOrder({ orderId }) {
+export async function statusForOrder({ orderId, user }) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { restaurantOrderPayment: true, customer: true, items: true, statusHistory: true }
+    include: { restaurantOrderPayment: { include: { refunds: true } }, customer: true, items: true, statusHistory: true }
   });
   if (!order) {
     const error = new Error("Order not found");
     error.status = 404;
     throw error;
   }
+  if (!canReadOrderPayment(user, order)) throw accessError("Order access denied", 403, "ORDER_ACCESS_DENIED");
   return { order, payment: order.restaurantOrderPayment };
 }
 
-export async function receiptForOrder({ orderId }) {
-  const { order, payment } = await statusForOrder({ orderId });
+export async function publicStatusForOrder({ orderId, token }) {
+  const order = await findOrderForTracking(orderId, token);
+  if (!order) throw accessError("Valid order access token is required", 403, "ORDER_ACCESS_TOKEN_REQUIRED");
+  const limitedOrder = limitedTrackingOrder(order);
+  return {
+    order: { ...limitedOrder, totalCents: limitedOrder.totals?.totalCents ?? null },
+    payment: publicOrderPaymentStatus(order.restaurantOrderPayment || order.payment)
+  };
+}
+
+export async function receiptForOrder({ orderId, user }) {
+  const { order, payment } = await statusForOrder({ orderId, user });
   return {
     order,
     payment,
@@ -400,6 +453,12 @@ export async function receiptForOrder({ orderId }) {
       totalCents: order.totalCents
     }
   };
+}
+
+export async function publicReceiptForOrder({ orderId, token }) {
+  const order = await findOrderForTracking(orderId, token);
+  if (!order) throw accessError("Valid order access token is required", 403, "ORDER_ACCESS_TOKEN_REQUIRED");
+  return { receipt: buildReceiptPayload(order, { kind: "customer", trackingToken: token }) };
 }
 
 export async function handleStripeConnectWebhook(payload = {}) {

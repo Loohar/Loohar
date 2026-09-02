@@ -11,6 +11,8 @@ const responseSensitiveKeys = new Set([
   "authorization",
   "serviceRoleKey",
   "supabaseServiceRoleKey",
+  "providerClientSecret",
+  "client_secret",
   "ownerPassword",
   "ownerTemporaryPassword",
   "sessionVersion"

@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { FEATURE } from "../config/entitlements.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { authenticateAccessToken, requireAuth, requireRole } from "../middleware/auth.js";
 import { assertFeatureForRestaurant, featureGuard } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
-import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
+import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, publicReceiptForOrder, publicStatusForOrder, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
 import { calculateOrderQuote } from "../modules/orderPayments/quoteService.js";
 
 const router = Router();
@@ -58,6 +58,24 @@ async function assertOrderPaymentEntitlements(req) {
   if (req.body.couponCode) {
     await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.COUPONS, method: req.method });
   }
+}
+
+function bearerTokenFor(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7) : null;
+}
+
+function trackingTokenFor(req) {
+  const headerToken = req.headers["x-loohar-order-token"] || req.headers["x-loohar-tracking-token"] || "";
+  return req.query.token?.toString() || (Array.isArray(headerToken) ? headerToken[0] : headerToken);
+}
+
+async function orderPaymentAccessFor(req) {
+  const trackingToken = trackingTokenFor(req);
+  if (trackingToken) return { user: null, trackingToken };
+  const bearerToken = bearerTokenFor(req);
+  if (!bearerToken) return { user: null, trackingToken };
+  return { user: await authenticateAccessToken(bearerToken), trackingToken };
 }
 
 router.post("/quote", validate(quoteSchema), async (req, res, next) => {
@@ -123,7 +141,11 @@ router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "
 
 router.get("/:orderId/status", async (req, res, next) => {
   try {
-    res.json(await statusForOrder({ orderId: req.params.orderId }));
+    const access = await orderPaymentAccessFor(req);
+    const payload = access.user
+      ? await statusForOrder({ orderId: req.params.orderId, user: access.user })
+      : await publicStatusForOrder({ orderId: req.params.orderId, token: access.trackingToken });
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -131,7 +153,11 @@ router.get("/:orderId/status", async (req, res, next) => {
 
 router.get("/:orderId/receipt", async (req, res, next) => {
   try {
-    res.json(await receiptForOrder({ orderId: req.params.orderId }));
+    const access = await orderPaymentAccessFor(req);
+    const payload = access.user
+      ? await receiptForOrder({ orderId: req.params.orderId, user: access.user })
+      : await publicReceiptForOrder({ orderId: req.params.orderId, token: access.trackingToken });
+    res.json(payload);
   } catch (error) {
     next(error);
   }

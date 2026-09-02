@@ -14244,8 +14244,13 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     try {
       const trackingToken = orderStatus?.tracking?.token;
       const query = trackingToken ? `?token=${encodeURIComponent(trackingToken)}` : "";
-      const payload = await api(`/api/customer/orders/${orderId}/status${query}`);
-      setOrderStatus((current) => ({ ...payload.order, tracking: current?.tracking }));
+      const payload = await api(`/api/customer/orders/${orderId}/status${query}`, trackingToken ? { skipAuth: true } : {});
+      setOrderStatus((current) => ({
+        ...payload.order,
+        totalCents: payload.order?.totalCents ?? payload.order?.totals?.totalCents ?? current?.totalCents,
+        tracking: current?.tracking
+      }));
+      if (payload.payment) setPaymentStatus(payload.payment);
     } catch (statusError) {
       setError(statusError.message);
     }

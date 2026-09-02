@@ -83,11 +83,14 @@ const unsafeUser = sanitizeUser({
 
 const unsafeResponse = sanitizeSensitiveFields({
   user: { passwordHash: "hash", temporaryPassword: true, mfaSecret: "totp" },
+  payment: { providerClientSecret: "redacted-provider-value", client_secret: "redacted-raw-provider-value" },
   refreshToken: "top-level-refresh-token"
 });
 ["passwordHash", "temporaryPassword", "mfaSecret"].forEach((key) => {
   if (Object.prototype.hasOwnProperty.call(unsafeResponse.user, key)) findings.push(`sanitizeSensitiveFields exposes user.${key}`);
 });
+if (Object.prototype.hasOwnProperty.call(unsafeResponse.payment, "providerClientSecret")) findings.push("sanitizeSensitiveFields exposes payment.providerClientSecret");
+if (Object.prototype.hasOwnProperty.call(unsafeResponse.payment, "client_secret")) findings.push("sanitizeSensitiveFields exposes payment.client_secret");
 if (!unsafeResponse.refreshToken) findings.push("sanitizeSensitiveFields removed top-level refreshToken unexpectedly");
 
 if (findings.length) {
