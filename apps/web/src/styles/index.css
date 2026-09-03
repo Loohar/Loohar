@@ -1324,7 +1324,11 @@ textarea {
   }
 
   .food-card {
-    @apply flex min-h-40 justify-between gap-4 bg-slate-50;
+    @apply flex min-h-40 min-w-0 max-w-full flex-wrap justify-between gap-4 bg-slate-50;
+  }
+
+  .food-card > div {
+    @apply min-w-0 grow basis-48;
   }
 
   .order-card-img {
@@ -1333,6 +1337,10 @@ textarea {
 
   .order-layout {
     @apply grid gap-5 xl:grid-cols-[minmax(0,1fr)_390px] xl:items-start;
+  }
+
+  .order-layout > * {
+    @apply min-w-0 max-w-full;
   }
 
   .order-cart-panel {
