@@ -3,8 +3,17 @@ import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
 import { buildReceiptPayload, createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
-import { assertStripeConnectConfigured, stripeConnectPublishableKey, stripeRequest, stripeForm } from "../paymentProviders/stripeRest.js";
+import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
 import { calculateOrderQuote } from "./quoteService.js";
+
+const STRIPE_CONNECT_ACCOUNT_CONFIGURATION = "merchant";
+const STRIPE_CONNECT_ACCOUNT_INCLUDES = [
+  "configuration.merchant",
+  "requirements",
+  "future_requirements",
+  "identity",
+  "defaults"
+];
 
 function merchantReady(merchant) {
   return merchant?.provider === "STRIPE_CONNECT" && merchant.status === "ENABLED" && merchant.stripeAccountId && merchant.stripeChargesEnabled;
@@ -27,6 +36,306 @@ function canReadOrderPayment(user, order) {
   if (!user || !orderPaymentReaderRoles.has(user.role)) return false;
   if (user.role === "SUPER_ADMIN") return true;
   return user.restaurantId === order.restaurantId;
+}
+
+function isStripeAccountLifecycleEvent(eventType = "", object = {}) {
+  return eventType === "account.updated"
+    || eventType === "v1.account.updated"
+    || eventType.startsWith("v2.core.account")
+    || object.object === "v2.core.account";
+}
+
+function cleanString(value, fallback = "") {
+  const next = value === null || value === undefined ? "" : String(value).trim();
+  return next || fallback;
+}
+
+function cleanEmail(value = "") {
+  const email = cleanString(value).toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
+function stripeCountryForRestaurant() {
+  return cleanString(process.env.STRIPE_CONNECT_COUNTRY || "US").toLowerCase();
+}
+
+function stripeCurrency() {
+  return cleanString(process.env.ORDER_PAYMENT_CURRENCY || "usd").toLowerCase();
+}
+
+function compactObject(value) {
+  if (Array.isArray(value)) return value.map(compactObject);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, nestedValue]) => nestedValue !== undefined && nestedValue !== null && nestedValue !== "")
+      .map(([key, nestedValue]) => [key, compactObject(nestedValue)])
+  );
+}
+
+function accountDisplayName(restaurant) {
+  return cleanString(restaurant?.businessName || restaurant?.name, "Loohar restaurant").slice(0, 120);
+}
+
+export function stripeConnectAccountIdempotencyKey(restaurantId = "") {
+  return `loohar:stripe-connect:v2-account:${cleanString(restaurantId, "unknown")}`;
+}
+
+export function buildStripeConnectAccountV2Body({ restaurant, user } = {}) {
+  const displayName = accountDisplayName(restaurant);
+  return compactObject({
+    contact_email: cleanEmail(restaurant?.email),
+    display_name: displayName,
+    dashboard: "express",
+    identity: {
+      country: stripeCountryForRestaurant(),
+      entity_type: "company",
+      business_details: {
+        registered_name: displayName
+      }
+    },
+    configuration: {
+      [STRIPE_CONNECT_ACCOUNT_CONFIGURATION]: {
+        capabilities: {
+          card_payments: {
+            requested: true
+          }
+        }
+      }
+    },
+    defaults: {
+      currency: stripeCurrency(),
+      responsibilities: {
+        fees_collector: "application",
+        losses_collector: "application"
+      },
+      locales: ["en-US"]
+    },
+    metadata: {
+      restaurantId: restaurant?.id,
+      createdByUserId: user?.id,
+      domain: "MERCHANT_ACCOUNT",
+      integration: "loohar_accounts_v2"
+    },
+    include: STRIPE_CONNECT_ACCOUNT_INCLUDES
+  });
+}
+
+export function buildStripeConnectAccountLinkV2Body({ accountId, refreshUrl, returnUrl } = {}) {
+  return compactObject({
+    account: accountId,
+    use_case: {
+      type: "account_onboarding",
+      account_onboarding: {
+        configurations: [STRIPE_CONNECT_ACCOUNT_CONFIGURATION],
+        refresh_url: refreshUrl,
+        return_url: returnUrl
+      }
+    }
+  });
+}
+
+function requirementName(entry = {}) {
+  return cleanString(entry.field || entry.id || entry.requirement || entry.type || entry.code, "requirement");
+}
+
+function requirementDeadlineStatus(entry = {}) {
+  return cleanString(
+    entry.minimum_deadline?.status
+    || entry.impact?.restricts_capabilities?.deadline?.status
+    || entry.deadline?.status
+    || entry.status
+  );
+}
+
+function uniqueRequirementList(values = []) {
+  return [...new Set(values.map((value) => cleanString(value)).filter(Boolean))];
+}
+
+function requirementList(requirements = {}, key) {
+  if (Array.isArray(requirements?.[key])) return uniqueRequirementList(requirements[key]);
+  if (!Array.isArray(requirements?.entries)) return [];
+  const expectedStatus = key === "currently_due" ? "currently_due" : key === "past_due" ? "past_due" : "pending";
+  return uniqueRequirementList(
+    requirements.entries
+      .filter((entry) => {
+        const status = requirementDeadlineStatus(entry);
+        if (expectedStatus === "pending") return status === "pending" || status === "pending_verification";
+        return status === expectedStatus;
+      })
+      .map(requirementName)
+  );
+}
+
+function requirementStatusDetails(capability = {}) {
+  return Array.isArray(capability.status_details) ? capability.status_details : [];
+}
+
+function hasPendingCapabilityVerification(capability = {}) {
+  return requirementStatusDetails(capability).some((detail) => detail.code === "requirements_pending_verification");
+}
+
+function payloadObject(payload = {}) {
+  const object = payload.data?.object || payload.object;
+  return object && typeof object === "object" ? object : {};
+}
+
+function stripeV2AccountPathWithIncludes(path = "") {
+  if (!path) return "";
+  const [pathname, rawQuery = ""] = path.split("?");
+  if (!pathname.startsWith("/core/accounts/")) return "";
+  const query = new URLSearchParams(rawQuery);
+  const included = new Set([...query.getAll("include"), ...query.getAll("include[]")]);
+  STRIPE_CONNECT_ACCOUNT_INCLUDES.forEach((include) => {
+    if (!included.has(include)) query.append("include", include);
+  });
+  const queryString = query.toString();
+  return queryString ? `${pathname}?${queryString}` : pathname;
+}
+
+function stripeV2AccountRetrievePath(accountId = "") {
+  const safeAccountId = cleanString(accountId);
+  return safeAccountId ? stripeV2AccountPathWithIncludes(`/core/accounts/${encodeURIComponent(safeAccountId)}`) : "";
+}
+
+function stripeV2AccountPathFromRelatedObject(relatedObject = {}) {
+  if (relatedObject.type !== "v2.core.account") return "";
+  const rawUrl = cleanString(relatedObject.url);
+  if (!rawUrl) return stripeV2AccountRetrievePath(relatedObject.id);
+  try {
+    const parsedUrl = /^https?:\/\//i.test(rawUrl) ? new URL(rawUrl) : null;
+    const pathWithQuery = parsedUrl ? `${parsedUrl.pathname}${parsedUrl.search}` : rawUrl;
+    const path = pathWithQuery.startsWith("/v2/") ? pathWithQuery.slice(3) : pathWithQuery;
+    return stripeV2AccountPathWithIncludes(path);
+  } catch {
+    return stripeV2AccountRetrievePath(relatedObject.id);
+  }
+}
+
+function accountSnapshotFromV2Event(payload = {}) {
+  const candidates = [
+    payload.data?.object,
+    payload.data?.account,
+    payload.changes?.after
+  ];
+  return candidates.find((candidate) => candidate?.object === "v2.core.account") || null;
+}
+
+async function stripeAccountForLifecycleEvent({ payload, eventType, object }) {
+  if (object.object === "v2.core.account" || eventType === "account.updated" || eventType === "v1.account.updated") return object;
+  const snapshot = accountSnapshotFromV2Event(payload);
+  if (snapshot) return snapshot;
+  if (!eventType.startsWith("v2.core.account")) return object;
+  const relatedObject = payload.related_object || object.related_object || {};
+  const path = stripeV2AccountPathFromRelatedObject(relatedObject);
+  if (!path) return null;
+  assertStripeConnectConfigured();
+  assertStripeConnectModeAllowed();
+  return stripeV2Request({
+    secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+    path,
+    method: "GET",
+    stripeContext: payload.context || object.context || ""
+  });
+}
+
+export function normalizeStripeConnectAccountReadiness(account = {}) {
+  const merchantConfiguration = account.configuration?.merchant || {};
+  const merchantCapabilities = merchantConfiguration.capabilities || {};
+  const cardPaymentsStatus = cleanString(merchantCapabilities.card_payments?.status || account.capabilities?.card_payments);
+  const payoutsStatus = cleanString(merchantCapabilities.stripe_balance?.payouts?.status || account.capabilities?.transfers);
+  const isAccountsV2 = account.object === "v2.core.account" || Boolean(account.configuration);
+  const requirements = account.requirements || {};
+  const futureRequirements = account.future_requirements || {};
+  const currentlyDue = uniqueRequirementList([
+    ...requirementList(requirements, "currently_due"),
+    ...requirementList(futureRequirements, "currently_due")
+  ]);
+  const pastDue = uniqueRequirementList([
+    ...requirementList(requirements, "past_due"),
+    ...requirementList(futureRequirements, "past_due")
+  ]);
+  const pending = uniqueRequirementList([
+    ...requirementList(requirements, "pending_verification"),
+    ...requirementList(futureRequirements, "pending_verification")
+  ]);
+  const disabledReason = cleanString(requirements.disabled_reason || futureRequirements.disabled_reason);
+  const chargesEnabled = isAccountsV2 ? cardPaymentsStatus === "active" : Boolean(account.charges_enabled);
+  const payoutsEnabled = isAccountsV2 ? payoutsStatus === "active" : Boolean(account.payouts_enabled);
+  const pendingVerification = pending.length > 0 || hasPendingCapabilityVerification(merchantCapabilities.card_payments) || hasPendingCapabilityVerification(merchantCapabilities.stripe_balance?.payouts);
+  const detailsSubmitted = isAccountsV2
+    ? Boolean(account.id && currentlyDue.length === 0 && pastDue.length === 0 && !disabledReason)
+    : Boolean(account.details_submitted);
+  const onboardingComplete = detailsSubmitted && chargesEnabled && pastDue.length === 0 && currentlyDue.length === 0 && !disabledReason;
+  const actionRequired = Boolean(account.id && (currentlyDue.length > 0 || pastDue.length > 0 || disabledReason));
+  let readinessStatus = "NOT_STARTED";
+  if (chargesEnabled && payoutsEnabled && onboardingComplete) readinessStatus = "ENABLED";
+  else if (actionRequired) readinessStatus = "ACTION_REQUIRED";
+  else if (detailsSubmitted || pendingVerification) readinessStatus = "PENDING_VERIFICATION";
+  else if (account.id) readinessStatus = "ACTION_REQUIRED";
+
+  return {
+    provider: "STRIPE",
+    providerAccountId: account.id || null,
+    accountPresent: Boolean(account.id),
+    onboardingComplete,
+    detailsSubmitted,
+    chargesEnabled,
+    payoutsEnabled,
+    requirementsPending: pendingVerification,
+    requirementsCurrentlyDue: currentlyDue,
+    requirementsPastDue: pastDue,
+    disabledReason: disabledReason || null,
+    readinessStatus,
+    capabilityStatus: {
+      cardPayments: cardPaymentsStatus || null,
+      stripeBalancePayouts: payoutsStatus || null
+    }
+  };
+}
+
+function merchantUpdateFromReadiness(readiness) {
+  return {
+    status: readiness.readinessStatus,
+    stripeAccountId: readiness.providerAccountId,
+    stripeChargesEnabled: readiness.chargesEnabled,
+    stripePayoutsEnabled: readiness.payoutsEnabled,
+    stripeDetailsSubmitted: readiness.detailsSubmitted,
+    disabledReason: readiness.disabledReason,
+    enabledAt: readiness.readinessStatus === "ENABLED" ? new Date() : undefined,
+    requirementsJson: {
+      source: "stripe_accounts_v2",
+      currently_due: readiness.requirementsCurrentlyDue,
+      past_due: readiness.requirementsPastDue,
+      pending_verification: readiness.requirementsPending,
+      capability_status: readiness.capabilityStatus,
+      disabled_reason: readiness.disabledReason
+    }
+  };
+}
+
+function stripeDate(value) {
+  if (!value) return null;
+  if (Number.isFinite(Number(value))) return new Date(Number(value) * 1000);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function createStripeConnectedAccountV2({ restaurant, user }) {
+  return stripeV2Request({
+    secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+    path: "/core/accounts",
+    body: buildStripeConnectAccountV2Body({ restaurant, user }),
+    idempotencyKey: stripeConnectAccountIdempotencyKey(restaurant.id)
+  });
+}
+
+async function createStripeConnectedAccountLinkV2({ stripeAccountId, refreshUrl, returnUrl }) {
+  return stripeV2Request({
+    secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+    path: "/core/account_links",
+    body: buildStripeConnectAccountLinkV2Body({ accountId: stripeAccountId, refreshUrl, returnUrl })
+  });
 }
 
 export function publicOrderPaymentStatus(payment) {
@@ -77,53 +386,43 @@ export async function createMerchantOnboardingLink({ user }) {
     throw error;
   }
   assertStripeConnectConfigured();
+  assertStripeConnectModeAllowed();
   const restaurant = await prisma.restaurant.findUnique({ where: { id: user.restaurantId } });
-  const current = await prisma.restaurantMerchantAccount.findUnique({
-    where: { restaurantId_provider: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT" } }
+  if (!restaurant) {
+    const error = new Error("Restaurant not found");
+    error.status = 404;
+    throw error;
+  }
+  let merchantAccount = await prisma.restaurantMerchantAccount.upsert({
+    where: { restaurantId_provider: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT" } },
+    create: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT", status: "NOT_STARTED" },
+    update: {}
   });
-  let stripeAccountId = current?.stripeAccountId;
+  let stripeAccountId = merchantAccount.stripeAccountId;
   if (!stripeAccountId) {
-    const account = await stripeRequest({
-      secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
-      path: "/accounts",
-      body: stripeForm({
-        type: "express",
-        country: process.env.STRIPE_CONNECT_COUNTRY || "US",
-        email: user.email,
-        "capabilities[card_payments][requested]": "true",
-        "capabilities[transfers][requested]": "true",
-        "business_profile[name]": restaurant?.businessName || restaurant?.name || "Loohar restaurant",
-        "metadata[restaurantId]": user.restaurantId,
-        "metadata[domain]": "MERCHANT_ACCOUNT"
-      })
-    });
+    if (!cleanEmail(restaurant.email)) {
+      const error = new Error("Restaurant contact email is required before starting Stripe Connect onboarding.");
+      error.status = 400;
+      error.code = "STRIPE_CONNECT_RESTAURANT_CONTACT_EMAIL_REQUIRED";
+      throw error;
+    }
+    const account = await createStripeConnectedAccountV2({ restaurant, user });
+    const readiness = normalizeStripeConnectAccountReadiness(account);
     stripeAccountId = account.id;
+    merchantAccount = await prisma.restaurantMerchantAccount.update({
+      where: { id: merchantAccount.id },
+      data: merchantUpdateFromReadiness(readiness)
+    });
   }
   const refreshUrl = process.env.STRIPE_CONNECT_REFRESH_URL || `${process.env.APP_URL || "https://loohar.com"}/restaurant/${restaurant?.slug || ""}/settings/payments?connect=refresh`;
   const returnUrl = process.env.STRIPE_CONNECT_RETURN_URL || `${process.env.APP_URL || "https://loohar.com"}/restaurant/${restaurant?.slug || ""}/settings/payments?connect=return`;
-  const link = await stripeRequest({
-    secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
-    path: "/account_links",
-    body: stripeForm({
-      account: stripeAccountId,
-      refresh_url: refreshUrl,
-      return_url: returnUrl,
-      type: "account_onboarding"
-    })
-  });
-  const merchantAccount = await prisma.restaurantMerchantAccount.upsert({
-    where: { restaurantId_provider: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT" } },
-    create: {
-      restaurantId: user.restaurantId,
-      provider: "STRIPE_CONNECT",
-      status: "ACTION_REQUIRED",
+  const link = await createStripeConnectedAccountLinkV2({ stripeAccountId, refreshUrl, returnUrl });
+  merchantAccount = await prisma.restaurantMerchantAccount.update({
+    where: { id: merchantAccount.id },
+    data: {
+      status: merchantAccount.status === "ENABLED" ? "ENABLED" : "ACTION_REQUIRED",
       stripeAccountId,
-      onboardingUrlExpiresAt: link.expires_at ? new Date(link.expires_at * 1000) : null
-    },
-    update: {
-      status: current?.status === "ENABLED" ? "ENABLED" : "ACTION_REQUIRED",
-      stripeAccountId,
-      onboardingUrlExpiresAt: link.expires_at ? new Date(link.expires_at * 1000) : null
+      onboardingUrlExpiresAt: stripeDate(link.expires_at)
     }
   });
   await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "merchant_account.onboarding_link.created", entityType: "RestaurantMerchantAccount", entityId: merchantAccount.id });
@@ -463,7 +762,9 @@ export async function publicReceiptForOrder({ orderId, token }) {
 
 export async function handleStripeConnectWebhook(payload = {}) {
   const eventType = payload.type || payload.eventType;
-  const object = payload.data?.object || payload.object || {};
+  const object = payloadObject(payload);
+  const accountLifecycleEvent = isStripeAccountLifecycleEvent(eventType || "", object);
+  const accountObject = accountLifecycleEvent ? await stripeAccountForLifecycleEvent({ payload, eventType: eventType || "", object }) : null;
   const eventId = payload.id || payload.providerEventId;
   const providerEventId = eventId || `manual-${eventType || "unknown"}-${object.id || Date.now()}`;
   const paymentIntentId = object.id || object.payment_intent;
@@ -476,9 +777,9 @@ export async function handleStripeConnectWebhook(payload = {}) {
   await prisma.restaurantPaymentEvent.upsert({
     where: { providerEventId },
     create: {
-      restaurantId: payment?.restaurantId || object.metadata?.restaurantId || null,
+      restaurantId: payment?.restaurantId || accountObject?.metadata?.restaurantId || object.metadata?.restaurantId || null,
       paymentId: payment?.id || null,
-      eventDomain: eventType?.startsWith("account.") ? "MERCHANT_ACCOUNT" : eventType?.startsWith("payout.") ? "PAYOUT" : eventType?.startsWith("charge.dispute") ? "DISPUTE" : "RESTAURANT_ORDER_PAYMENT",
+      eventDomain: accountLifecycleEvent ? "MERCHANT_ACCOUNT" : eventType?.startsWith("payout.") ? "PAYOUT" : eventType?.startsWith("charge.dispute") ? "DISPUTE" : "RESTAURANT_ORDER_PAYMENT",
       provider: "stripe_connect",
       providerEventId,
       eventType: eventType || "unknown",
@@ -488,19 +789,12 @@ export async function handleStripeConnectWebhook(payload = {}) {
     update: { processedAt: new Date() }
   });
 
-  if (eventType === "account.updated") {
-    const accountId = object.id;
-    const status = object.charges_enabled && object.payouts_enabled ? "ENABLED" : object.details_submitted ? "PENDING_VERIFICATION" : "ACTION_REQUIRED";
+  if (accountLifecycleEvent) {
+    const readiness = normalizeStripeConnectAccountReadiness(accountObject || object);
+    if (!readiness.providerAccountId) return { received: true, ignored: true, reason: "account_id_missing" };
     await prisma.restaurantMerchantAccount.updateMany({
-      where: { stripeAccountId: accountId },
-      data: {
-        status,
-        stripeChargesEnabled: Boolean(object.charges_enabled),
-        stripePayoutsEnabled: Boolean(object.payouts_enabled),
-        stripeDetailsSubmitted: Boolean(object.details_submitted),
-        disabledReason: object.requirements?.disabled_reason || null,
-        requirementsJson: object.requirements || {}
-      }
+      where: { stripeAccountId: readiness.providerAccountId },
+      data: merchantUpdateFromReadiness(readiness)
     });
     return { received: true, merchantAccountUpdated: true };
   }

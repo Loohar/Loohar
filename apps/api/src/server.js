@@ -22,7 +22,7 @@ import restaurantRoutes from "./routes/restaurant.js";
 import superAdminRoutes from "./routes/superAdmin.js";
 import taxProfileRoutes from "./routes/taxProfiles.js";
 import uploadRoutes from "./routes/uploads.js";
-import { authorizeNetOrdersWebhookRouter, authorizeNetPlatformWebhookRouter, stripeConnectWebhookRouter, stripePlatformWebhookRouter } from "./routes/webhooks.js";
+import { authorizeNetOrdersWebhookRouter, authorizeNetPlatformWebhookRouter, stripeConnectAccountsV2WebhookRouter, stripeConnectWebhookRouter, stripePlatformWebhookRouter } from "./routes/webhooks.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { bindRealtime } from "./services/realtimeService.js";
 import { sanitizeSensitiveFields } from "./utils/sanitize.js";
@@ -146,6 +146,7 @@ app.use((req, res, next) => {
 app.use(cors(corsOptions));
 app.use("/api/payments/webhook", express.raw({ type: "application/json", limit: "2mb" }));
 app.use("/api/webhooks/stripe-platform", express.raw({ type: "application/json", limit: "2mb" }), stripePlatformWebhookRouter);
+app.use("/api/webhooks/stripe-connect-accounts-v2", express.raw({ type: "application/json", limit: "2mb" }), stripeConnectAccountsV2WebhookRouter);
 app.use("/api/webhooks/stripe-connect", express.raw({ type: "application/json", limit: "2mb" }), stripeConnectWebhookRouter);
 app.use("/api/webhooks/authorize-net-platform", express.raw({ type: "application/json", limit: "2mb" }), authorizeNetPlatformWebhookRouter);
 app.use("/api/webhooks/authorize-net-orders", express.raw({ type: "application/json", limit: "2mb" }), authorizeNetOrdersWebhookRouter);

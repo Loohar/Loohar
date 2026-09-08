@@ -5,6 +5,7 @@ import { parseRawWebhook, verifyStripeWebhook } from "../modules/paymentProvider
 
 export const stripePlatformWebhookRouter = Router();
 export const stripeConnectWebhookRouter = Router();
+export const stripeConnectAccountsV2WebhookRouter = Router();
 export const authorizeNetPlatformWebhookRouter = Router();
 export const authorizeNetOrdersWebhookRouter = Router();
 
@@ -31,6 +32,21 @@ stripeConnectWebhookRouter.post("/", async (req, res, next) => {
       payload,
       signatureHeader: req.get("stripe-signature") || "",
       webhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET
+    });
+    res.json(await handleStripeConnectWebhook(payload));
+  } catch (error) {
+    next(error);
+  }
+});
+
+stripeConnectAccountsV2WebhookRouter.post("/", async (req, res, next) => {
+  try {
+    const { rawBody, payload } = parseRawWebhook(req);
+    verifyStripeWebhook({
+      rawBody,
+      payload,
+      signatureHeader: req.get("stripe-signature") || "",
+      webhookSecret: process.env.STRIPE_CONNECT_ACCOUNTS_V2_WEBHOOK_SECRET
     });
     res.json(await handleStripeConnectWebhook(payload));
   } catch (error) {
