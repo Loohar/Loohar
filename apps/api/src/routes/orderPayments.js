@@ -9,10 +9,27 @@ import { calculateOrderQuote } from "../modules/orderPayments/quoteService.js";
 
 const router = Router();
 
+const modifierSelectionSchema = z.object({
+  modifierGroupId: z.string().optional(),
+  groupId: z.string().optional(),
+  optionGroupId: z.string().optional(),
+  modifierOptionId: z.string().optional(),
+  optionId: z.string().optional(),
+  id: z.string().optional(),
+  optionIds: z.array(z.string()).optional(),
+  name: z.string().optional(),
+  group: z.string().optional(),
+  priceCents: z.number().int().optional()
+});
+
 const orderItemSchema = z.object({
   menuItemId: z.string(),
   quantity: z.number().int().positive(),
-  options: z.array(z.object({ name: z.string(), priceCents: z.number().int() })).default([])
+  modifierSelections: z.array(modifierSelectionSchema).optional(),
+  selectedModifiers: z.array(modifierSelectionSchema).optional(),
+  modifierOptionIds: z.array(z.string()).optional(),
+  optionIds: z.array(z.string()).optional(),
+  options: z.array(modifierSelectionSchema).default([])
 });
 
 const quoteSchema = z.object({

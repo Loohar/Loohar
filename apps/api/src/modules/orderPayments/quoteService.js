@@ -1,4 +1,5 @@
 import { prisma } from "../../config/prisma.js";
+import { validateSelectedModifiers } from "../../services/modifierValidationService.js";
 import { normalizeTipInput } from "../../services/orderWorkflowService.js";
 import { findValidLocationTaxConfiguration } from "../../services/taxProfileService.js";
 
@@ -24,6 +25,79 @@ function configuredTaxRateBps(taxConfiguration) {
     throw error;
   }
   return rate;
+}
+
+function selectedModifierSource(line = {}) {
+  if (Array.isArray(line.modifierSelections)) return line.modifierSelections;
+  if (Array.isArray(line.selectedModifiers)) return line.selectedModifiers;
+  if (Array.isArray(line.options)) return line.options;
+  if (Array.isArray(line.modifierOptionIds)) return line.modifierOptionIds;
+  if (Array.isArray(line.optionIds)) return line.optionIds;
+  return [];
+}
+
+export function publicModifierSelectionsForLine(line = {}) {
+  return selectedModifierSource(line).flatMap((selection, selectionIndex) => {
+    if (selection == null || selection === "") return [];
+    if (typeof selection !== "object" || Array.isArray(selection)) {
+      return [{ modifierGroupId: null, modifierOptionId: String(selection) }];
+    }
+    const modifierGroupId = selection.modifierGroupId ?? selection.groupId ?? selection.optionGroupId ?? null;
+    if (Array.isArray(selection.optionIds)) {
+      return selection.optionIds.map((optionId) => ({
+        modifierGroupId,
+        modifierOptionId: String(optionId)
+      }));
+    }
+    const modifierOptionId = selection.modifierOptionId ?? selection.optionId ?? selection.id ?? null;
+    if (!modifierOptionId) return [];
+    return [{
+      modifierGroupId,
+      modifierOptionId: String(modifierOptionId),
+      selectionIndex
+    }];
+  });
+}
+
+function orderModifierError(error) {
+  if (!String(error?.code || "").startsWith("POS_MODIFIER_")) return error;
+  const invalidCodes = new Set(["POS_MODIFIER_INVALID", "POS_MODIFIER_DUPLICATE"]);
+  const next = new Error(invalidCodes.has(error.code) ? "Selected modifier option is unavailable." : error.message);
+  next.status = error.status || 400;
+  next.code = error.code.replace("POS_", "ORDER_");
+  return next;
+}
+
+export function canonicalQuoteItem({ menuItem, item }) {
+  let selected;
+  try {
+    selected = validateSelectedModifiers(menuItem, {
+      modifierSelections: publicModifierSelectionsForLine(item)
+    });
+  } catch (error) {
+    throw orderModifierError(error);
+  }
+  const optionsTotalCents = selected.modifiers.reduce((sum, option) => sum + nonnegativeInt(option.priceCents), 0);
+  const quantity = nonnegativeInt(item.quantity, 1) || 1;
+  const unitPriceCents = menuItem.priceCents + optionsTotalCents;
+  const modifierSelections = selected.modifiers.map((modifier) => ({
+    modifierGroupId: modifier.groupId,
+    modifierOptionId: modifier.optionId
+  }));
+  return {
+    menuItemId: menuItem.id,
+    name: menuItem.name,
+    quantity,
+    baseUnitPriceCents: menuItem.priceCents,
+    optionsTotalCents,
+    unitPriceCents,
+    lineTotalCents: unitPriceCents * quantity,
+    optionIds: selected.optionIds,
+    modifierOptionIds: selected.optionIds,
+    modifierSelections,
+    options: selected.modifiers,
+    modifiers: selected.modifiers
+  };
 }
 
 function activeCouponWhere({ restaurantId, couponCode }) {
@@ -76,7 +150,14 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     throw error;
   }
   const menuItems = await prisma.menuItem.findMany({
-    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true }
+    where: { restaurantId: restaurant.id, id: { in: items.map((item) => item.menuItemId) }, available: true },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      optionGroups: {
+        include: { options: { orderBy: { sortOrder: "asc" } } },
+        orderBy: { sortOrder: "asc" }
+      }
+    }
   });
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const missingItems = items.filter((item) => !menuById.has(item.menuItemId));
@@ -88,20 +169,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
 
   const quoteItems = items.map((item) => {
     const menuItem = menuById.get(item.menuItemId);
-    const selectedOptions = Array.isArray(item.options) ? item.options : [];
-    const optionsTotalCents = selectedOptions.reduce((sum, option) => sum + nonnegativeInt(option.priceCents), 0);
-    const quantity = nonnegativeInt(item.quantity, 1) || 1;
-    const unitPriceCents = menuItem.priceCents + optionsTotalCents;
-    return {
-      menuItemId: menuItem.id,
-      name: menuItem.name,
-      quantity,
-      baseUnitPriceCents: menuItem.priceCents,
-      optionsTotalCents,
-      unitPriceCents,
-      lineTotalCents: unitPriceCents * quantity,
-      options: selectedOptions
-    };
+    return canonicalQuoteItem({ menuItem, item });
   });
   const subtotalCents = quoteItems.reduce((sum, item) => sum + item.lineTotalCents, 0);
 

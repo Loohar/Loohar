@@ -201,6 +201,7 @@
     "test:platform-billing": "node scripts/financial-separation-test.mjs platform-billing",
     "test:order-payments": "node scripts/financial-separation-test.mjs order-payments",
     "test:order-payment-public-access": "node scripts/order-payment-public-access-test.mjs",
+    "test:order-payment-modifier-authority": "node scripts/order-payment-modifier-authority-test.mjs",
     "test:stripe-connect-accounts-v2": "node scripts/stripe-connect-accounts-v2-test.mjs",
     "test:stripe-billing": "node scripts/financial-separation-test.mjs stripe-billing",
     "test:stripe-connect": "node scripts/financial-separation-test.mjs stripe-connect",

@@ -500,7 +500,9 @@ export async function createOrderPayment({ body }) {
             unitPriceCents: item.unitPriceCents,
             optionsJson: {
               options: item.options || [],
-              modifiers: item.modifiers || item.options || []
+              modifiers: item.modifiers || item.options || [],
+              modifierSelections: item.modifierSelections || [],
+              modifierOptionIds: item.modifierOptionIds || item.optionIds || []
             }
           }))
         },

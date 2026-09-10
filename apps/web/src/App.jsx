@@ -13992,7 +13992,14 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       tipPercentage: restaurantTipChoice !== "CUSTOM" ? Number(restaurantTipChoice) : undefined,
       tipType: restaurantTipChoice === "CUSTOM" || driverTipChoice === "CUSTOM" ? "CUSTOM" : tip > 0 ? "PERCENTAGE" : "NONE",
       couponCode: couponCode || undefined,
-      items: cart.map((item) => ({ menuItemId: item.id, quantity: item.quantity, options: item.selectedModifiers || [] }))
+      items: cart.map((item) => ({
+        menuItemId: item.id,
+        quantity: item.quantity,
+        modifierSelections: (item.selectedModifiers || []).map((modifier) => ({
+          modifierGroupId: modifier.modifierGroupId,
+          modifierOptionId: modifier.modifierOptionId
+        }))
+      }))
     };
   }
 
@@ -14130,7 +14137,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       const defaults = {};
       (item.optionGroups || []).forEach((group) => {
         const defaultOptions = (group.options || []).filter((option) => option.isDefault);
-        defaults[group.id || group.name] = group.maxSelect === 1 ? defaultOptions[0]?.name || "" : defaultOptions.map((option) => option.name);
+        defaults[group.id || group.name] = group.maxSelect === 1 ? defaultOptions[0]?.id || "" : defaultOptions.map((option) => option.id);
       });
       setSelectedOptions(defaults);
       setSelectedQuantity(1);
@@ -14147,11 +14154,11 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   function toggleOption(group, option) {
     const key = group.id || group.name;
     setSelectedOptions((current) => {
-      if (group.maxSelect === 1) return { ...current, [key]: option.name };
+      if (group.maxSelect === 1) return { ...current, [key]: option.id };
       const selected = Array.isArray(current[key]) ? current[key] : [];
-      return selected.includes(option.name)
-        ? { ...current, [key]: selected.filter((name) => name !== option.name) }
-        : { ...current, [key]: [...selected, option.name].slice(0, group.maxSelect || 99) };
+      return selected.includes(option.id)
+        ? { ...current, [key]: selected.filter((optionId) => optionId !== option.id) }
+        : { ...current, [key]: [...selected, option.id].slice(0, group.maxSelect || 99) };
     });
   }
 
@@ -14160,7 +14167,13 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     return (selectedItem.optionGroups || []).flatMap((group) => {
       const key = group.id || group.name;
       const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key] : [selectedOptions[key]].filter(Boolean);
-      return (group.options || []).filter((option) => selected.includes(option.name)).map((option) => ({ group: group.name, name: option.name, priceCents: option.priceCents || 0 }));
+      return (group.options || []).filter((option) => selected.includes(option.id)).map((option) => ({
+        modifierGroupId: group.id,
+        modifierOptionId: option.id,
+        group: group.name,
+        name: option.name,
+        priceCents: option.priceCents || 0
+      }));
     });
   }
 
@@ -14442,7 +14455,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(group.options || []).map((option) => {
                             const key = group.id || group.name;
-                            const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key].includes(option.name) : selectedOptions[key] === option.name;
+                            const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key].includes(option.id) : selectedOptions[key] === option.id;
                             return <button className={`seg ${selected ? "active" : ""}`} key={option.id || option.name} onClick={() => toggleOption(group, option)}>{option.name}{option.priceCents ? ` +${money(option.priceCents)}` : ""}</button>;
                           })}
                         </div>

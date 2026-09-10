@@ -5,6 +5,7 @@ const root = process.cwd();
 const mode = process.argv[2] || "all";
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const posService = readFileSync(join(root, "apps/api/src/services/posService.js"), "utf8");
+const modifierValidationService = readFileSync(join(root, "apps/api/src/services/modifierValidationService.js"), "utf8");
 const restaurantRoutes = readFileSync(join(root, "apps/api/src/routes/restaurant.js"), "utf8");
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
 const workflowScreens = readFileSync(join(root, "apps/web/src/apps/pos/PosWorkflowScreens.jsx"), "utf8");
@@ -95,11 +96,13 @@ if (mode === "all" || mode === "menu-admin") {
 }
 
 if (mode === "all" || mode === "quote-validation") {
-  assertCheck(includesAll(posService, [
+  assertCheck(includesAll(modifierValidationService, [
     "POS_MODIFIER_DUPLICATE",
     "POS_MODIFIER_INVALID",
     "POS_MODIFIER_REQUIRED",
-    "POS_MODIFIER_MAXIMUM",
+    "POS_MODIFIER_MAXIMUM"
+  ]) && includesAll(posService, [
+    "validateSelectedModifiers",
     "modifierOptionIds",
     "modifiers",
     "unitPriceCents = menuItem.priceCents + modifiers.reduce"
