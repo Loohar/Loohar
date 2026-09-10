@@ -4,6 +4,7 @@ import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/not
 import { buildReceiptPayload, createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
+import { isMerchantAccountPaymentReady } from "./merchantReadiness.js";
 import { calculateOrderQuote } from "./quoteService.js";
 
 const STRIPE_CONNECT_ACCOUNT_CONFIGURATION = "merchant";
@@ -14,10 +15,6 @@ const STRIPE_CONNECT_ACCOUNT_INCLUDES = [
   "identity",
   "defaults"
 ];
-
-function merchantReady(merchant) {
-  return merchant?.provider === "STRIPE_CONNECT" && merchant.status === "ENABLED" && merchant.stripeAccountId && merchant.stripeChargesEnabled;
-}
 
 function orderInclude() {
   return { items: true, customer: true, restaurant: { include: { domains: true } }, statusHistory: true };
@@ -457,7 +454,7 @@ export async function createOrderPayment({ body }) {
   const merchant = await prisma.restaurantMerchantAccount.findUnique({
     where: { restaurantId_provider: { restaurantId: quote.restaurant.id, provider: "STRIPE_CONNECT" } }
   });
-  if (!merchantReady(merchant)) {
+  if (!isMerchantAccountPaymentReady(merchant)) {
     const error = new Error("Restaurant order payments are not enabled for this restaurant yet. Complete Stripe Connect onboarding before accepting online payments.");
     error.status = 503;
     error.details = { merchantStatus: merchant?.status || "NOT_STARTED" };

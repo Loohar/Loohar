@@ -5226,6 +5226,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const currentStepIndex = Math.max(0, onboardingSteps.findIndex((step) => step.id === activeStep));
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
   const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
+  const merchantPaymentReady = Boolean(merchantAccount?.provider === "STRIPE_CONNECT" && merchantAccount.status === "ENABLED" && merchantAccount.stripeAccountId && merchantAccount.stripeChargesEnabled);
   const businessHourErrors = activeStep === "hours" ? validateBusinessHours(draft.storeHoursJson, draft.timezone) : [];
   const message = messageState && (!messageState.step || messageState.step === activeStep) ? messageState.text : "";
   const liveAnnouncement = [message, error, menuReviewMessage, serverRefreshPending ? "Fresh server data is available after you save your current edits." : ""].filter(Boolean).join(" ");
@@ -6848,8 +6849,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 </div>
                 <button className="button-primary mt-4 w-full justify-center" type="button" onClick={startMerchantOnboarding} disabled={paymentsLoading || saving === "merchant-onboarding"}>{saving === "merchant-onboarding" ? "Opening..." : merchantAccount?.status === "ENABLED" ? "Update Stripe Connect" : "Start Stripe Connect onboarding"}</button>
               </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 md:col-span-2">
-                Paid online ordering stays blocked until the restaurant merchant account is enabled. Platform subscription revenue and restaurant order volume are tracked in separate records.
+              <div className={`rounded-md border p-4 text-sm md:col-span-2 ${merchantPaymentReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                {merchantPaymentReady
+                  ? "Paid online ordering is connected for this restaurant. Card charges and payouts are enabled, and platform subscription revenue remains separate from restaurant order volume."
+                  : "Paid online ordering stays blocked until the restaurant merchant account is enabled. Platform subscription revenue and restaurant order volume are tracked in separate records."}
               </div>
             </div>
           ) : null}
