@@ -31,10 +31,23 @@ console.log = () => {};
 
 const runId = `ob${Date.now().toString(36)}`;
 const realFetch = globalThis.fetch;
+const stripeCalls = [];
 globalThis.fetch = async (url, options = {}) => {
   const target = String(url);
   if (!target.startsWith("https://api.stripe.com/")) return realFetch(url, options);
+  stripeCalls.push({ url: target, idempotencyKey: options.headers?.["Idempotency-Key"], body: options.body });
   const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (target.endsWith("/v2/core/accounts")) {
+    return json({
+      id: `acct_${runId}`,
+      object: "v2.core.account",
+      configuration: { merchant: { capabilities: { card_payments: { status: "pending" } } } },
+      requirements: { currently_due: ["business_profile.url"] }
+    });
+  }
+  if (target.endsWith("/v2/core/account_links")) {
+    return json({ url: `https://connect.stripe.com/setup/${runId}`, expires_at: Math.floor(Date.now() / 1000) + 3600 });
+  }
   if (target.endsWith("/payment_intents")) {
     const body = Object.fromEntries(new URLSearchParams(String(options.body || "")));
     return json({ id: `pi_${runId}`, object: "payment_intent", status: "requires_payment_method", amount: Number(body.amount), client_secret: `pi_${runId}_secret_x` });
@@ -47,7 +60,7 @@ const { startRegistration, createRegistrationIntroTrial } = await import("../app
 const { loadRestaurantEntitlements } = await import("../apps/api/src/middleware/entitlements.js");
 const { entitlementLimitForPlan, USAGE_LIMIT } = await import("../apps/api/src/config/entitlements.js");
 const { createPosQuote } = await import("../apps/api/src/services/posService.js");
-const { createOrderPayment } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
+const { createMerchantOnboardingLink, createOrderPayment } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
 
 const ctx = {};
 const outcome = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, status: error.status, code: error.code, message: error.message }));
@@ -157,6 +170,29 @@ test("nothing can be sold until tax is configured, and then the register works",
   assert.equal(quote.totalCents, 2149);
 });
 
+test("payment onboarding creates the restaurant's own Stripe account and a setup link", async () => {
+  await prisma.restaurant.update({ where: { id: ctx.restaurantId }, data: { email: `contact-${runId}@example.test` } });
+  const { onboardingUrl, merchantAccount } = await createMerchantOnboardingLink({ user: ctx.owner });
+  assert.match(onboardingUrl, /^https:\/\/connect\.stripe\.com\//, "the owner is sent to Stripe to finish onboarding");
+  assert.equal(merchantAccount.stripeAccountId, `acct_${runId}`, "the account belongs to this restaurant");
+  assert.equal(merchantAccount.restaurantId, ctx.restaurantId);
+  assert.equal(merchantAccount.stripeChargesEnabled, false, "readiness comes from Stripe, never assumed");
+  assert.equal(merchantAccount.status, "ACTION_REQUIRED");
+  assert.ok(merchantAccount.onboardingUrlExpiresAt, "the setup link has an expiry");
+
+  const accountCalls = stripeCalls.filter((call) => call.url.endsWith("/v2/core/accounts"));
+  assert.equal(accountCalls.length, 1);
+  assert.ok(accountCalls[0].idempotencyKey, "account creation is idempotent, so a retry cannot make a second account");
+
+  // A second request reuses the same connected account rather than creating another.
+  await createMerchantOnboardingLink({ user: ctx.owner });
+  assert.equal(stripeCalls.filter((call) => call.url.endsWith("/v2/core/accounts")).length, 1, "the restaurant keeps one Stripe account");
+
+  const otherTenant = await outcome(createMerchantOnboardingLink({ user: { id: ctx.owner.id, restaurantId: null } }));
+  assert.equal(otherTenant.ok, false, "a user without a restaurant cannot start onboarding");
+  assert.equal(otherTenant.status, 403);
+});
+
 test("online orders wait for payment onboarding, then take a card", async () => {
   const body = {
     restaurantId: ctx.restaurantId,
@@ -168,8 +204,10 @@ test("online orders wait for payment onboarding, then take a card", async () => 
   assert.equal(beforeOnboarding.ok, false, "a restaurant that has not onboarded cannot take card payments");
   assert.equal(beforeOnboarding.status, 503);
 
-  await prisma.restaurantMerchantAccount.create({
-    data: { restaurantId: ctx.restaurantId, provider: "STRIPE_CONNECT", status: "ENABLED", stripeAccountId: `acct_${runId}`, stripeChargesEnabled: true, stripeDetailsSubmitted: true }
+  // Stripe reports the account is ready once the owner finishes onboarding.
+  await prisma.restaurantMerchantAccount.update({
+    where: { restaurantId_provider: { restaurantId: ctx.restaurantId, provider: "STRIPE_CONNECT" } },
+    data: { status: "ENABLED", stripeChargesEnabled: true, stripeDetailsSubmitted: true }
   });
 
   const checkout = await createOrderPayment({ body, idempotencyKey: `onboarding-${runId}-2` });
