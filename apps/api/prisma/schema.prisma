@@ -579,6 +579,8 @@ model Restaurant {
   deliveryZones       DeliveryZone[]
   inventoryItems      InventoryItem[]
   auditLogs           AuditLog[]
+  paymentQuotes              PaymentQuote[]
+  paymentReconciliationRecords PaymentReconciliationRecord[]
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
 }
@@ -1011,7 +1013,7 @@ model RestaurantGalleryImage {
   published    Boolean    @default(true)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  updatedAt    DateTime   @default(now()) @updatedAt
 }
 
 model RestaurantSocialLink {
@@ -1023,7 +1025,7 @@ model RestaurantSocialLink {
   sortOrder    Int        @default(0)
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
   createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  updatedAt    DateTime   @default(now()) @updatedAt
 }
 
 model RestaurantPrinterSettings {
@@ -1232,16 +1234,22 @@ model PlatformSubscription {
   createdAt                DateTime              @default(now())
   updatedAt                DateTime              @updatedAt
 
+  stripeProductId            String?
+  stripePriceId              String?
+  billingInterval            String?
+  latestInvoiceStatus        String?
+  lastWebhookEventAt         DateTime?
   @@index([restaurantId])
   @@index([stripeCustomerId])
   @@index([stripeSubscriptionId])
+  @@index([stripePriceId])
 }
 
 model PlatformInvoice {
   id                    String               @id @default(cuid())
   subscriptionId        String
   provider              String               @default("stripe_platform")
-  providerInvoiceId     String?
+  providerInvoiceId     String? @unique
   status                String               @default("draft")
   subtotalCents         Int                  @default(0)
   taxCents              Int                  @default(0)
@@ -1333,7 +1341,7 @@ model RestaurantMerchantAccount {
   restaurantId               String
   provider                   PaymentProvider          @default(STRIPE_CONNECT)
   status                     MerchantOnboardingStatus @default(NOT_STARTED)
-  stripeAccountId            String?
+  stripeAccountId            String? @unique
   stripeChargesEnabled       Boolean                  @default(false)
   stripePayoutsEnabled       Boolean                  @default(false)
   stripeDetailsSubmitted     Boolean                  @default(false)
@@ -1347,6 +1355,10 @@ model RestaurantMerchantAccount {
   createdAt                  DateTime                 @default(now())
   updatedAt                  DateTime                 @updatedAt
 
+  accountType                String?
+  country                    String?
+  onboardingCompletedAt      DateTime?
+  lastSyncedAt               DateTime?
   @@unique([restaurantId, provider])
   @@index([stripeAccountId])
 }
@@ -1389,6 +1401,11 @@ model RestaurantOrderPayment {
   createdAt                  DateTime           @default(now())
   updatedAt                  DateTime           @updatedAt
 
+  paymentQuoteId             String?            @unique
+  transferAmountCents        Int                @default(0)
+  stripeFeeCents             Int                @default(0)
+  paymentQuote               PaymentQuote?      @relation(fields: [paymentQuoteId], references: [id])
+  reconciliationRecords      PaymentReconciliationRecord[]
   @@index([restaurantId])
   @@index([providerPaymentIntentId])
 }
@@ -1417,7 +1434,7 @@ model RestaurantRefund {
   restaurantId          String
   orderPaymentId        String
   provider              PaymentProvider         @default(STRIPE_CONNECT)
-  providerRefundId      String?
+  providerRefundId      String? @unique
   // Column and unique index created by migration 20260720090000_stripe_payment_certification.
   idempotencyKey        String?                 @unique
   status                RefundStatus            @default(PENDING)
@@ -1430,6 +1447,9 @@ model RestaurantRefund {
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
 
+  applicationFeeRefundedCents Int                @default(0)
+  transferReversedCents       Int                @default(0)
+  completedAt                 DateTime?
   @@index([restaurantId])
   @@index([orderPaymentId])
   @@index([providerRefundId])
@@ -1451,8 +1471,15 @@ model RestaurantPaymentDispute {
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 
+  providerChargeId        String?
+  providerPaymentIntentId String?
+  metadataJson            Json?
+  openedAt                DateTime?
+  closedAt                DateTime?
   @@index([restaurantId])
   @@index([orderPaymentId])
+  @@index([providerChargeId])
+  @@index([providerPaymentIntentId])
 }
 
 model RestaurantPayout {
@@ -1470,6 +1497,7 @@ model RestaurantPayout {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
+  metadataJson      Json?
   @@index([restaurantId])
 }
 
@@ -1583,8 +1611,8 @@ model LocationTaxProfile {
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
 
-  @@unique([restaurantId, locationId, configurationVersion])
-  @@index([restaurantId, locationId, status, enabled, effectiveAt])
+  @@unique([restaurantId, locationId, configurationVersion], map: "LocationTaxProfile_restaurantId_locationId_configurationVersion")
+  @@index([restaurantId, locationId, status, enabled, effectiveAt], map: "LocationTaxProfile_restaurantId_locationId_status_enabled_effec")
   @@index([status, nextVerificationAt])
 }
 
@@ -1878,4 +1906,59 @@ model AuditLog {
   restaurant   Restaurant? @relation(fields: [restaurantId], references: [id])
   actor        User?       @relation(fields: [actorUserId], references: [id])
   createdAt    DateTime    @default(now())
+}
+
+// Created by migration 20260720090000_stripe_payment_certification; modelled so schema and database agree.
+model PaymentQuote {
+  id                   String                  @id @default(cuid())
+  restaurantId         String
+  provider             PaymentProvider         @default(STRIPE_CONNECT)
+  currency             String                  @default("usd")
+  subtotalCents        Int
+  discountCents        Int                     @default(0)
+  taxableAmountCents   Int                     @default(0)
+  taxCents             Int                     @default(0)
+  deliveryFeeCents     Int                     @default(0)
+  serviceFeeCents      Int                     @default(0)
+  restaurantTipCents   Int                     @default(0)
+  driverTipCents       Int                     @default(0)
+  totalCents           Int
+  platformFeeCents     Int                     @default(0)
+  restaurantGrossCents Int
+  restaurantNetCents   Int
+  quoteJson            Json?
+  expiresAt            DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @default(now()) @updatedAt
+  restaurant           Restaurant              @relation(fields: [restaurantId], references: [id])
+  orderPayment         RestaurantOrderPayment?
+
+  @@index([expiresAt])
+  @@index([restaurantId])
+}
+
+// Created by migration 20260720090000_stripe_payment_certification; modelled so schema and database agree.
+model PaymentReconciliationRecord {
+  id               String                  @id @default(cuid())
+  restaurantId     String
+  orderPaymentId   String?
+  provider         PaymentProvider         @default(STRIPE_CONNECT)
+  recordType       String
+  status           String                  @default("PENDING")
+  expectedCents    Int                     @default(0)
+  actualCents      Int                     @default(0)
+  deltaCents       Int                     @default(0)
+  providerObjectId String?
+  providerEventId  String?
+  metadataJson     Json?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @default(now()) @updatedAt
+  orderPayment     RestaurantOrderPayment? @relation(fields: [orderPaymentId], references: [id])
+  restaurant       Restaurant              @relation(fields: [restaurantId], references: [id])
+
+  @@index([orderPaymentId])
+  @@index([providerObjectId])
+  @@index([recordType])
+  @@index([restaurantId])
+  @@index([status])
 }

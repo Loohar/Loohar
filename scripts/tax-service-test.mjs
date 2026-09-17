@@ -154,7 +154,7 @@ for (const requiredStatus of ["UNCONFIGURED", "ADDRESS_REQUIRED", "VERIFYING", "
 for (const field of ["countryCode", "stateCode", "county", "municipality", "specialDistrictsJson", "taxComponentsJson", "expiresAt", "acknowledgedByUserId", "acknowledgedAt", "nextVerificationAt", "configurationVersion"]) {
   assert.ok(schema.includes(field), `tax profiles must include ${field}`);
 }
-assert.ok(schema.includes("@@unique([restaurantId, locationId, configurationVersion])"), "profile versions must be unique per tenant location");
+assert.ok(schema.includes("@@unique([restaurantId, locationId, configurationVersion]"), "profile versions must be unique per tenant location");
 assert.equal(/model LocationTaxProfile[\s\S]*?taxRateBps\s+Int\s+@default/.test(schema), false, "tax rates must never have a global default");
 assert.equal(/\b(INSERT|UPDATE|DELETE|TRUNCATE)\b/i.test(migration), false, "Tax Service migration must not rewrite restaurant tax data");
 assert.equal(migration.includes("825"), false, "migration must not install a hardcoded rate");

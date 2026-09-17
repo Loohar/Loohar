@@ -217,6 +217,7 @@
     "test:mfa-auth-db": "node scripts/mfa-auth-db-test.mjs",
     "test:authz-money-hardening": "node scripts/authz-money-hardening-test.mjs",
     "test:authz-money-hardening-db": "node scripts/authz-money-hardening-db-test.mjs",
+    "test:schema-migration-drift-db": "node scripts/schema-migration-drift-db-test.mjs",
     "test:pos-cash-drawer-setup-db": "node --experimental-test-module-mocks scripts/pos-cash-drawer-setup-db-test.mjs",
     "test:stripe-connect-accounts-v2": "node scripts/stripe-connect-accounts-v2-test.mjs",
     "test:stripe-billing": "node scripts/financial-separation-test.mjs stripe-billing",

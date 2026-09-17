@@ -256,7 +256,7 @@ assert.equal(app.includes("window.location.reload"), false, "offline recovery mu
 
 assert.ok(schema.includes("model PosOfflineReconciliation"), "server reconciliation must have a durable database record");
 assert.ok(schema.includes("model LocationTaxProfile"), "offline tax must use a first-class location profile");
-assert.ok(schema.includes("@@unique([restaurantId, locationId, configurationVersion])"), "tax profile versions must be unique per tenant location");
+assert.ok(schema.includes("@@unique([restaurantId, locationId, configurationVersion]"), "tax profile versions must be unique per tenant location");
 assert.equal(/model LocationTaxProfile[\s\S]*?taxRateBps\s+Int\s+@default/.test(schema), false, "location tax profiles must not have a global default rate");
 assert.ok(schema.includes("@@unique([restaurantId, localTransactionId])"), "local transaction identity must be database-unique per tenant");
 assert.ok(schema.includes("@@unique([restaurantId, idempotencyKey])"), "idempotency key must be database-unique per tenant");
