@@ -1357,6 +1357,8 @@ model RestaurantOrderPayment {
   providerChargeId           String?
   providerCustomerId         String?
   providerClientSecret       String?
+  checkoutIdempotencyKeyHash String?            @unique
+  checkoutRequestHash        String?
   failureReason              String?
   authorizedAt               DateTime?
   paidAt                     DateTime?

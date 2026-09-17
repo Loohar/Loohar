@@ -13946,6 +13946,8 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [paying, setPaying] = useState(false);
   const stripeRef = useRef(null);
   const stripeElementsRef = useRef(null);
+  const checkoutAttemptRef = useRef(null);
+  const placingOrderRef = useRef(false);
   const stripeElementMountRef = useRef(null);
   const [couponCode, setCouponCode] = useState("");
   const [restaurantTipChoice, setRestaurantTipChoice] = useState("10");
@@ -14214,12 +14216,21 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     }
     if (!customer.name || !customer.email) return setError("Enter your name and email before checkout.");
     if (serviceType === "DELIVERY" && !customer.deliveryAddress) return setError("Enter a delivery address before checkout.");
+    if (placingOrderRef.current) return;
+    const body = orderPaymentBody(true);
+    const fingerprint = JSON.stringify(body);
+    // Retries of the same cart reuse one Idempotency-Key so the server returns the original order.
+    if (checkoutAttemptRef.current?.fingerprint !== fingerprint) {
+      checkoutAttemptRef.current = { fingerprint, key: `checkout-${crypto.randomUUID()}` };
+    }
+    placingOrderRef.current = true;
     try {
       setPaymentClientSecret("");
       setPaymentPublicKey("");
       const payload = await api("/api/order-payments/create", {
         method: "POST",
-        body: orderPaymentBody(true)
+        body,
+        headers: { "Idempotency-Key": checkoutAttemptRef.current.key }
       });
       setOrderStatus({ ...payload.order, tracking: payload.tracking });
       setPaymentStatus(payload.payment);
@@ -14227,7 +14238,10 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setPaymentClientSecret(payload.clientSecret || "");
       await loadHistory();
     } catch (orderError) {
+      if (["CHECKOUT_ATTEMPT_FAILED", "CHECKOUT_IDEMPOTENCY_KEY_REUSED"].includes(orderError.code)) checkoutAttemptRef.current = null;
       setError(orderError.message);
+    } finally {
+      placingOrderRef.current = false;
     }
   }
 

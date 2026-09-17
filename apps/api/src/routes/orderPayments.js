@@ -5,6 +5,7 @@ import { authenticateAccessToken, requireAuth, requireRole } from "../middleware
 import { assertFeatureForRestaurant, featureGuard } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, publicReceiptForOrder, publicStatusForOrder, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
+import { CHECKOUT_IDEMPOTENCY_HEADER } from "../modules/orderPayments/checkoutIdempotency.js";
 import { calculateOrderQuote } from "../modules/orderPayments/quoteService.js";
 
 const router = Router();
@@ -120,7 +121,7 @@ router.post("/quote", validate(quoteSchema), async (req, res, next) => {
 router.post("/create", validate(createSchema), async (req, res, next) => {
   try {
     await assertOrderPaymentEntitlements(req);
-    const result = await createOrderPayment({ body: req.body });
+    const result = await createOrderPayment({ body: req.body, idempotencyKey: req.get(CHECKOUT_IDEMPOTENCY_HEADER) });
     res.status(201).json(result);
   } catch (error) {
     next(error);

@@ -7,6 +7,8 @@ const responseSensitiveKeys = new Set([
   "resetToken",
   "tokenHash",
   "trackingTokenHash",
+  "checkoutIdempotencyKeyHash",
+  "checkoutRequestHash",
   "mfaSecret",
   "authorization",
   "serviceRoleKey",

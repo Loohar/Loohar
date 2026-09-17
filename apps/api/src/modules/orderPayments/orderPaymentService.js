@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { prisma } from "../../config/prisma.js";
 import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
@@ -6,6 +7,18 @@ import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
 import { isMerchantAccountPaymentReady } from "./merchantReadiness.js";
 import { calculateOrderQuote } from "./quoteService.js";
+import {
+  checkoutAttemptFailedError,
+  checkoutIdempotencyKeyHash,
+  checkoutInProgressError,
+  checkoutKeyReusedError,
+  checkoutRequestHash,
+  checkoutTrackingToken,
+  isStripeIdempotencyInProgress,
+  isUniqueConflictOn,
+  normalizeCheckoutIdempotencyKey,
+  orderPaymentIntentIdempotencyKey
+} from "./checkoutIdempotency.js";
 
 const STRIPE_CONNECT_ACCOUNT_CONFIGURATION = "merchant";
 const STRIPE_CONNECT_ACCOUNT_INCLUDES = [
@@ -445,152 +458,241 @@ async function createStripePaymentIntent({ quote, order, payment, merchant }) {
     secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
     path: "/payment_intents",
     body,
-    stripeAccount: merchant.stripeAccountId
+    stripeAccount: merchant.stripeAccountId,
+    idempotencyKey: orderPaymentIntentIdempotencyKey(payment.id)
   });
 }
 
-export async function createOrderPayment({ body }) {
-  const quote = await calculateOrderQuote({ restaurantId: body.restaurantId, body });
-  const merchant = await prisma.restaurantMerchantAccount.findUnique({
-    where: { restaurantId_provider: { restaurantId: quote.restaurant.id, provider: "STRIPE_CONNECT" } }
-  });
-  if (!isMerchantAccountPaymentReady(merchant)) {
-    const error = new Error("Restaurant order payments are not enabled for this restaurant yet. Complete Stripe Connect onboarding before accepting online payments.");
-    error.status = 503;
-    error.details = { merchantStatus: merchant?.status || "NOT_STARTED" };
-    throw error;
-  }
+// PaymentIntent amounts always come from the persisted server-side payment row so the
+// original request and any replay send identical parameters under one Stripe idempotency key.
+function paymentIntentAmounts(payment) {
+  return { totalCents: payment.totalCents, currency: payment.currency, platformFeeCents: payment.platformFeeCents };
+}
 
-  const initialTrackingToken = createTrackingToken();
-  const orderNumber = `${Date.now().toString().slice(-6)}`;
-  const created = await prisma.$transaction(async (tx) => {
-    const order = await tx.order.create({
-      data: {
-        restaurant: { connect: { id: quote.restaurant.id } },
-        ...(quote.locationId ? { location: { connect: { id: quote.locationId } } } : {}),
-        orderNumber,
-        type: body.type,
-        deliveryAddress: body.deliveryAddress,
-        notes: body.notes,
-        subtotalCents: quote.subtotalCents,
-        discountCents: quote.discountCents,
-        couponCode: quote.couponCode,
-        deliveryFeeCents: quote.deliveryFeeCents,
-        taxCents: quote.taxCents,
-        tipCents: quote.tipCents,
-        restaurantTipCents: quote.restaurantTipCents,
-        driverTipCents: quote.driverTipCents,
-        customTipCents: quote.customTipCents,
-        tipPercentage: quote.tipPercentage,
-        tipType: quote.tipType,
-        totalCents: quote.totalCents,
-        trackingTokenHash: hashToken(initialTrackingToken),
-        trackingTokenExpiresAt: trackingExpiresAt(),
-        customer: {
-          connectOrCreate: {
-            where: { restaurantId_email: { restaurantId: quote.restaurant.id, email: body.customer.email } },
-            create: { ...body.customer, restaurantId: quote.restaurant.id, defaultAddress: body.deliveryAddress }
-          }
-        },
-        items: {
-          create: quote.items.map((item) => ({
-            menuItemId: item.menuItemId,
-            name: item.name,
-            quantity: item.quantity,
-            unitPriceCents: item.unitPriceCents,
-            optionsJson: {
-              options: item.options || [],
-              modifiers: item.modifiers || item.options || [],
-              modifierSelections: item.modifierSelections || [],
-              modifierOptionIds: item.modifierOptionIds || item.optionIds || []
-            }
-          }))
-        },
-        statusHistory: { create: { status: "PENDING", note: "Order placed by customer; awaiting payment" } }
-      },
+function merchantNotReadyError(merchant) {
+  const error = new Error("Restaurant order payments are not enabled for this restaurant yet. Complete Stripe Connect onboarding before accepting online payments.");
+  error.status = 503;
+  error.details = { merchantStatus: merchant?.status || "NOT_STARTED" };
+  return error;
+}
+
+async function readyMerchantFor(restaurantId) {
+  const merchant = await prisma.restaurantMerchantAccount.findUnique({
+    where: { restaurantId_provider: { restaurantId, provider: "STRIPE_CONNECT" } }
+  });
+  if (!isMerchantAccountPaymentReady(merchant)) throw merchantNotReadyError(merchant);
+  return merchant;
+}
+
+function onlineOrderNumber(attempt) {
+  if (attempt === 0) return `${Date.now().toString().slice(-6)}`;
+  return `${crypto.randomInt(0, 1_000_000)}`.padStart(6, "0");
+}
+
+async function attachPaymentIntent({ order, payment, merchant }) {
+  const intent = await createStripePaymentIntent({ quote: paymentIntentAmounts(payment), order, payment, merchant });
+  return prisma.restaurantOrderPayment.update({
+    where: { id: payment.id },
+    data: {
+      status: intent.status === "requires_confirmation" ? "REQUIRES_CONFIRMATION" : "REQUIRES_PAYMENT_METHOD",
+      providerPaymentIntentId: intent.id,
+      providerClientSecret: intent.client_secret || null
+    }
+  });
+}
+
+function checkoutResponse({ order, payment, trackingToken, idempotentReplay }) {
+  return {
+    order,
+    payment,
+    publishableKey: stripeConnectPublishableKey(),
+    clientSecret: payment.providerClientSecret || null,
+    tracking: { token: trackingToken, ...customerTrackingUrls(order, trackingToken) },
+    checkout: { idempotentReplay }
+  };
+}
+
+async function replayCheckout({ existing, keyHash, requestHash }) {
+  if (existing.checkoutRequestHash !== requestHash) throw checkoutKeyReusedError();
+  let order = await prisma.order.findUnique({ where: { id: existing.orderId }, include: orderInclude() });
+  // A declined card leaves the PaymentIntent reusable; only an attempt that never got one is terminal.
+  const initializationFailed = existing.status === "FAILED" && !existing.providerPaymentIntentId;
+  if (!order || initializationFailed || order.status === "CANCELLED") throw checkoutAttemptFailedError();
+
+  let trackingToken = checkoutTrackingToken({ keyHash });
+  if (order.trackingTokenHash !== hashToken(trackingToken)) {
+    // The derivation secret changed since the original request; issue a fresh token.
+    trackingToken = createTrackingToken();
+    order = await prisma.order.update({
+      where: { id: order.id },
+      data: { trackingTokenHash: hashToken(trackingToken), trackingTokenExpiresAt: trackingExpiresAt() },
       include: orderInclude()
     });
-    const payment = await tx.restaurantOrderPayment.create({
-      data: {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        provider: "STRIPE_CONNECT",
-        status: "REQUIRES_PAYMENT_METHOD",
-        currency: quote.currency,
-        subtotalCents: quote.subtotalCents,
-        discountCents: quote.discountCents,
-        taxableAmountCents: quote.taxableAmountCents,
-        taxCents: quote.taxCents,
-        deliveryFeeCents: quote.deliveryFeeCents,
-        serviceFeeCents: quote.serviceFeeCents,
-        restaurantTipCents: quote.restaurantTipCents,
-        driverTipCents: quote.driverTipCents,
-        totalCents: quote.totalCents,
-        platformFeeCents: quote.platformFeeCents,
-        restaurantGrossCents: quote.restaurantGrossCents,
-        restaurantNetCents: quote.restaurantNetCents,
-        quoteJson: {
-          items: quote.items,
-          breakdown: quote.breakdown,
+  }
+
+  let payment = existing;
+  if (!payment.providerPaymentIntentId) {
+    const merchant = await readyMerchantFor(payment.restaurantId);
+    try {
+      payment = await attachPaymentIntent({ order, payment, merchant });
+    } catch (error) {
+      if (isStripeIdempotencyInProgress(error)) throw checkoutInProgressError();
+      throw error;
+    }
+  }
+  return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true });
+}
+
+export async function createOrderPayment({ body, idempotencyKey }) {
+  const normalizedKey = normalizeCheckoutIdempotencyKey(idempotencyKey);
+  const keyHash = checkoutIdempotencyKeyHash({ restaurantId: body.restaurantId, idempotencyKey: normalizedKey });
+  const requestHash = checkoutRequestHash(body);
+  const findExisting = () => prisma.restaurantOrderPayment.findUnique({ where: { checkoutIdempotencyKeyHash: keyHash } });
+
+  const existing = await findExisting();
+  if (existing) return replayCheckout({ existing, keyHash, requestHash });
+
+  const quote = await calculateOrderQuote({ restaurantId: body.restaurantId, body });
+  const merchant = await readyMerchantFor(quote.restaurant.id);
+
+  const initialTrackingToken = checkoutTrackingToken({ keyHash });
+  const createOrderAndPayment = (orderNumber) => {
+    return prisma.$transaction(async (tx) => {
+      const order = await tx.order.create({
+        data: {
+          restaurant: { connect: { id: quote.restaurant.id } },
+          ...(quote.locationId ? { location: { connect: { id: quote.locationId } } } : {}),
+          orderNumber,
+          type: body.type,
+          deliveryAddress: body.deliveryAddress,
+          notes: body.notes,
+          subtotalCents: quote.subtotalCents,
+          discountCents: quote.discountCents,
           couponCode: quote.couponCode,
-          taxRateBps: quote.taxRateBps,
-          taxInclusive: quote.taxInclusive,
+          deliveryFeeCents: quote.deliveryFeeCents,
+          taxCents: quote.taxCents,
+          tipCents: quote.tipCents,
+          restaurantTipCents: quote.restaurantTipCents,
+          driverTipCents: quote.driverTipCents,
+          customTipCents: quote.customTipCents,
+          tipPercentage: quote.tipPercentage,
+          tipType: quote.tipType,
+          totalCents: quote.totalCents,
+          trackingTokenHash: hashToken(initialTrackingToken),
+          trackingTokenExpiresAt: trackingExpiresAt(),
+          customer: {
+            connectOrCreate: {
+              where: { restaurantId_email: { restaurantId: quote.restaurant.id, email: body.customer.email } },
+              create: { ...body.customer, restaurantId: quote.restaurant.id, defaultAddress: body.deliveryAddress }
+            }
+          },
+          items: {
+            create: quote.items.map((item) => ({
+              menuItemId: item.menuItemId,
+              name: item.name,
+              quantity: item.quantity,
+              unitPriceCents: item.unitPriceCents,
+              optionsJson: {
+                options: item.options || [],
+                modifiers: item.modifiers || item.options || [],
+                modifierSelections: item.modifierSelections || [],
+                modifierOptionIds: item.modifierOptionIds || item.optionIds || []
+              }
+            }))
+          },
+          statusHistory: { create: { status: "PENDING", note: "Order placed by customer; awaiting payment" } }
+        },
+        include: orderInclude()
+      });
+      const payment = await tx.restaurantOrderPayment.create({
+        data: {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          provider: "STRIPE_CONNECT",
+          status: "REQUIRES_PAYMENT_METHOD",
+          checkoutIdempotencyKeyHash: keyHash,
+          checkoutRequestHash: requestHash,
+          currency: quote.currency,
+          subtotalCents: quote.subtotalCents,
+          discountCents: quote.discountCents,
+          taxableAmountCents: quote.taxableAmountCents,
+          taxCents: quote.taxCents,
+          deliveryFeeCents: quote.deliveryFeeCents,
+          serviceFeeCents: quote.serviceFeeCents,
+          restaurantTipCents: quote.restaurantTipCents,
+          driverTipCents: quote.driverTipCents,
+          totalCents: quote.totalCents,
+          platformFeeCents: quote.platformFeeCents,
+          restaurantGrossCents: quote.restaurantGrossCents,
+          restaurantNetCents: quote.restaurantNetCents,
+          quoteJson: {
+            items: quote.items,
+            breakdown: quote.breakdown,
+            couponCode: quote.couponCode,
+            taxRateBps: quote.taxRateBps,
+            taxInclusive: quote.taxInclusive,
+            locationId: quote.locationId,
+            taxProfileId: quote.taxProfileId,
+            taxConfigurationVersion: quote.taxConfigurationVersion,
+            zeroLooharPlatformFee: quote.zeroLooharPlatformFee,
+            looharPlatformFeeCents: quote.looharPlatformFeeCents,
+            processorFeesMayApply: quote.processorFeesMayApply,
+            paymentFeeDisclosure: quote.paymentFeeDisclosure
+          }
+        }
+      });
+      await tx.orderTaxSnapshot.create({
+        data: {
+          orderId: order.id,
+          restaurantId: order.restaurantId,
           locationId: quote.locationId,
           taxProfileId: quote.taxProfileId,
-          taxConfigurationVersion: quote.taxConfigurationVersion,
-          zeroLooharPlatformFee: quote.zeroLooharPlatformFee,
-          looharPlatformFeeCents: quote.looharPlatformFeeCents,
-          processorFeesMayApply: quote.processorFeesMayApply,
-          paymentFeeDisclosure: quote.paymentFeeDisclosure
+          configurationVersion: quote.taxConfigurationVersion,
+          provider: quote.taxConfiguration.provider,
+          source: quote.taxConfiguration.source,
+          taxableAmountCents: quote.taxableAmountCents,
+          taxRateBps: quote.taxRateBps,
+          taxCents: quote.taxCents,
+          jurisdictionJson: {
+            jurisdictionCode: quote.taxConfiguration.jurisdictionCode,
+            jurisdictionMetadata: quote.taxConfiguration.jurisdictionMetadata,
+            specialDistricts: quote.taxConfiguration.specialDistricts || [],
+            taxComponents: quote.taxConfiguration.taxComponents || [],
+            exemption: quote.taxConfiguration.exemption || null,
+            taxProfileVersion: quote.taxConfigurationVersion,
+            taxProfileEffectiveAt: quote.taxConfiguration.effectiveAt,
+            taxProfileVerifiedAt: quote.taxConfiguration.verifiedAt,
+            taxInclusive: quote.taxInclusive
+          }
         }
-      }
+      });
+      return { order, payment };
     });
-    await tx.orderTaxSnapshot.create({
-      data: {
-        orderId: order.id,
-        restaurantId: order.restaurantId,
-        locationId: quote.locationId,
-        taxProfileId: quote.taxProfileId,
-        configurationVersion: quote.taxConfigurationVersion,
-        provider: quote.taxConfiguration.provider,
-        source: quote.taxConfiguration.source,
-        taxableAmountCents: quote.taxableAmountCents,
-        taxRateBps: quote.taxRateBps,
-        taxCents: quote.taxCents,
-        jurisdictionJson: {
-          jurisdictionCode: quote.taxConfiguration.jurisdictionCode,
-          jurisdictionMetadata: quote.taxConfiguration.jurisdictionMetadata,
-          specialDistricts: quote.taxConfiguration.specialDistricts || [],
-          taxComponents: quote.taxConfiguration.taxComponents || [],
-          exemption: quote.taxConfiguration.exemption || null,
-          taxProfileVersion: quote.taxConfigurationVersion,
-          taxProfileEffectiveAt: quote.taxConfiguration.effectiveAt,
-          taxProfileVerifiedAt: quote.taxConfiguration.verifiedAt,
-          taxInclusive: quote.taxInclusive
-        }
-      }
-    });
-    return { order, payment };
-  });
+  };
+
+  let created = null;
+  for (let attempt = 0; !created; attempt += 1) {
+    try {
+      created = await createOrderAndPayment(onlineOrderNumber(attempt));
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+      // Unique conflicts surface only after the competing transaction commits. If that was a
+      // concurrent request with the same key, its order is the canonical one.
+      const winner = await findExisting();
+      if (winner) return replayCheckout({ existing: winner, keyHash, requestHash });
+      // Order-number collisions and concurrent first-time customer creation are safe to retry.
+      const retryable = isUniqueConflictOn(error, "orderNumber") || isUniqueConflictOn(error, "email");
+      if (retryable && attempt < 4) continue;
+      throw error;
+    }
+  }
 
   try {
-    const intent = await createStripePaymentIntent({ quote, order: created.order, payment: created.payment, merchant });
-    const payment = await prisma.restaurantOrderPayment.update({
-      where: { id: created.payment.id },
-      data: {
-        status: intent.status === "requires_confirmation" ? "REQUIRES_CONFIRMATION" : "REQUIRES_PAYMENT_METHOD",
-        providerPaymentIntentId: intent.id,
-        providerClientSecret: intent.client_secret || null
-      }
-    });
-    return {
-      order: created.order,
-      payment,
-      publishableKey: stripeConnectPublishableKey(),
-      clientSecret: intent.client_secret || null,
-      tracking: { token: initialTrackingToken, ...customerTrackingUrls(created.order, initialTrackingToken) }
-    };
+    const payment = await attachPaymentIntent({ order: created.order, payment: created.payment, merchant });
+    return checkoutResponse({ order: created.order, payment, trackingToken: initialTrackingToken, idempotentReplay: false });
   } catch (error) {
+    // A replay of this checkout is already talking to Stripe under the same key; leave state intact.
+    if (isStripeIdempotencyInProgress(error)) throw checkoutInProgressError();
     await prisma.$transaction([
       prisma.restaurantOrderPayment.update({
         where: { id: created.payment.id },

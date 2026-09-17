@@ -84,7 +84,9 @@ assert.ok(
   "tenant routing keeps slug-based loohar-restaurant support"
 );
 assert.ok(
-  orderPaymentService.includes('restaurantId_provider: { restaurantId: quote.restaurant.id, provider: "STRIPE_CONNECT" }') &&
+  orderPaymentService.includes("const merchant = await readyMerchantFor(quote.restaurant.id);") &&
+    orderPaymentService.includes("await readyMerchantFor(payment.restaurantId)") &&
+    orderPaymentService.includes('restaurantId_provider: { restaurantId, provider: "STRIPE_CONNECT" }') &&
     orderPaymentService.includes('restaurantId_provider: { restaurantId: user.restaurantId, provider: "STRIPE_CONNECT" }'),
   "merchant account remains mapped to the active tenant context"
 );
