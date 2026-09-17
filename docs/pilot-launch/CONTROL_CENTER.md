@@ -1,6 +1,6 @@
 # Loohar Pilot Control Center
 
-Last updated: 2026-09-17 22:30 UTC · Machine-readable twin: `.pilot/state.json`
+Last updated: 2026-09-17 23:30 UTC · Machine-readable twin: `.pilot/state.json`
 
 Status vocabulary: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED · TESTED (local) ·
 STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness percentages are used.
@@ -11,10 +11,10 @@ STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness p
 | --- | --- | --- |
 | Production API / web | `0526862` | `/version`, `/version.json` → production |
 | origin/main | `0526862` | `git fetch origin` |
-| Staging API | `bf7430a` (schema ok, separate DB from production) | `/version`, `/health` |
+| Staging API | `cebe5e3` (schema ok, separate DB from production) | `/version`, `/health` |
 | Staging web | UNKNOWN — `loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app` behind Vercel SSO | `/version.json` 302 |
 | Staging preview → staging API CORS | ALLOWED for exact origin; other origins 403 | live probe |
-| Pilot candidate | `cebe5e3` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
+| Pilot candidate | `ca08e87` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
 | Frozen | `feature/loohar-national-tax-provider-v01` @ `1e0562b` | do not modify/merge |
 
 Candidate chain on production `0526862`: L-01 (`2d85007`,`b291ddd`,`cfec6a4`,`a3262dc`) →
@@ -68,7 +68,7 @@ MFA/auth `b383655` → authz/money `94f04b7` → L-10 `2f0f73c` → review 3 `c5
 | L-08 | Delivery safety | PARTIAL — fulfilment switches + address enforced; zones need geocoding provider; Starter pilot is pickup-only |
 | L-31 | Subscription periods on Stripe basil/dahlia | TESTED (local), PUSHED |
 | L-32 | Storefront defaults (pickup, no demo customer) | TESTED (local), PUSHED |
-| L-16 | Refund UI | NOT STARTED |
+| L-16 | Refund UI | TESTED (local), PUSHED — payments page with refundable balance, per-attempt idempotency |
 | L-17 | POS cashier workflow gaps | NEEDS RUNTIME VERIFICATION (staging POS acceptance) |
 | L-18 | Driver app offline sample data | NOT STARTED |
 | L-26 | Refresh tokens in localStorage | DEFERRED — cookie session redesign; no XSS sink found in audits |

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T22:30:00Z",
+  "updatedAt": "2026-09-17T23:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,8 +15,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
-      "apiVerifiedAt": "2026-09-17T20:25:00Z",
+      "apiSha": "cebe5e33d3f8483e62248d84649e658225a85557",
+      "apiVerifiedAt": "2026-09-17T21:00:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
@@ -34,7 +34,7 @@
     },
     "candidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "cebe5e33d3f8483e62248d84649e658225a85557",
+      "sha": "ca08e874505c14822b0590ec1cc76fb7360d50a1",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -182,6 +182,11 @@
           "sha": "cebe5e3",
           "item": "L-11",
           "summary": "owner-run staging privileged evidence script"
+        },
+        {
+          "sha": "ca08e87",
+          "item": "L-16",
+          "summary": "payments list endpoint and restaurant payments/refunds page"
         }
       ],
       "deployedToStaging": false
@@ -294,13 +299,11 @@
       "certification": "NOT_STAGED"
     },
     "L-16": {
-      "title": "Refunds have no restaurant UI (API only)",
+      "title": "Refund UI",
       "priority": "P1",
-      "status": "NOT_STARTED",
-      "verified": true,
-      "dependsOn": [
-        "L-07"
-      ]
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Payments page lists the day's payments by tender with refundable balance; refunds use the guarded endpoint with a per-attempt idempotency key. Voids stay a status change and a paid order still cannot be cancelled without a refund (ORDER_REFUND_REQUIRED)."
     },
     "L-17": {
       "title": "POS cashier workflow gaps: PIN self-setup, cashier receipt printing, pay after send-to-kitchen",
@@ -455,7 +458,7 @@
     }
   },
   "tests": {
-    "candidateSha": "cebe5e3",
+    "candidateSha": "ca08e87",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -474,7 +477,7 @@
       "test:online-fulfillment-db": "PASS (4)",
       "test:starter-entitlements-db": "PASS (6)",
       "test:storefront-checkout-db": "PASS (11)",
-      "test:basic-reporting-db": "PASS (5)",
+      "test:basic-reporting-db": "PASS (8)",
       "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)"
     },
@@ -495,9 +498,9 @@
     ]
   },
   "humanActionsRequired": [
-    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at cebe5e33d3f8483e62248d84649e658225a85557 (adds the customer payment-state fix and the evidence script; no new environment variables, no new migrations)",
+    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at ca08e874505c14822b0590ec1cc76fb7360d50a1 (payments/refunds page and payments list endpoint; no new environment variables, no new migrations)",
     "Vercel: invite subashsunar00@gmail.com (username subashsunar, account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer, or paste the staging preview /version.json contents",
-    "Run `node scripts/staging-privileged-evidence.mjs` against staging with a privileged staging account and share the generated evidence file (it contains no secrets). This unblocks MFA, KDS, POS and reporting staging evidence.",
+    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account and leave the generated file in that folder; it contains no secrets and unblocks MFA, KDS, POS and reporting staging evidence",
     "Optional for platform billing certification: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging (currently fails closed with 503)",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when convenient",
     "Geocoding provider decision for automatic delivery-zone verification (pilot is pickup-only on Starter)",
