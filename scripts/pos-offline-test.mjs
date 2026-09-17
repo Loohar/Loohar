@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   POS_OFFLINE_SYNC_STATUS,
+  POS_OFFLINE_UNSYNCED_STATUSES,
   validatePosOfflinePricingSnapshot
 } from "../apps/shared/posOfflinePricing.js";
 import {
@@ -280,6 +281,36 @@ assert.ok(stagingTaxProfileScript.includes('appEnv !== "staging"') && stagingTax
 assert.ok(stagingTaxProfileScript.includes('required("STAGING_TAX_EXPECTED_TENANT_CLASSIFICATION")') && stagingTaxProfileScript.includes("restaurant.tenantClassification !== expectedTenantClassification"), "tax profile writer must match the exact staging tenant classification supplied at execution");
 assert.ok(stagingTaxProfileScript.includes('required("STAGING_TAX_RATE_BPS")'), "staging tax rate must be supplied as data at execution time");
 assert.equal(stagingTaxProfileScript.includes("825"), false, "the approved certification rate must not be hardcoded in the staging writer");
+
+// Offline sales the server refuses must stay visible to staff and keep their money in the count.
+{
+  const { posOfflineRecordsNeedingReview, posOfflineReviewSummary } = await import("../apps/shared/posOfflinePricing.js");
+  const queue = [
+    { localTransactionId: "t1", syncStatus: POS_OFFLINE_SYNC_STATUS.SYNCED, orderSnapshot: { totalCents: 500 } },
+    { localTransactionId: "t2", syncStatus: POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW, orderSnapshot: { totalCents: 1200 }, lastSyncError: "The cached shift was closed." },
+    { localTransactionId: "t3", syncStatus: POS_OFFLINE_SYNC_STATUS.FAILED_RETRYABLE, orderSnapshot: { totalCents: 700 } },
+    { localTransactionId: "t4", syncStatus: POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW, orderSnapshot: { totalCents: 300 } }
+  ];
+  const needsReview = posOfflineRecordsNeedingReview(queue);
+  assert.equal(needsReview.length, 2, "only sales the server refused need a manager");
+  assert.deepEqual(needsReview.map((record) => record.localTransactionId), ["t2", "t4"]);
+  const summary = posOfflineReviewSummary(queue);
+  assert.equal(summary.count, 2);
+  assert.equal(summary.totalCents, 1500, "the review queue shows how much cash is unaccounted for");
+
+  assert.ok(POS_OFFLINE_SYNC_STATUS.RESOLVED_MANUALLY, "a manager resolution is a real state, not a deletion");
+  assert.equal(POS_OFFLINE_UNSYNCED_STATUSES.includes(POS_OFFLINE_SYNC_STATUS.RESOLVED_MANUALLY), false, "a resolved sale stops being chased for sync");
+
+  const app = readFileSync(join("apps", "web", "src", "App.jsx"), "utf8");
+  assert.ok(app.includes("async function retryOfflineTransaction(record)"), "a manager can retry a refused sale");
+  assert.ok(app.includes("async function resolveOfflineTransaction(record, note)"), "a manager can record how a refused sale was handled");
+  assert.ok(app.includes("Write down how this sale was handled before marking it resolved."), "a resolution requires a note");
+  assert.ok(app.includes("POS_OFFLINE_SYNC_STATUS.RESOLVED_MANUALLY"), "resolution keeps the record instead of deleting it");
+  assert.ok(app.includes("onOfflineReview={() => dispatchWorkflow({ type: POS_EVENT.VIEW_OFFLINE_REVIEW })}"), "the register home opens the review queue");
+  const screens = readFileSync(join("apps", "web", "src", "apps", "pos", "PosWorkflowScreens.jsx"), "utf8");
+  assert.ok(screens.includes("Offline sales needing review"), "the review screen exists");
+  assert.ok(screens.includes("The cash stays counted in this shift either way."), "staff are told the cash is still counted");
+}
 
 const persistedText = JSON.stringify(transaction).toLowerCase();
 for (const forbidden of ["rawpin", "password", "cardnumber", "cvv", "database_url", "service_role", "jwt_secret"]) {

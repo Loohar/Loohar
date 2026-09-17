@@ -96,7 +96,7 @@ import { AUTH_EXPIRED_EVENT, AUTH_SESSION_UPDATED_EVENT, clearSession, getStored
 import { isPrivateNetworkHost } from "./shared/networkHost.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
-import { POS_OFFLINE_SYNC_STATUS } from "../../shared/posOfflinePricing.js";
+import { POS_OFFLINE_SYNC_STATUS, posOfflineRecordsNeedingReview } from "../../shared/posOfflinePricing.js";
 import { planLimitSummary } from "../../shared/planEntitlements.js";
 
 const platformNavItems = [
@@ -163,6 +163,7 @@ const RegisterHomeScreen = lazyPosScreen("RegisterHomeScreen");
 const RegisterLockScreen = lazyPosScreen("RegisterLockScreen");
 const RegisterSettingsScreen = lazyPosScreen("RegisterSettingsScreen");
 const ShiftManagementScreen = lazyPosScreen("ShiftManagementScreen");
+const OfflineReviewScreen = lazyPosScreen("OfflineReviewScreen");
 
 function loadQrCode() {
   qrCodeLoader ||= import("qrcode");
@@ -8569,6 +8570,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const [modifierError, setModifierError] = useState("");
   const [offlineInitialization, setOfflineInitialization] = useState(null);
   const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
+  const [offlineReviewRecords, setOfflineReviewRecords] = useState([]);
+  const [offlineReviewNote, setOfflineReviewNote] = useState("");
+  const [offlineReviewSelectedId, setOfflineReviewSelectedId] = useState("");
   const [offlineSyncing, setOfflineSyncing] = useState(false);
   const [posSessionActive, setPosSessionActive] = useState(false);
   const inflightLoadRef = useRef(null);
@@ -8725,7 +8729,61 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     if (!offlineStorageRegisterKey) return 0;
     const count = await countUnsyncedPosOfflineTransactions(offlineStorageRegisterKey);
     setPendingOfflineCount(count);
+    await refreshOfflineReviewRecords();
     return count;
+  }
+
+  // Offline sales the server refused must stay visible to staff until someone resolves them.
+  async function refreshOfflineReviewRecords() {
+    if (!offlineStorageRegisterKey) return [];
+    const records = await listPosOfflineTransactions(offlineStorageRegisterKey, { unsyncedOnly: true }).catch(() => []);
+    const needsReview = posOfflineRecordsNeedingReview(records);
+    setOfflineReviewRecords(needsReview);
+    return needsReview;
+  }
+
+  async function retryOfflineTransaction(record) {
+    setSaving("offline-retry");
+    setError("");
+    try {
+      await updatePosOfflineTransaction(record.localTransactionId, {
+        syncStatus: POS_OFFLINE_SYNC_STATUS.PENDING_SYNC,
+        lastSyncError: "",
+        lastSyncErrorCode: ""
+      });
+      await syncPendingOfflineTransactions();
+      const remaining = await refreshOfflineReviewRecords();
+      const stillStuck = remaining.some((entry) => entry.localTransactionId === record.localTransactionId);
+      setNotice(stillStuck ? "The server still would not accept that sale." : "The offline sale was sent to the server.");
+      if (!stillStuck) setOfflineReviewSelectedId("");
+    } catch (posError) {
+      setError(posError);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function resolveOfflineTransaction(record, note) {
+    const resolution = String(note || "").trim();
+    if (resolution.length < 3) return setError("Write down how this sale was handled before marking it resolved.");
+    setSaving("offline-resolve");
+    setError("");
+    try {
+      await updatePosOfflineTransaction(record.localTransactionId, {
+        syncStatus: POS_OFFLINE_SYNC_STATUS.RESOLVED_MANUALLY,
+        resolutionNote: resolution.slice(0, 500),
+        resolvedAt: new Date().toISOString(),
+        resolvedByUserId: user?.id || null
+      });
+      setOfflineReviewNote("");
+      setOfflineReviewSelectedId("");
+      await refreshPendingOfflineCount();
+      setNotice("Recorded. The cash stays in this shift's count.");
+    } catch (posError) {
+      setError(posError);
+    } finally {
+      setSaving("");
+    }
   }
 
   async function syncPendingOfflineTransactions() {
@@ -10286,6 +10344,8 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onRecent={() => openOrderList("recent")}
           onReprint={() => openOrderList("recent")}
           onShift={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SHIFT })}
+          reviewCount={offlineReviewRecords.length}
+          onOfflineReview={() => dispatchWorkflow({ type: POS_EVENT.VIEW_OFFLINE_REVIEW })}
           onSettings={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
           onManager={() => dispatchWorkflow({ type: POS_EVENT.VIEW_SETTINGS })}
           onLock={lockRegister}
@@ -10478,6 +10538,21 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           saving={savingAction}
           onOpen={openRegisterShift}
           onClose={closeRegisterShift}
+          onBack={returnHome}
+        />
+      );
+      break;
+    case POS_WORKFLOW.OFFLINE_REVIEW:
+      workflowScreen = (
+        <OfflineReviewScreen
+          records={offlineReviewRecords}
+          saving={saving}
+          note={offlineReviewNote}
+          setNote={setOfflineReviewNote}
+          selectedId={offlineReviewSelectedId}
+          setSelectedId={setOfflineReviewSelectedId}
+          onRetry={retryOfflineTransaction}
+          onResolve={resolveOfflineTransaction}
           onBack={returnHome}
         />
       );

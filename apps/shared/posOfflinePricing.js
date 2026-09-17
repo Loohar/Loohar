@@ -7,7 +7,10 @@ export const POS_OFFLINE_SYNC_STATUS = Object.freeze({
   SYNCING: "SYNCING",
   SYNCED: "SYNCED",
   FAILED_RETRYABLE: "FAILED_RETRYABLE",
-  NEEDS_REVIEW: "NEEDS_REVIEW"
+  NEEDS_REVIEW: "NEEDS_REVIEW",
+  // A manager looked at a sale the server would not accept and recorded how it was handled. The
+  // record is kept, with the note, so the cash in the drawer can still be accounted for.
+  RESOLVED_MANUALLY: "RESOLVED_MANUALLY"
 });
 
 export const POS_OFFLINE_UNSYNCED_STATUSES = Object.freeze([
@@ -17,6 +20,19 @@ export const POS_OFFLINE_UNSYNCED_STATUSES = Object.freeze([
   POS_OFFLINE_SYNC_STATUS.FAILED_RETRYABLE,
   POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW
 ]);
+
+// Sales the register could not hand to the server, which a manager must look at.
+export function posOfflineRecordsNeedingReview(records = []) {
+  return (Array.isArray(records) ? records : []).filter((record) => record?.syncStatus === POS_OFFLINE_SYNC_STATUS.NEEDS_REVIEW);
+}
+
+export function posOfflineReviewSummary(records = []) {
+  const needsReview = posOfflineRecordsNeedingReview(records);
+  return {
+    count: needsReview.length,
+    totalCents: needsReview.reduce((sum, record) => sum + Number(record?.orderSnapshot?.totalCents || 0), 0)
+  };
+}
 
 export class PosOfflinePricingError extends Error {
   constructor(message, code, details = {}) {

@@ -153,7 +153,7 @@ export function CashierPinScreen({ pin, setPin, error, lockedUntil, saving, onSu
   );
 }
 
-export function RegisterHomeScreen({ restaurant, device, shift, heldCount, openCount, recentCount, onNewOrder, onHeld, onOpen, onRecent, onReprint, onShift, onSettings, onManager, onLock, offline = false, pendingSyncCount = 0, syncing = false }) {
+export function RegisterHomeScreen({ restaurant, device, shift, heldCount, openCount, recentCount, onNewOrder, onHeld, onOpen, onRecent, onReprint, onShift, onSettings, onManager, onLock, offline = false, pendingSyncCount = 0, syncing = false, reviewCount = 0, onOfflineReview = null }) {
   const actions = [
     { label: "New order", detail: "Start dine-in, takeout, delivery, or walk-in service.", icon: ShoppingBag, action: onNewOrder, primary: true },
     { label: "Held orders", detail: `${heldCount || 0} waiting`, icon: PauseCircle, action: onHeld, disabled: offline },
@@ -161,13 +161,16 @@ export function RegisterHomeScreen({ restaurant, device, shift, heldCount, openC
     { label: "Recent orders", detail: `${recentCount || 0} today`, icon: History, action: onRecent, disabled: offline },
     { label: "Reprint receipt", detail: "Find a completed order", icon: ReceiptText, action: onReprint, disabled: offline },
     { label: "Shift", detail: shift?.status === "OPEN" ? "Open" : "Closed", icon: Clock, action: onShift, disabled: offline },
+    ...(onOfflineReview && reviewCount > 0
+      ? [{ label: "Offline sales to review", detail: `${reviewCount} need${reviewCount === 1 ? "s" : ""} a manager`, icon: WifiOff, action: onOfflineReview }]
+      : []),
     { label: "Register settings", detail: device?.name || "Configure register", icon: MonitorCog, action: onSettings, disabled: offline },
     { label: "Manager actions", detail: "Protected controls", icon: LockKeyhole, action: onManager, disabled: offline }
   ];
   return (
     <section className="pos-home-screen">
       <PosScreenHeader eyebrow={restaurant?.name || "Restaurant"} title="Register home" detail="Choose a task to continue." actions={<button className="button-muted" type="button" onClick={onLock}><LockKeyhole size={18} />Lock</button>} />
-      {offline || pendingSyncCount > 0 ? <div className={`pos-home-operational-status ${offline ? "offline" : "syncing"}`} role="status"><strong>{offline ? "Offline" : syncing ? "Syncing" : "Pending Sync"}</strong><span>Pending Sync: {pendingSyncCount}</span></div> : null}
+      {offline || pendingSyncCount > 0 ? <div className={`pos-home-operational-status ${offline ? "offline" : "syncing"}`} role="status"><strong>{offline ? "Offline" : syncing ? "Syncing" : "Pending Sync"}</strong><span>Pending Sync: {pendingSyncCount}</span>{reviewCount > 0 ? <span>Needs review: {reviewCount}</span> : null}</div> : null}
       <div className="pos-home-grid">
         {actions.map(({ label, detail, icon: Icon, action, primary, disabled }) => (
           <button className={`pos-home-action${primary ? " primary" : ""}`} type="button" onClick={action} disabled={disabled} key={label}>
@@ -643,6 +646,44 @@ export function ShiftManagementScreen({ shift, drawer, openingCashCents, setOpen
       <div className="pos-shift-card"><Clock size={30} /><dl><div><dt>Status</dt><dd>{shift?.status || "CLOSED"}</dd></div><div><dt>Drawer</dt><dd>{drawer?.name || "No cash drawer"}</dd></div><div><dt>Current balance</dt><dd>{money(drawer?.currentBalanceCents)}</dd></div></dl></div>
       {!shift ? <label className="pos-cash-input"><span>Opening cash</span><input type="number" min="0" step="0.01" value={(openingCashCents / 100).toFixed(2)} onChange={(event) => setOpeningCashCents(Math.round(Number(event.target.value || 0) * 100))} /></label> : null}
       <div className="pos-workflow-actions">{shift ? <button className="button-danger" type="button" onClick={onClose} disabled={saving}>Close shift</button> : <button className="button-primary" type="button" onClick={onOpen} disabled={saving}>Open shift</button>}</div>
+    </section>
+  );
+}
+
+// Offline cash sales the server would not accept. The money is already in the drawer, so nothing is
+// deleted here: a manager either retries the sale or records how it was handled.
+export function OfflineReviewScreen({ records = [], saving, note = "", setNote = () => {}, selectedId = "", setSelectedId = () => {}, onRetry = null, onResolve = null, onBack }) {
+  const selected = records.find((record) => record.localTransactionId === selectedId) || null;
+  return (
+    <section className="pos-workflow-screen">
+      <PosScreenHeader eyebrow="Cash control" title="Offline sales needing review" detail={records.length ? `${records.length} offline sale${records.length === 1 ? "" : "s"} could not be sent to the server.` : "Every offline sale has been sent to the server."} onBack={onBack} />
+      {!records.length ? <div className="empty-state"><CheckCircle2 size={28} /><strong>Nothing to review</strong></div> : null}
+      <div className="pos-order-list">
+        {records.map((record) => (
+          <article key={record.localTransactionId}>
+            <div>
+              <strong>{money(record.orderSnapshot?.totalCents)}</strong>
+              <span>{record.createdAt ? new Date(record.createdAt).toLocaleString() : "Offline sale"}</span>
+              <span>{record.lastSyncError || "The server did not accept this sale."}</span>
+            </div>
+            <button className={`button-muted ${selectedId === record.localTransactionId ? "active" : ""}`} type="button" onClick={() => setSelectedId(record.localTransactionId)} disabled={Boolean(saving)}>Review</button>
+          </article>
+        ))}
+      </div>
+      {selected ? (
+        <div className="pos-reader-settings">
+          <div>
+            <strong>{money(selected.orderSnapshot?.totalCents)} taken offline</strong>
+            <span>{selected.lastSyncErrorCode ? `${selected.lastSyncErrorCode}: ` : ""}{selected.lastSyncError || "The server did not accept this sale."}</span>
+          </div>
+          <label><span>What happened to this sale?</span><input value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. rung up again on this register" aria-label="Resolution note" /></label>
+          <div className="pos-workflow-actions">
+            <button className="button-primary" type="button" onClick={() => onRetry?.(selected)} disabled={Boolean(saving)}>{saving === "offline-retry" ? "Retrying..." : "Try sending again"}</button>
+            <button className="button-muted" type="button" onClick={() => onResolve?.(selected, note)} disabled={Boolean(saving) || note.trim().length < 3}>Mark handled</button>
+          </div>
+          <small className="pos-cash-disabled-reason">The cash stays counted in this shift either way. Marking it handled keeps the record and your note for the end-of-day count.</small>
+        </div>
+      ) : null}
     </section>
   );
 }
