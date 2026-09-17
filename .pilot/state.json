@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T18:00:00Z",
+  "updatedAt": "2026-09-17T21:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -21,7 +21,7 @@
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
-      "autoDeploy": "NO \u2014 Render staging did not deploy f8614e7 within 10 minutes of push; owner redeploy required",
+      "autoDeploy": "NO \u2014 Render staging did not deploy pushed commits; owner redeploy required (still on c5347da as of 2026-09-17 21:30Z)",
       "databaseSeparateFromProduction": true
     }
   },
@@ -33,9 +33,9 @@
     },
     "candidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "97d4d0202330995831cea7682b43450fe8587337",
+      "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
       "pushed": true,
-      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-delivery-safety-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
         {
           "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
@@ -156,6 +156,21 @@
           "sha": "97d4d02",
           "item": "L-33",
           "summary": "entitlement review fixes: manager/KDS session bypass, pool-safe locks, driver/reactivation rules"
+        },
+        {
+          "sha": "d6a3fc3",
+          "item": "L-27",
+          "summary": "Stripe Terminal card-present payments (simulated workstream) + migration 20260918090000_pos_terminal_readers"
+        },
+        {
+          "sha": "2410e0e",
+          "item": "L-34",
+          "summary": "daily sales and reconciliation summary (BASIC_REPORTS, Starter)"
+        },
+        {
+          "sha": "bf7430a",
+          "item": "L-27",
+          "summary": "Terminal review fixes (stale/captured PaymentIntent, tipping, cash-vs-card, locked payment row) + register card UI"
         }
       ],
       "deployedToStaging": false
@@ -351,10 +366,12 @@
       "justification": "Requires httpOnly cookie session redesign across web, POS and driver apps; audits found no XSS sink (no dangerouslySetInnerHTML, JSON-LD via textContent). Revisit before general availability."
     },
     "L-27": {
-      "title": "POS card checkout not implemented end to end (no card-present terminal)",
-      "priority": "P0 if in pilot scope",
-      "status": "BLOCKED",
-      "blocker": "Owner decision: Stripe Terminal hardware integration or exclude card-present from pilot"
+      "title": "POS card checkout (card-present) via Stripe Terminal",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Simulated-reader workstream complete: connection tokens, reader pairing/removal, card-present collection with webhook settlement, register card tender UI. Physical acceptance is an owner step (docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md).",
+      "reviewFindings": "2 critical (stale PaymentIntent after a total change; cash settling an order with a live card payment), 1 high (on-reader tipping), 1 high (settled payment reset), plus medium/low \u2014 all fixed in bf7430a with tests"
     },
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
@@ -395,10 +412,16 @@
         "KDS limit meters registered KITCHEN_DISPLAY devices; /kitchen browser sessions are not device-bound",
         "Delivery and driver management remain Professional; Starter pilot is pickup-only"
       ]
+    },
+    "L-34": {
+      "title": "Basic reporting and daily reconciliation",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY"
     }
   },
   "tests": {
-    "candidateSha": "97d4d02",
+    "candidateSha": "bf7430a",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -417,12 +440,15 @@
       "test:online-fulfillment-db": "PASS (4)",
       "test:starter-entitlements-db": "PASS (6)",
       "test:storefront-checkout-db": "PASS (10)",
+      "test:basic-reporting-db": "PASS (5)",
+      "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
-      "8d427c5 (1 medium fixed in f8614e7, 3 low fixed)",
-      "aba7638 (2 medium + 3 low fixed in 97d4d02; KDS device binding recorded as limitation)"
+      "8d427c5 \u2192 fixed in f8614e7",
+      "aba7638 \u2192 fixed in 97d4d02",
+      "d6a3fc3 \u2192 fixed in bf7430a"
     ]
   },
   "restaurant1Readiness": {
@@ -435,7 +461,7 @@
     ]
   },
   "humanActionsRequired": [
-    "Redeploy loohar-api-staging from branch fix/launch-review3-fixes-v01 at 97d4d0202330995831cea7682b43450fe8587337 (Render staging does not auto-deploy). No new env vars or migrations are needed. Confirm the Vercel preview for the same branch rebuilt.",
+    "Redeploy loohar-api-staging from branch fix/launch-review3-fixes-v01 at bf7430a0ccb847ad45ffff55071f1a236fc76704. The Render preDeployCommand runs the additive migration 20260918090000_pos_terminal_readers automatically; no new environment variables are needed. Confirm the Vercel preview for the same branch rebuilt.",
     "Staging web identity: open https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app/version.json while signed in to Vercel and confirm commitSha 97d4d02 and that the API target is the staging API (or grant Vercel loohar team read access)",
     "Staging privileged test accounts for MFA/refund/KDS/POS evidence: create them yourself; never share passwords in chat",
     "Physical Stripe Terminal acceptance (hardware purchase and on-site steps) \u2014 see STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when published",
@@ -446,5 +472,5 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "After staging redeploy: complete the real Stripe TEST card payment for staging order cmu5tqkr60001105q8iqvmfv2 (idempotent replay to obtain stripeAccountId), verify webhook settlement, tracking, reconciliation and legacy subscription webhook periods. Meanwhile: Stripe Terminal simulated workstream."
+  "nextAutonomousTask": "After staging redeploy: real Stripe TEST card checkout certification for staging order cmu5tqkr60001105q8iqvmfv2, webhook settlement, tracking, reconciliation, subscription period verification, then simulated Terminal rehearsal on staging."
 }

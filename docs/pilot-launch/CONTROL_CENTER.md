@@ -1,6 +1,6 @@
 # Loohar Pilot Control Center
 
-Last updated: 2026-09-17 18:00 UTC · Machine-readable twin: `.pilot/state.json`
+Last updated: 2026-09-17 21:30 UTC · Machine-readable twin: `.pilot/state.json`
 
 Status vocabulary: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED · TESTED (local) ·
 STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness percentages are used.
@@ -14,14 +14,15 @@ STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness p
 | Staging API | `c5347da` (schema ok, separate DB from production) | `/version`, `/health` |
 | Staging web | UNKNOWN — `loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app` behind Vercel SSO | `/version.json` 302 |
 | Staging preview → staging API CORS | ALLOWED for exact origin; other origins 403 | live probe |
-| Pilot candidate | `97d4d02` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-delivery-safety-v01` |
+| Pilot candidate | `bf7430a` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
 | Frozen | `feature/loohar-national-tax-provider-v01` @ `1e0562b` | do not modify/merge |
 
 Candidate chain on production `0526862`: L-01 (`2d85007`,`b291ddd`,`cfec6a4`,`a3262dc`) →
 L-02 `4c48815` → L-05 `0e69db3` → L-03 `7e0833a` → L-04 `47fa9cc` → review 1 `1d30522` →
 L-15 `6d61d61` → L-07 `7304418` → L-06 `ca55a25` → L-09 `a8fdeff` → review 2 `48c27e9` →
 MFA/auth `b383655` → authz/money `94f04b7` → L-10 `2f0f73c` → review 3 `c5347da` → L-29/L-30/L-31
-`8d427c5` → review `f8614e7` → Starter entitlements `aba7638` → fulfilment `849ab08` → review `97d4d02`.
+`8d427c5` → review `f8614e7` → Starter entitlements `aba7638` → fulfilment `849ab08` → review `97d4d02`
+→ Stripe Terminal `d6a3fc3` → basic reporting `2410e0e` → Terminal review fixes `bf7430a`.
 
 ### Staging certification findings (2026-09-17)
 
@@ -51,7 +52,8 @@ MFA/auth `b383655` → authz/money `94f04b7` → L-10 `2f0f73c` → review 3 `c5
 | L-29 | Web checkout Stripe.js connected account | TESTED (local), PUSHED |
 | L-30 | Storefront modifiers + public payload allowlists | TESTED (local), PUSHED |
 | L-33 | Starter plan: 5 seats, 1 register, 1 KDS (shared config) | TESTED (local), PUSHED — KDS browser sessions not device-bound |
-| L-27 | POS card checkout (card-present) | NOT STARTED (Stripe Terminal simulated workstream next) |
+| L-27 | POS card checkout (card-present, Stripe Terminal) | TESTED (local), PUSHED — physical acceptance is an owner step |
+| L-34 | Basic reporting and daily reconciliation | TESTED (local), PUSHED |
 | L-11 | Monitoring, alerting, backup/restore proof, runbooks | BLOCKED (owner access) |
 
 ## 3. P1 / P2
@@ -83,22 +85,25 @@ Change reviews: 3. Confirmed critical findings fixed: 3 (public registration esc
 mass assignment, /staff escalation). Confirmed high/medium findings fixed: all except L-26
 (deferred with justification). Full table: Development Book §18.
 
-## 5. Test status (candidate `97d4d02`)
+## 5. Test status (candidate `bf7430a`)
 
 `npm test` PASS · lint PASS · build PASS · security scan PASS · `prisma validate` PASS. DB suites:
 checkout-idempotency 10/10, stripe-webhook 12/12, refund 10/10, driver-claim 5/5, platform-billing-ledger 4/4,
 mfa-auth 12/12, authz-money 7/7, schema drift PASS, online-fulfillment 4/4, starter-entitlements 6/6,
-storefront-checkout 10/10, pos-cash-drawer 6/6. Every new suite was run against the pre-fix code and failed.
-Adversarial reviews of `8d427c5` and `aba7638` completed; all findings fixed except the recorded KDS limitation.
+storefront-checkout 10/10, basic-reporting 5/5, pos-terminal 19/19, pos-cash-drawer 6/6. Every new suite was
+run against the pre-fix code and failed. Adversarial reviews of `8d427c5`, `aba7638` and `d6a3fc3` completed;
+all findings fixed except the recorded KDS limitation. The Terminal review found two critical money defects
+(a stale PaymentIntent after a total change, and cash settling an order with a live card payment); both are
+fixed in `bf7430a` with tests that fail on the previous commit.
 
 ## 6. Blockers requiring the owner
 
 | Blocker | Minimum owner action |
 | --- | --- |
-| Staging redeploy | Redeploy `loohar-api-staging` from `fix/launch-review3-fixes-v01` at `97d4d02` (no new env vars, no migrations); confirm the Vercel preview for that branch rebuilt |
+| Staging redeploy | Redeploy `loohar-api-staging` from `fix/launch-review3-fixes-v01` at `bf7430a` (no new env vars; the pre-deploy step applies the additive migration `20260918090000_pos_terminal_readers`); confirm the Vercel preview for that branch rebuilt |
 | Staging web identity | Signed in to Vercel, open the preview `/version.json` and confirm `97d4d02` + staging API target, or grant the loohar team read access |
 | Staging evidence accounts | Create staging-only privileged accounts yourself (never share passwords in chat) for MFA/refund/KDS/POS evidence |
-| POS card-present | Physical Stripe Terminal reader purchase and on-site acceptance (simulated integration is autonomous work) |
+| POS card-present | Buy a Stripe Terminal reader and run the on-site acceptance in `docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md` (the simulated workstream is done) |
 | Delivery zones | Choose a geocoding provider; until then Starter pilot is pickup-only |
 | Operations | Monitoring/backup access or confirmation of backup/PITR and alert routing |
 
@@ -118,5 +123,6 @@ card-present not implemented, operations unproven.
 ## 9. Next autonomous task
 
 After the staging redeploy: pay the existing staging order with a Stripe TEST card, verify webhook settlement,
-tracking, reconciliation (4782 everywhere) and legacy subscription periods. Meanwhile: Stripe Terminal
-simulated workstream and `STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md`.
+tracking, reconciliation (4782 everywhere) and legacy subscription periods, then rehearse a simulated
+Terminal sale on staging. Remaining local work: tips/voids/refund UI, KDS device binding, offline POS and
+performance evidence, Super Admin, backups and monitoring.
