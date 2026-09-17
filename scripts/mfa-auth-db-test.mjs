@@ -96,7 +96,7 @@ const codeFor = (secret, offset = 0) => generateTotp(base32Decode(secret), totpS
 async function enroll(user) {
   const first = await login(user);
   const start = await call("POST", "/api/auth/mfa/enroll/start", { token: first.body.accessToken });
-  const confirm = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: codeFor(start.body.enrollment.secret) } });
+  const confirm = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: codeFor(start.body.enrollment.secret), currentPassword: PASSWORD } });
   return { first, start, confirm, secret: start.body.enrollment.secret };
 }
 
@@ -151,11 +151,13 @@ test("enrollment activates only after a valid code, encrypts the secret, hashes 
   assert.equal(pending.mfaEnabled, false);
   assert.ok(pending.mfaPendingSecret.startsWith("v1.") && !pending.mfaPendingSecret.includes(start.body.enrollment.secret));
 
-  const wrong = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: "000000" } });
+  const noPassword = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: codeFor(start.body.enrollment.secret) } });
+  assert.equal(noPassword.status, 401, "binding an authenticator requires the current password");
+  const wrong = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: "000000", currentPassword: PASSWORD } });
   assert.equal(wrong.status, 401);
   assert.equal((await prisma.user.findUnique({ where: { id: manager.id } })).mfaEnabled, false);
 
-  const confirm = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: codeFor(start.body.enrollment.secret) } });
+  const confirm = await call("POST", "/api/auth/mfa/enroll/confirm", { token: first.body.accessToken, body: { code: codeFor(start.body.enrollment.secret), currentPassword: PASSWORD } });
   assert.equal(confirm.status, 200);
   assert.equal(confirm.body.recoveryCodes.length, 10);
   assert.equal((await call("GET", "/api/protected", { token: confirm.body.accessToken })).status, 200);
@@ -292,4 +294,18 @@ test("no API response ever contains stored MFA secrets or recovery code hashes",
     for (const { mfaSecret } of secrets) assert.ok(!text.includes(mfaSecret));
     for (const { codeHash } of hashes) assert.ok(!text.includes(codeHash));
   }
+});
+
+test("an impersonation session cannot enroll MFA or change the target's password", async () => {
+  const superAdmin = await makeUser("platform-imp", "SUPER_ADMIN");
+  const { secret } = await enroll(superAdmin);
+  const adminSession = await call("POST", "/api/auth/mfa/verify", { body: { mfaToken: (await login(superAdmin)).body.mfaToken, code: codeFor(secret, 1) } });
+  await makeUser("owner-imp", "RESTAURANT_OWNER");
+  const imp = await call("POST", `/api/admin/restaurants/${restaurant.id}/impersonate`, { token: adminSession.body.accessToken });
+  assert.equal(imp.status, 200);
+  assert.equal(imp.body.refreshToken, null);
+  const enrollStart = await call("POST", "/api/auth/mfa/enroll/start", { token: imp.body.accessToken });
+  const password = await call("POST", "/api/auth/change-password", { token: imp.body.accessToken, body: { newPassword: "Hijack-Password-2026-Loohar!" } });
+  assert.ok([403].includes(enrollStart.status) && enrollStart.body.code === "AUTH_IMPERSONATION_ACCOUNT_SETUP_FORBIDDEN", JSON.stringify(enrollStart));
+  assert.equal(password.status, 403);
 });

@@ -24,7 +24,13 @@ function mfaError(message, status, code, extra = {}) {
   return error;
 }
 
+// Production requires a dedicated MFA_ENCRYPTION_KEY so rotating JWT_SECRET can never make stored
+// authenticator secrets and recovery codes unreadable (which would lock every privileged user out).
 function serverSecret(env = process.env) {
+  if (env.NODE_ENV === "production") {
+    if (!env.MFA_ENCRYPTION_KEY) throw new Error("MFA_ENCRYPTION_KEY must be set in production");
+    return env.MFA_ENCRYPTION_KEY;
+  }
   const value = env.MFA_ENCRYPTION_KEY || env.JWT_SECRET;
   if (value) return value;
   if (!["development", "test"].includes(env.NODE_ENV || "") && env.LOOHAR_ALLOW_DEV_SECRETS !== "true") throw new Error("MFA_ENCRYPTION_KEY or JWT_SECRET must be set");
@@ -251,6 +257,11 @@ export async function verifyMfaForUser({ userId, code, recoveryCode }) {
       data: { usedAt: new Date() }
     });
     if (consumed.count === 1) {
+      const fresh = await prisma.user.findUnique({ where: { id: user.id }, select: { mfaLockedUntil: true } });
+      if (fresh?.mfaLockedUntil && new Date(fresh.mfaLockedUntil).getTime() > Date.now()) {
+        await prisma.userMfaRecoveryCode.updateMany({ where: { userId: user.id, codeHash: hashRecoveryCode(recoveryCode) }, data: { usedAt: null } });
+        throw mfaError("Too many incorrect codes. Try again later.", 429, "AUTH_MFA_LOCKED");
+      }
       await prisma.user.update({ where: { id: user.id }, data: { mfaFailedAttempts: 0 } });
       const remaining = await prisma.userMfaRecoveryCode.count({ where: { userId: user.id, usedAt: null } });
       return { method: "recovery_code", remainingRecoveryCodes: remaining };
@@ -259,8 +270,15 @@ export async function verifyMfaForUser({ userId, code, recoveryCode }) {
     const step = matchTotp(decryptMfaSecret(user.mfaSecret), code, { lastUsedStep: user.mfaLastUsedStep });
     if (step !== null) {
       // Conditional write closes the race where two requests present the same code at once.
+      // Also conditional on the account not being locked, so parallel guesses racing the lockout lose.
       const accepted = await prisma.user.updateMany({
-        where: { id: user.id, OR: [{ mfaLastUsedStep: null }, { mfaLastUsedStep: { lt: step } }] },
+        where: {
+          id: user.id,
+          AND: [
+            { OR: [{ mfaLastUsedStep: null }, { mfaLastUsedStep: { lt: step } }] },
+            { OR: [{ mfaLockedUntil: null }, { mfaLockedUntil: { lt: new Date() } }] }
+          ]
+        },
         data: { mfaLastUsedStep: step, mfaFailedAttempts: 0 }
       });
       if (accepted.count === 1) return { method: "totp" };

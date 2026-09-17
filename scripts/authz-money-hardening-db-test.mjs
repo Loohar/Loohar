@@ -241,3 +241,26 @@ test("kitchen shows only paid online orders and only the employee's assigned loc
   assert.equal(advanceUnpaid.status, 404);
   assert.equal((await prisma.order.findUnique({ where: { id: unpaid.id } })).status, "PENDING");
 });
+
+test("unpaid online orders cannot be started, failed card checkouts are cancelled, and card success after cash is flagged", async () => {
+  const { order: unpaid } = await onlineOrder();
+  const accept = await call("PATCH", `/api/restaurants/${ctx.restaurant.id}/orders/${unpaid.id}/status`, { token: ctx.owner.token, body: { status: "ACCEPTED" } });
+  assert.equal(accept.status, 409);
+  assert.equal(accept.body.code, "ORDER_AWAITING_PAYMENT");
+
+  const { order: declined, payment: declinedPayment } = await onlineOrder({ paymentStatus: "FAILED" });
+  const before = stripeCalls.length;
+  const cancel = await call("PATCH", `/api/restaurants/${ctx.restaurant.id}/orders/${declined.id}/status`, { token: ctx.owner.token, body: { status: "CANCELLED" } });
+  assert.equal(cancel.status, 200);
+  assert.ok(stripeCalls.slice(before).some((entry) => entry.url.endsWith(`/payment_intents/${declinedPayment.providerPaymentIntentId}/cancel`)), "declined PaymentIntent is cancelled");
+
+  const { payment: cashPaid } = await onlineOrder({ paymentStatus: "PAID", status: "ACCEPTED" });
+  await prisma.restaurantOrderPayment.update({ where: { id: cashPaid.id }, data: { provider: "MANUAL" } });
+  const { handleStripeConnectWebhook } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
+  const result = await handleStripeConnectWebhook({
+    id: `evt_${runId}_dup`, type: "payment_intent.succeeded", account: `acct_${runId}`,
+    data: { object: { id: cashPaid.providerPaymentIntentId, amount: 1000, amount_received: 1000, currency: "usd", metadata: { orderPaymentId: cashPaid.id } } }
+  });
+  assert.equal(result.reviewRequired, true);
+  assert.ok(await prisma.auditLog.findFirst({ where: { entityId: cashPaid.id, action: "order_payment.duplicate_settlement" } }));
+});

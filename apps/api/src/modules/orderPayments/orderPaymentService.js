@@ -521,7 +521,8 @@ async function replayCheckout({ existing, keyHash, requestHash }) {
   const order = await prisma.order.findUnique({ where: { id: existing.orderId }, include: orderInclude() });
   // A declined card leaves the PaymentIntent reusable; only an attempt that never got one is terminal.
   const initializationFailed = existing.status === "FAILED" && !existing.providerPaymentIntentId;
-  if (!order || initializationFailed || order.status === "CANCELLED") throw checkoutAttemptFailedError();
+  const settledElsewhere = existing.provider !== "STRIPE_CONNECT" || existing.status === "CANCELED";
+  if (!order || initializationFailed || settledElsewhere || ["CANCELLED", "REJECTED"].includes(order.status)) throw checkoutAttemptFailedError();
 
   // The derived token no longer matches if staff reissued tracking (receipt QR) or the secret
   // changed. Never rotate here: that would silently break the token already in use.
@@ -1024,7 +1025,14 @@ async function applyStripeConnectEvent({ eventType, object, accountObject, accou
   }
   if (!payment) return { received: true, ignored: true, reason: "payment_not_found" };
   if (["payment_intent.succeeded", "payment.succeeded"].includes(eventType)) {
-    if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) {
+      if (payment.provider !== "STRIPE_CONNECT") {
+        // The order was settled another way (e.g. cash) but the card also succeeded: a double charge to refund.
+        await recordAudit({ restaurantId: payment.restaurantId, action: "order_payment.duplicate_settlement", entityType: "RestaurantOrderPayment", entityId: payment.id, metadata: { settledProvider: payment.provider, paymentIntentId: object.id, requiresReview: true } });
+        return { received: true, reviewRequired: true, reason: "paid_by_other_method" };
+      }
+      return { received: true, ignored: true, reason: "payment_already_settled" };
+    }
     // The event must be for this payment's own PaymentIntent, on this restaurant's connected account,
     // for the exact server-computed amount; metadata alone is not trusted.
     const merchant = await prisma.restaurantMerchantAccount.findUnique({ where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } }, select: { stripeAccountId: true } });

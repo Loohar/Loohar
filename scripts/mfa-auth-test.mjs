@@ -53,6 +53,13 @@ assertCheck(hashRecoveryCode("abcde-fghij", env) === hashRecoveryCode("ABCDEFGHI
 assertCheck(["SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER"].every(roleRequiresMfa), "MFA is required for platform, owner, admin and manager roles");
 assertCheck(!["CASHIER", "KITCHEN_STAFF", "DRIVER", "CUSTOMER"].some(roleRequiresMfa), "Frontline and customer roles keep their existing sign-in");
 assertCheck(mfaEnforcementEnabled({ NODE_ENV: "production", MFA_ENFORCEMENT: "off" }), "MFA enforcement cannot be switched off in production");
+let keyRequired = false;
+try {
+  encryptMfaSecret(rfcSecret, { NODE_ENV: "production", JWT_SECRET: "only-jwt" });
+} catch {
+  keyRequired = true;
+}
+assertCheck(keyRequired, "Production requires a dedicated MFA_ENCRYPTION_KEY (no JWT_SECRET fallback)");
 
 const middleware = readFileSync("apps/api/src/middleware/auth.js", "utf8");
 const authRoutes = readFileSync("apps/api/src/routes/auth.js", "utf8");

@@ -568,7 +568,7 @@ export function ShiftManagementScreen({ shift, drawer, openingCashCents, setOpen
   );
 }
 
-export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, locations, saving, ownerOperator, pinConfigured, pinValue, setPinValue, onSavePin, onRegister, onKiosk, onBack }) {
+export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, locations, saving, ownerOperator, pinConfigured, pinValue, setPinValue, currentPinValue = "", setCurrentPinValue = () => {}, onSavePin, onRegister, onKiosk, onBack }) {
   return (
     <section className="pos-workflow-screen">
       <PosScreenHeader eyebrow="Manager workspace" title="Register settings" detail="Device, location, lock, payment, and kiosk controls stay outside order entry." onBack={device ? onBack : null} />
@@ -580,7 +580,7 @@ export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, loca
         <label className="checkbox-row"><input type="checkbox" checked={deviceForm.cardPaymentsEnabled} onChange={(event) => setDeviceForm((current) => ({ ...current, cardPaymentsEnabled: event.target.checked }))} disabled={!ownerOperator} />Card terminal enabled</label>
         {ownerOperator ? <button className="button-primary" type="submit" disabled={saving}>{device ? "Update register" : "Register this device"}</button> : null}
       </form>
-      {device && ownerOperator ? <div className="pos-pin-settings"><div><strong>Cashier PIN</strong><span>{pinConfigured ? "A PIN is configured for your employee account." : "Set a 4–8 digit PIN before unlocking this register."}</span></div><input type="password" inputMode="numeric" autoComplete="new-password" value={pinValue} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, "").slice(0, 8))} aria-label="New cashier PIN" placeholder="4–8 digits" /><button className="button-muted" type="button" onClick={onSavePin} disabled={saving || pinValue.length < 4}>Save PIN</button></div> : null}
+      {device && ownerOperator ? <div className="pos-pin-settings"><div><strong>Cashier PIN</strong><span>{pinConfigured ? "A PIN is configured for your employee account." : "Set a 4–8 digit PIN before unlocking this register."}</span></div>{pinConfigured ? <input type="password" inputMode="numeric" autoComplete="current-password" value={currentPinValue} onChange={(event) => setCurrentPinValue(event.target.value.replace(/\D/g, "").slice(0, 8))} aria-label="Current cashier PIN" placeholder="Current PIN" /> : null}<input type="password" inputMode="numeric" autoComplete="new-password" value={pinValue} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, "").slice(0, 8))} aria-label="New cashier PIN" placeholder="4–8 digits" /><button className="button-muted" type="button" onClick={onSavePin} disabled={saving || pinValue.length < 4 || (pinConfigured && currentPinValue.length < 4)}>Save PIN</button></div> : null}
       {device && ownerOperator ? <button className="button-muted" type="button" onClick={onKiosk}><MonitorCog size={18} />{device.kioskModeEnabled ? "Review kiosk lock" : "Configure kiosk mode"}</button> : null}
     </section>
   );

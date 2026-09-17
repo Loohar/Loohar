@@ -38,7 +38,7 @@ import {
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { isActiveTaxProfile } from "../services/taxDomain.js";
 import { POS_PERMISSION } from "../services/posService.js";
-import { assertOrderTransition, closeOnlinePaymentForCancellation } from "../services/orderLifecycleService.js";
+import { assertOrderTransition, closeOnlinePaymentForCancellation, isUnpaidOnlineCheckout } from "../services/orderLifecycleService.js";
 
 const router = Router();
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -1971,6 +1971,13 @@ router.patch("/:restaurantId/orders/:orderId/status", async (req, res, next) => 
     if (!existing) return res.status(404).json({ error: "Order not found" });
     const nextStatus = String(req.body.status || "");
     assertOrderTransition(existing.status, nextStatus);
+    if (!["CANCELLED", "REJECTED"].includes(nextStatus)) {
+      // Online card orders start work only after payment, so confirmation, alerts and loyalty run once.
+      const onlinePayment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId: existing.id }, select: { status: true, checkoutIdempotencyKeyHash: true } });
+      if (isUnpaidOnlineCheckout(onlinePayment)) {
+        return res.status(409).json({ error: "This online order has not been paid yet.", code: "ORDER_AWAITING_PAYMENT" });
+      }
+    }
     if (["CANCELLED", "REJECTED"].includes(nextStatus)) await closeOnlinePaymentForCancellation(existing.id);
     // Conditional on the status we validated so concurrent changes cannot skip the transition rules.
     const moved = await prisma.order.updateMany({ where: { id: existing.id, restaurantId, status: existing.status }, data: { status: nextStatus } });

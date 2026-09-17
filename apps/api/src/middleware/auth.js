@@ -93,6 +93,7 @@ export async function authenticateAccessToken(token, { restricted = false } = {}
     mfaEnrollmentRequired,
     passwordChangeRequired,
     sessionMfaVerifiedAt: session.mfaVerifiedAt || null,
+    impersonatedByUserId: session.metadata?.impersonatedByUserId || null,
     sessionId: session.id,
     sessionExpiresAt: session.expiresAt
   };

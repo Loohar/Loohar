@@ -183,6 +183,7 @@ async function authorizeSocket(socket, next) {
     }
 
     let locationId = null;
+    let kitchenLocationIds = null;
     if (scope === "kitchen") {
       const entitlement = await loadRestaurantEntitlements(restaurantId);
       const decision = entitlementDecision(entitlement, FEATURE.KITCHEN_DISPLAY, "GET");
@@ -194,9 +195,11 @@ async function authorizeSocket(socket, next) {
       if (allowedLocationIds) {
         // Location-restricted staff may only join rooms for their assigned locations.
         if (!locationId && allowedLocationIds.length === 1) locationId = allowedLocationIds[0];
-        if (!locationId || !allowedLocationIds.includes(locationId)) {
+        if (locationId && !allowedLocationIds.includes(locationId)) {
           return next(socketError("Kitchen location access denied.", "SOCKET_LOCATION_FORBIDDEN"));
         }
+        // "All locations" for staff assigned to several locations joins just those location rooms.
+        if (!locationId) kitchenLocationIds = allowedLocationIds;
       }
       if (locationId) {
         const location = await prisma.restaurantLocation.findFirst({
@@ -207,7 +210,7 @@ async function authorizeSocket(socket, next) {
       }
     }
 
-    socket.data = { user, scope, restaurantId, locationId, authToken: auth.token };
+    socket.data = { user, scope, restaurantId, locationId, kitchenLocationIds, authToken: auth.token };
     next();
   } catch (error) {
     const code = error.code || (error.name === "TokenExpiredError" ? "AUTH_ACCESS_TOKEN_EXPIRED" : "AUTH_ACCESS_TOKEN_INVALID");
@@ -222,11 +225,15 @@ export function bindRealtime(io) {
     if (socket.data.scope === "driver") socket.join(`driver:${socket.data.driverId}`);
     if (socket.data.scope === "restaurant") socket.join(restaurantRoom(socket.data.restaurantId));
     if (socket.data.scope === "kitchen") {
-      socket.join(
-        socket.data.locationId
-          ? kitchenLocationRoom(socket.data.restaurantId, socket.data.locationId)
-          : kitchenAllRoom(socket.data.restaurantId)
-      );
+      if (socket.data.kitchenLocationIds) {
+        socket.data.kitchenLocationIds.forEach((id) => socket.join(kitchenLocationRoom(socket.data.restaurantId, id)));
+      } else {
+        socket.join(
+          socket.data.locationId
+            ? kitchenLocationRoom(socket.data.restaurantId, socket.data.locationId)
+            : kitchenAllRoom(socket.data.restaurantId)
+        );
+      }
     }
 
     socket.emit("realtime:ready", {

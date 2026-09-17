@@ -2389,7 +2389,7 @@ export async function cashPayment({
   }
   // An open online checkout could still be paid by card after cash is taken; the restaurant must
   // cancel the online order (which cancels its payment) before settling it in cash.
-  if (order.restaurantOrderPayment?.providerPaymentIntentId && order.restaurantOrderPayment.status === "REQUIRES_PAYMENT_METHOD" && order.restaurantOrderPayment.checkoutIdempotencyKeyHash) {
+  if (order.restaurantOrderPayment?.checkoutIdempotencyKeyHash && ["REQUIRES_PAYMENT_METHOD", "FAILED"].includes(order.restaurantOrderPayment.status)) {
     throw httpError("This order has an open online card checkout. Cancel the online order before taking cash.", 409, { code: "POS_CASH_ONLINE_CHECKOUT_OPEN" });
   }
   if (["CANCELLED", "REJECTED"].includes(order.status)) throw httpError("This order is closed.", 409, { code: "POS_ORDER_CLOSED" });

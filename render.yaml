@@ -23,6 +23,8 @@ services:
         sync: false
       - key: REFRESH_TOKEN_SECRET
         sync: false
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

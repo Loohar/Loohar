@@ -32,4 +32,4 @@ END $$;
 -- clear it so affected users re-enroll through the verified flow.
 UPDATE "User"
 SET "mfaEnabled" = false, "mfaSecret" = NULL, "mfaSetupStatus" = 'NOT_CONFIGURED', "mfaVerifiedAt" = NULL
-WHERE "mfaSecret" IS NOT NULL AND "mfaSecret" NOT LIKE 'v1.%';
+WHERE ("mfaSecret" IS NOT NULL AND "mfaSecret" NOT LIKE 'v1.%') OR ("mfaEnabled" = true AND "mfaSecret" IS NULL);

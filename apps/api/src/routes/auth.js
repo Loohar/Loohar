@@ -45,7 +45,8 @@ const accountLoginLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `login:${normalizeEmail(req.body?.email || "")}`,
+  // Keyed by account and client so a stranger cannot lock the real owner out by guessing from elsewhere.
+  keyGenerator: (req) => `login:${normalizeEmail(req.body?.email || "")}:${req.ip}`,
   skipSuccessfulRequests: true
 });
 // Compared against when the email is unknown so response time does not reveal which accounts exist.
@@ -367,7 +368,7 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
     if (!demoUserAvailable(user)) return res.status(404).json({ error: "Seeded development account is unavailable." });
     // Demo login never hands out a password-less session for an MFA-protected role outside local
     // development: such a session could otherwise enroll an attacker's authenticator.
-    if (process.env.NODE_ENV === "production" && roleRequiresMfa(user.role)) {
+    if (!["development", "test"].includes(process.env.NODE_ENV || "") && roleRequiresMfa(user.role)) {
       return res.status(403).json({ error: "Demo login is not available for privileged roles.", code: "AUTH_DEMO_ROLE_FORBIDDEN" });
     }
     if (user.mfaEnabled) return res.json(await mfaChallengeResponse(user, "login.demo.mfa_challenge"));
@@ -385,6 +386,7 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
 
 router.post("/change-password", passwordLimiter, requireAuthForAccountSetup, async (req, res, next) => {
   try {
+    if (rejectImpersonatedAccountSetup(req, res)) return;
     // Outside a required change of a temporary password, prove knowledge of the current password
     // so a stolen access token cannot be turned into a permanent account takeover.
     if (!req.user.passwordChangeRequired) {
@@ -648,8 +650,15 @@ router.get("/mfa/status", requireAuthForAccountSetup, async (req, res, next) => 
   }
 });
 
+function rejectImpersonatedAccountSetup(req, res) {
+  if (!req.user.impersonatedByUserId) return false;
+  authError(res, 403, "AUTH_IMPERSONATION_ACCOUNT_SETUP_FORBIDDEN", "Account security settings cannot be changed while impersonating.");
+  return true;
+}
+
 router.post("/mfa/enroll/start", mfaLimiter, requireAuthForAccountSetup, async (req, res, next) => {
   try {
+    if (rejectImpersonatedAccountSetup(req, res)) return;
     const enrollment = await startMfaEnrollment({ userId: req.user.id });
     await recordAudit({ action: "mfa.enrollment.started", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
     res.json({ enrollment });
@@ -660,6 +669,14 @@ router.post("/mfa/enroll/start", mfaLimiter, requireAuthForAccountSetup, async (
 
 router.post("/mfa/enroll/confirm", mfaLimiter, requireAuthForAccountSetup, async (req, res, next) => {
   try {
+    if (rejectImpersonatedAccountSetup(req, res)) return;
+    // Binding an authenticator is a takeover-sensitive change: prove the password again, so a stolen
+    // access token or a reset-link session alone cannot attach an attacker's authenticator.
+    const current = await prisma.user.findUnique({ where: { id: req.user.id }, select: { passwordHash: true } });
+    if (!current?.passwordHash || !(await bcrypt.compare(String(req.body?.currentPassword || ""), current.passwordHash))) {
+      await recordAudit({ action: "mfa.enrollment.password_failed", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+      return authError(res, 401, "AUTH_CURRENT_PASSWORD_INVALID", "Current password is incorrect");
+    }
     const { recoveryCodes } = await confirmMfaEnrollment({ userId: req.user.id, code: req.body?.code });
     await recordAudit({ action: "mfa.enabled", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
     const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: authUserSelect() });

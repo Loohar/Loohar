@@ -1725,7 +1725,7 @@ function navigateInApp(to, { replace = false } = {}) {
 }
 
 function requiresPasswordChange(user) {
-  return Boolean(user?.forcePasswordChange || user?.temporaryPassword);
+  return Boolean(user?.passwordChangeRequired || user?.forcePasswordChange || user?.temporaryPassword);
 }
 
 function passwordIssues(value) {
@@ -6902,6 +6902,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const [session, setSession] = useState(null);
   const [mfaToken, setMfaToken] = useState("");
   const [mfaCode, setMfaCode] = useState("");
+  const [mfaPassword, setMfaPassword] = useState("");
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [mfaEnrollment, setMfaEnrollment] = useState(null);
   const [recoveryCodes, setRecoveryCodes] = useState([]);
@@ -7048,14 +7049,16 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
     event.preventDefault();
     setError("");
     if (!/^\d{6}$/.test(mfaCode.trim())) return setError("Enter the 6-digit code from your authenticator app.");
+    if (!mfaPassword) return setError("Enter your current password to confirm.");
     setLoading(true);
     try {
-      const payload = await api("/api/auth/mfa/enroll/confirm", { method: "POST", token: session?.accessToken, body: { code: mfaCode.trim() }, authRetry: false, clearOnUnauthorized: false });
+      const payload = await api("/api/auth/mfa/enroll/confirm", { method: "POST", token: session?.accessToken, body: { code: mfaCode.trim(), currentPassword: mfaPassword }, authRetry: false, clearOnUnauthorized: false });
       const verifiedSession = await verifyAuthenticatedSession(payload);
       setSession(verifiedSession);
       setRecoveryCodes(payload.recoveryCodes || []);
       setMfaEnrollment(null);
       setMfaCode("");
+      setMfaPassword("");
       setStep("mfa-recovery");
     } catch (enrollError) {
       setError(enrollError.message);
@@ -7281,6 +7284,10 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
                 <label className="text-sm font-semibold text-slate-600">
                   3. Enter the 6-digit code it shows
                   <input className="input mt-1" name="one-time-code" autoComplete="one-time-code" inputMode="numeric" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value)} />
+                </label>
+                <label className="text-sm font-semibold text-slate-600">
+                  4. Confirm with your current password
+                  <input className="input mt-1" type="password" autoComplete="current-password" value={mfaPassword} onChange={(event) => setMfaPassword(event.target.value)} />
                 </label>
                 <button className="button-primary justify-center" type="submit" disabled={loading}>{loading ? "Verifying" : "Turn on two-step verification"}</button>
               </form>
@@ -8500,6 +8507,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const [now, setNow] = useState(() => new Date());
   const [cashierPin, setCashierPin] = useState("");
   const [newCashierPin, setNewCashierPin] = useState("");
+  const [currentCashierPin, setCurrentCashierPin] = useState("");
   const [pinError, setPinError] = useState("");
   const [pinLockedUntil, setPinLockedUntil] = useState(null);
   const [openOrders, setOpenOrders] = useState([]);
@@ -9745,9 +9753,10 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     setSaving("pin-save");
     setPinError("");
     try {
-      const payload = await posApi("/pin", { method: "PATCH", body: { pin: newCashierPin } });
+      const payload = await posApi("/pin", { method: "PATCH", body: { pin: newCashierPin, ...(config?.pinStatus?.configured ? { currentPin: currentCashierPin } : {}) } });
       setConfig((current) => current ? { ...current, pinStatus: payload.pinStatus } : current);
       setNewCashierPin("");
+      setCurrentCashierPin("");
       setNotice("Cashier PIN saved securely.");
       dispatchWorkflow({ type: POS_EVENT.BOOTSTRAP_READY, payload: { hasDevice: Boolean(activeDevice?.id), pinConfigured: true } });
     } catch (posError) {
@@ -10308,6 +10317,8 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           pinConfigured={Boolean(config?.pinStatus?.configured)}
           pinValue={newCashierPin}
           setPinValue={setNewCashierPin}
+          currentPinValue={currentCashierPin}
+          setCurrentPinValue={setCurrentCashierPin}
           onSavePin={saveCashierPin}
           onRegister={registerDevice}
           onKiosk={() => activeDevice?.kioskModeEnabled ? setShowKioskExit(true) : setKiosk(true)}
