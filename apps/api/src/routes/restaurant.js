@@ -1907,19 +1907,21 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
     const restaurantId = restaurantIdFor(req);
     const order = await prisma.order.findUnique({ where: { id_restaurantId: { id: req.params.orderId, restaurantId } }, include: { customer: true, restaurant: true } });
     if (!order) return res.status(404).json({ error: "Order not found" });
+    const assignedDriver = await prisma.driver.findFirst({ where: { id: String(req.body.driverId || ""), restaurantId }, select: { id: true } });
+    if (!assignedDriver) return res.status(404).json({ error: "Driver not found for this restaurant", code: "DRIVER_NOT_FOUND" });
     const delivery = await prisma.delivery.upsert({
       where: { orderId: order.id },
       create: {
         restaurantId,
         orderId: order.id,
-        driverId: req.body.driverId,
+        driverId: assignedDriver.id,
         tipCents: order.driverTipCents ?? order.tipCents,
         baseEarningsCents: req.body.baseEarningsCents || 500,
         pickupAddress: req.body.pickupAddress || order.restaurant.address || "Restaurant pickup",
         dropoffAddress: order.deliveryAddress || req.body.dropoffAddress || "Customer dropoff",
         statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } }
       },
-      update: { driverId: req.body.driverId, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } } },
+      update: { driverId: assignedDriver.id, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } } },
       include: { driver: { include: { user: true } }, order: true }
     });
     await Promise.allSettled([notifyDriverAssignment({ delivery })]);
