@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "../../config/prisma.js";
 import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
-import { buildReceiptPayload, createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
+import { buildReceiptPayload, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
 import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
@@ -508,28 +508,22 @@ function checkoutResponse({ order, payment, trackingToken, idempotentReplay }) {
     payment,
     publishableKey: stripeConnectPublishableKey(),
     clientSecret: payment.providerClientSecret || null,
-    tracking: { token: trackingToken, ...customerTrackingUrls(order, trackingToken) },
+    tracking: trackingToken ? { token: trackingToken, ...customerTrackingUrls(order, trackingToken) } : null,
     checkout: { idempotentReplay }
   };
 }
 
 async function replayCheckout({ existing, keyHash, requestHash }) {
   if (existing.checkoutRequestHash !== requestHash) throw checkoutKeyReusedError();
-  let order = await prisma.order.findUnique({ where: { id: existing.orderId }, include: orderInclude() });
+  const order = await prisma.order.findUnique({ where: { id: existing.orderId }, include: orderInclude() });
   // A declined card leaves the PaymentIntent reusable; only an attempt that never got one is terminal.
   const initializationFailed = existing.status === "FAILED" && !existing.providerPaymentIntentId;
   if (!order || initializationFailed || order.status === "CANCELLED") throw checkoutAttemptFailedError();
 
-  let trackingToken = checkoutTrackingToken({ keyHash });
-  if (order.trackingTokenHash !== hashToken(trackingToken)) {
-    // The derivation secret changed since the original request; issue a fresh token.
-    trackingToken = createTrackingToken();
-    order = await prisma.order.update({
-      where: { id: order.id },
-      data: { trackingTokenHash: hashToken(trackingToken), trackingTokenExpiresAt: trackingExpiresAt() },
-      include: orderInclude()
-    });
-  }
+  // The derived token no longer matches if staff reissued tracking (receipt QR) or the secret
+  // changed. Never rotate here: that would silently break the token already in use.
+  const derivedToken = checkoutTrackingToken({ keyHash });
+  const trackingToken = order.trackingTokenHash === hashToken(derivedToken) ? derivedToken : null;
 
   let payment = existing;
   if (!payment.providerPaymentIntentId) {
@@ -694,27 +688,29 @@ export async function createOrderPayment({ body, idempotencyKey }) {
   } catch (error) {
     // A replay of this checkout is already talking to Stripe under the same key; leave state intact.
     if (isStripeIdempotencyInProgress(error)) throw checkoutInProgressError();
-    await prisma.$transaction([
-      prisma.restaurantOrderPayment.update({
-        where: { id: created.payment.id },
+    // Cancel only if no concurrent replay attached a PaymentIntent in the meantime.
+    await prisma.$transaction(async (tx) => {
+      const released = await tx.restaurantOrderPayment.updateMany({
+        where: { id: created.payment.id, providerPaymentIntentId: null },
         data: { status: "FAILED", failureReason: error.message || "Payment intent could not be initialized" }
-      }),
-      prisma.order.update({
+      });
+      if (released.count === 0) return;
+      await tx.order.update({
         where: { id: created.order.id },
         data: { status: "CANCELLED", statusHistory: { create: { status: "CANCELLED", note: "Payment intent could not be initialized" } } }
-      })
-    ]);
+      });
+    });
     throw error;
   }
 }
 
-async function issueLoyaltyPoints(order) {
-  const existing = await prisma.loyaltyPoint.findFirst({ where: { orderId: order.id, reason: "Order reward" } });
+async function issueLoyaltyPoints(order, client = prisma) {
+  const existing = await client.loyaltyPoint.findFirst({ where: { orderId: order.id, reason: "Order reward" } });
   if (existing) return existing;
   const settings = order.restaurant.loyaltySettingsJson || { pointsPerDollar: 1 };
   const points = Math.floor((order.subtotalCents / 100) * Number(settings.pointsPerDollar || 1));
   if (points <= 0) return null;
-  return prisma.loyaltyPoint.create({
+  return client.loyaltyPoint.create({
     data: {
       restaurantId: order.restaurantId,
       customerId: order.customerId,
@@ -725,44 +721,59 @@ async function issueLoyaltyPoints(order) {
   });
 }
 
+// Late or repeated payment events must not re-run paid side effects or downgrade a settled payment.
+const ORDER_PAYMENT_SETTLED_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED", "REFUNDED"]);
+
 export async function markOrderPaymentPaid({ payment, providerChargeId }) {
-  const updatedPayment = await prisma.restaurantOrderPayment.update({
-    where: { id: payment.id },
-    data: {
-      status: "PAID",
-      providerChargeId: providerChargeId || payment.providerChargeId,
-      paidAt: new Date(),
-      failureReason: null
-    },
-    include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
-  });
-  const order = await prisma.order.update({
-    where: { id: updatedPayment.orderId },
-    data: {
-      status: "ACCEPTED",
-      statusHistory: { create: { status: "ACCEPTED", note: "Restaurant order payment succeeded" } }
-    },
-    include: { restaurant: true, customer: true, items: true, statusHistory: true }
-  });
-  await issueLoyaltyPoints(order);
-  if (order.couponCode) {
-    await prisma.coupon.updateMany({
-      where: { restaurantId: order.restaurantId, code: order.couponCode },
-      data: { redeemedCount: { increment: 1 } }
+  // Claiming settlement with a conditional update inside one transaction means concurrent
+  // deliveries apply side effects once, and a failure never leaves PAID on an unaccepted order.
+  const settled = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.restaurantOrderPayment.updateMany({
+      where: { id: payment.id, status: { notIn: [...ORDER_PAYMENT_SETTLED_STATUSES] } },
+      data: {
+        status: "PAID",
+        providerChargeId: providerChargeId || payment.providerChargeId,
+        paidAt: new Date(),
+        failureReason: null
+      }
     });
-  }
+    if (claimed.count === 0) return null;
+    const order = await tx.order.update({
+      where: { id: payment.orderId },
+      data: {
+        status: "ACCEPTED",
+        statusHistory: { create: { status: "ACCEPTED", note: "Restaurant order payment succeeded" } }
+      },
+      include: { restaurant: true, customer: true, items: true, statusHistory: true }
+    });
+    await issueLoyaltyPoints(order, tx);
+    if (order.couponCode) {
+      await tx.coupon.updateMany({
+        where: { restaurantId: order.restaurantId, code: order.couponCode },
+        data: { redeemedCount: { increment: 1 } }
+      });
+    }
+    const updatedPayment = await tx.restaurantOrderPayment.findUnique({
+      where: { id: payment.id },
+      include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
+    });
+    return { payment: updatedPayment, order };
+  });
+  if (!settled) return { ignored: true, reason: "payment_already_settled" };
+  const { payment: updatedPayment, order } = settled;
   await Promise.allSettled([notifyOrderConfirmation({ order }), notifyNewOrderAlert({ order })]);
   emitOrderUpdate(order);
   await recordAudit({ restaurantId: order.restaurantId, action: "order_payment.paid", entityType: "RestaurantOrderPayment", entityId: updatedPayment.id, metadata: { providerPaymentIntentId: updatedPayment.providerPaymentIntentId } });
-  return { payment: updatedPayment, order };
+  return settled;
 }
 
 export async function markOrderPaymentFailed({ payment, failureReason }) {
-  const updatedPayment = await prisma.restaurantOrderPayment.update({
-    where: { id: payment.id },
-    data: { status: "FAILED", failureReason: failureReason || "Payment failed" },
-    include: { order: true }
+  const claimed = await prisma.restaurantOrderPayment.updateMany({
+    where: { id: payment.id, status: { notIn: [...ORDER_PAYMENT_SETTLED_STATUSES] } },
+    data: { status: "FAILED", failureReason: failureReason || "Payment failed" }
   });
+  const updatedPayment = await prisma.restaurantOrderPayment.findUnique({ where: { id: payment.id }, include: { order: true } });
+  if (claimed.count === 0) return updatedPayment;
   await recordAudit({ restaurantId: updatedPayment.order.restaurantId, action: "order_payment.failed", entityType: "RestaurantOrderPayment", entityId: updatedPayment.id, metadata: { failureReason: updatedPayment.failureReason } });
   return updatedPayment;
 }
@@ -887,9 +898,6 @@ export async function handleStripeConnectWebhook(payload = {}) {
   };
   return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }));
 }
-
-// Late or repeated payment events must not re-run paid side effects or downgrade a settled payment.
-const ORDER_PAYMENT_SETTLED_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED", "REFUNDED"]);
 
 async function applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }) {
   if (accountLifecycleEvent) {

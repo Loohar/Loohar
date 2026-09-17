@@ -44,7 +44,7 @@ const publicPaymentSection = sectionBetween(orderPaymentService, "export functio
 const customerStatusSection = sectionBetween(customerRoutes, "export async function getOrderStatus", 'router.get("/orders/:orderId/status"');
 
 assertCheck(orderWorkflow.includes("createTrackingToken") && orderWorkflow.includes("hashToken") && orderWorkflow.includes("trackingTokenHash"), "Tracking tokens are server-generated and hash-stored");
-assertCheck(orderPaymentService.includes("trackingTokenHash: hashToken(initialTrackingToken)") && orderPaymentService.includes("tracking: { token: trackingToken, ...customerTrackingUrls(order, trackingToken) }") && orderPaymentService.includes("trackingToken: initialTrackingToken"), "Checkout creation stores a hashed token and returns the one-time customer token");
+assertCheck(orderPaymentService.includes("trackingTokenHash: hashToken(initialTrackingToken)") && orderPaymentService.includes("tracking: trackingToken ? { token: trackingToken, ...customerTrackingUrls(order, trackingToken) } : null") && orderPaymentService.includes("trackingToken: initialTrackingToken"), "Checkout creation stores a hashed token and returns the one-time customer token");
 assertCheck(orderPaymentService.includes("providerClientSecret: intent.client_secret || null") && orderPaymentService.includes("clientSecret: payment.providerClientSecret || null"), "Checkout creation still returns the Stripe one-time client secret");
 
 assertCheck(orderPaymentRoutes.includes("publicStatusForOrder") && orderPaymentRoutes.includes("publicReceiptForOrder"), "Public order-payment routes use token-gated public handlers");

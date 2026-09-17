@@ -80,7 +80,7 @@ mock.module(new URL("../apps/api/src/modules/orderPayments/quoteService.js", imp
 
 const { prisma } = await import("../apps/api/src/config/prisma.js");
 const { createOrderPayment } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
-const { hashToken } = await import("../apps/api/src/services/orderWorkflowService.js");
+const { hashToken, issueOrderTrackingToken } = await import("../apps/api/src/services/orderWorkflowService.js");
 
 const runId = `l03${Date.now().toString(36)}`;
 async function seedRestaurant(label) {
@@ -133,6 +133,17 @@ test("sequential retry replays the original order, PaymentIntent, and tracking t
   const stored = await prisma.order.findUnique({ where: { id: first.order.id } });
   assert.equal(stored.trackingTokenHash, hashToken(first.tracking.token));
   assert.equal(await ordersFor(restaurantA), 1);
+});
+
+test("replay after staff reissued tracking keeps the reissued token valid", async () => {
+  const body = bodyFor(restaurantA, { notes: "reissue" });
+  const first = await createOrderPayment({ body, idempotencyKey: keyFor("reissue") });
+  const { trackingToken: reissued } = await issueOrderTrackingToken(first.order.id);
+  const replay = await createOrderPayment({ body, idempotencyKey: keyFor("reissue") });
+  assert.equal(replay.order.id, first.order.id);
+  assert.equal(replay.tracking, null);
+  const stored = await prisma.order.findUnique({ where: { id: first.order.id } });
+  assert.equal(stored.trackingTokenHash, hashToken(reissued));
 });
 
 test("ten concurrent submissions with one key create exactly one order and one PaymentIntent", async () => {
