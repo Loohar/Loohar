@@ -301,3 +301,37 @@ test("Stripe Connect refunds still update payment state", async () => {
   assert.equal(result.status, 200);
   assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: seeded.connectPayment.id } })).status, "PARTIALLY_REFUNDED");
 });
+
+// Stripe API 2025-03-31.basil and later (the staging destination uses 2026-06-24.dahlia) moved
+// current_period_start/current_period_end from the Subscription onto its items.
+test("legacy subscription events apply item-level billing periods (basil/dahlia payload shape)", async () => {
+  const plan = await prisma.subscriptionPlan.upsert({
+    where: { code: "STARTER" },
+    create: { code: "STARTER", name: "Starter", monthlyPriceCents: 0 },
+    update: {}
+  });
+  const tenantSubscription = await prisma.tenantSubscription.create({
+    data: { restaurantId: seeded.restaurant.id, planId: plan.id, stripeCustomerId: `cus_${runId}`, stripeSubscriptionId: `sub_${runId}_legacy` }
+  });
+  const periodStart = 1790000000;
+  const periodEnd = 1792592000;
+  const result = await legacy({
+    id: eventId("subscription-dahlia"),
+    type: "customer.subscription.updated",
+    api_version: "2026-06-24.dahlia",
+    data: {
+      object: {
+        id: tenantSubscription.stripeSubscriptionId,
+        object: "subscription",
+        customer: `cus_${runId}`,
+        status: "active",
+        items: { object: "list", data: [{ id: `si_${runId}`, object: "subscription_item", current_period_start: periodStart, current_period_end: periodEnd }] }
+      }
+    }
+  });
+  assert.equal(result.status, 200);
+  const updated = await prisma.tenantSubscription.findUnique({ where: { id: tenantSubscription.id } });
+  assert.equal(updated.currentPeriodStart.toISOString(), new Date(periodStart * 1000).toISOString());
+  assert.equal(updated.currentPeriodEnd?.toISOString(), new Date(periodEnd * 1000).toISOString());
+  assert.equal(updated.renewalDate?.toISOString(), new Date(periodEnd * 1000).toISOString());
+});

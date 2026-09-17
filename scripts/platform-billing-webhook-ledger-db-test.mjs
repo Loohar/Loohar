@@ -100,6 +100,20 @@ test("a redelivered event is acknowledged without being re-applied", async () =>
   assert.equal(await prisma.platformBillingEvent.count({ where: { providerEventId: event.id } }), 1);
 });
 
+test("subscription events apply item-level billing periods (basil/dahlia payload shape)", async () => {
+  const periodStart = 1790000000;
+  const periodEnd = 1792592000;
+  const event = subscriptionEvent("dahlia-period", "active");
+  event.api_version = "2026-06-24.dahlia";
+  event.data.object.items = { object: "list", data: [{ id: `si_${runId}`, object: "subscription_item", current_period_start: periodStart, current_period_end: periodEnd }] };
+  const result = await deliver(event);
+  assert.equal(result.status, 200);
+  const updated = await prisma.platformSubscription.findUnique({ where: { id: subscription.id } });
+  assert.equal(updated.currentPeriodStart?.toISOString(), new Date(periodStart * 1000).toISOString());
+  assert.equal(updated.currentPeriodEnd?.toISOString(), new Date(periodEnd * 1000).toISOString());
+  await prisma.platformSubscription.update({ where: { id: subscription.id }, data: { status: "PAST_DUE" } });
+});
+
 test("platform webhook still fails closed without its secret", async () => {
   delete process.env.STRIPE_PLATFORM_WEBHOOK_SECRET;
   try {

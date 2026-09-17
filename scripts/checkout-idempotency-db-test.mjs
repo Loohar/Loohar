@@ -130,6 +130,8 @@ test("sequential retry replays the original order, PaymentIntent, and tracking t
   assert.equal(second.payment.providerPaymentIntentId, first.payment.providerPaymentIntentId);
   assert.equal(second.clientSecret, first.clientSecret);
   assert.equal(second.tracking.token, first.tracking.token);
+  assert.equal(first.stripeAccountId, `acct_test_${runId}_a`, "checkout returns the connected account Stripe.js must use");
+  assert.equal(second.stripeAccountId, first.stripeAccountId, "replay returns the same connected account");
   const stored = await prisma.order.findUnique({ where: { id: first.order.id } });
   assert.equal(stored.trackingTokenHash, hashToken(first.tracking.token));
   assert.equal(await ordersFor(restaurantA), 1);

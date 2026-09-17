@@ -24,6 +24,15 @@ function canReadCustomerOrderStatus(user, order) {
   return false;
 }
 
+// Storefront customers need each item's modifier groups (the server rejects orders missing required
+// selections) but never the tenant's billing, lifecycle or internal configuration fields.
+const STOREFRONT_OPTION_GROUPS = { include: { options: { orderBy: { sortOrder: "asc" } } }, orderBy: { sortOrder: "asc" } };
+const STOREFRONT_RESTAURANT_FIELDS = ["id", "name", "businessName", "businessType", "slug", "status", "description", "brandingJson", "logoUrl", "phone", "email", "address", "city", "state", "zip", "timezone", "deliveryEnabled", "pickupEnabled", "deliveryFeeCents", "storeHoursJson", "categories"];
+
+function publicStorefrontRestaurant(restaurant) {
+  return Object.fromEntries(STOREFRONT_RESTAURANT_FIELDS.filter((field) => field in restaurant).map((field) => [field, restaurant[field]]));
+}
+
 router.get("/restaurants/:slug", async (req, res, next) => {
   try {
     const restaurant = await prisma.restaurant.findUnique({
@@ -31,7 +40,7 @@ router.get("/restaurants/:slug", async (req, res, next) => {
       include: {
         categories: {
           where: { active: true },
-          include: { items: { where: { available: true }, include: { options: true } } },
+          include: { items: { where: { available: true }, include: { options: true, optionGroups: STOREFRONT_OPTION_GROUPS } } },
           orderBy: { sortOrder: "asc" }
         }
       }
@@ -42,7 +51,7 @@ router.get("/restaurants/:slug", async (req, res, next) => {
     const moduleNotice = orderingEnabled
       ? null
       : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, moduleNotice });
+    res.json({ restaurant: publicStorefrontRestaurant(orderingEnabled ? restaurant : { ...restaurant, categories: [] }), orderingEnabled, moduleNotice });
   } catch (error) {
     next(error);
   }
@@ -55,7 +64,7 @@ router.get("/sites/:slug", async (req, res, next) => {
       include: {
         categories: {
           where: { active: true },
-          include: { items: { where: { available: true }, include: { options: true } } },
+          include: { items: { where: { available: true }, include: { options: true, optionGroups: STOREFRONT_OPTION_GROUPS } } },
           orderBy: { sortOrder: "asc" }
         }
       }
@@ -66,7 +75,7 @@ router.get("/sites/:slug", async (req, res, next) => {
     const moduleNotice = orderingEnabled
       ? null
       : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: orderingEnabled ? restaurant : { ...restaurant, categories: [] }, orderingEnabled, moduleNotice });
+    res.json({ restaurant: publicStorefrontRestaurant(orderingEnabled ? restaurant : { ...restaurant, categories: [] }), orderingEnabled, moduleNotice });
   } catch (error) {
     next(error);
   }

@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
+import { stripeSubscriptionPeriod } from "../../utils/stripeSubscriptionPeriod.js";
 import { recordAudit } from "../../services/auditService.js";
 import { sendAccountSetupEmail } from "../../services/accountAccessService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
@@ -1054,14 +1055,16 @@ async function applyStripePlatformEvent({ eventType, object }) {
   if (eventType?.startsWith("customer.subscription.")) {
     const stripeSubscriptionId = object.id;
     const existing = await prisma.platformSubscription.findFirst({ where: { stripeSubscriptionId } });
+    const period = stripeSubscriptionPeriod(object);
     if (existing) {
       subscription = await prisma.platformSubscription.update({
         where: { id: existing.id },
         data: {
           status: statusFromStripe(object.status),
           stripeCustomerId: typeof object.customer === "string" ? object.customer : existing.stripeCustomerId,
-          currentPeriodStart: dateFromUnix(object.current_period_start),
-          currentPeriodEnd: dateFromUnix(object.current_period_end),
+          // Only overwrite stored periods when the event actually carries them (item-level on current API versions).
+          ...(period.currentPeriodStart ? { currentPeriodStart: dateFromUnix(period.currentPeriodStart) } : {}),
+          ...(period.currentPeriodEnd ? { currentPeriodEnd: dateFromUnix(period.currentPeriodEnd) } : {}),
           trialEndsAt: dateFromUnix(object.trial_end),
           cancelAtPeriodEnd: Boolean(object.cancel_at_period_end),
           canceledAt: dateFromUnix(object.canceled_at)

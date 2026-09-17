@@ -505,11 +505,14 @@ async function attachPaymentIntent({ order, payment, merchant }) {
   });
 }
 
-function checkoutResponse({ order, payment, trackingToken, idempotentReplay }) {
+function checkoutResponse({ order, payment, trackingToken, idempotentReplay, stripeAccountId }) {
   return {
     order,
     payment,
     publishableKey: stripeConnectPublishableKey(),
+    // Direct charges live on the restaurant's connected account; Stripe.js must be initialised with it
+    // to confirm the PaymentIntent. The account id is an identifier, not a credential.
+    stripeAccountId: stripeAccountId || null,
     clientSecret: payment.providerClientSecret || null,
     tracking: trackingToken ? { token: trackingToken, ...customerTrackingUrls(order, trackingToken) } : null,
     checkout: { idempotentReplay }
@@ -539,7 +542,11 @@ async function replayCheckout({ existing, keyHash, requestHash }) {
       throw error;
     }
   }
-  return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true });
+  const replayMerchant = await prisma.restaurantMerchantAccount.findUnique({
+    where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } },
+    select: { stripeAccountId: true }
+  });
+  return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true, stripeAccountId: replayMerchant?.stripeAccountId });
 }
 
 export async function createOrderPayment({ body, idempotencyKey }) {
@@ -688,7 +695,7 @@ export async function createOrderPayment({ body, idempotencyKey }) {
 
   try {
     const payment = await attachPaymentIntent({ order: created.order, payment: created.payment, merchant });
-    return checkoutResponse({ order: created.order, payment, trackingToken: initialTrackingToken, idempotentReplay: false });
+    return checkoutResponse({ order: created.order, payment, trackingToken: initialTrackingToken, idempotentReplay: false, stripeAccountId: merchant.stripeAccountId });
   } catch (error) {
     // A replay of this checkout is already talking to Stripe under the same key; leave state intact.
     if (isStripeIdempotencyInProgress(error)) throw checkoutInProgressError();

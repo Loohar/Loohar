@@ -14091,6 +14091,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [quoteError, setQuoteError] = useState("");
   const [paymentClientSecret, setPaymentClientSecret] = useState("");
   const [paymentPublicKey, setPaymentPublicKey] = useState("");
+  const [paymentStripeAccount, setPaymentStripeAccount] = useState("");
   const [paymentElementReady, setPaymentElementReady] = useState(false);
   const [paying, setPaying] = useState(false);
   const stripeRef = useRef(null);
@@ -14260,11 +14261,11 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       stripeRef.current = null;
       stripeElementsRef.current = null;
       if (stripeElementMountRef.current) stripeElementMountRef.current.innerHTML = "";
-      if (!paymentClientSecret || !paymentPublicKey) return;
+      if (!paymentClientSecret || !paymentPublicKey || !paymentStripeAccount) return;
       try {
         const Stripe = await loadStripeJs();
         if (cancelled || !Stripe || !stripeElementMountRef.current) return;
-        const stripe = Stripe(paymentPublicKey);
+        const stripe = Stripe(paymentPublicKey, { stripeAccount: paymentStripeAccount });
         const elements = stripe.elements({ clientSecret: paymentClientSecret });
         const paymentElement = elements.create("payment", { layout: "tabs" });
         paymentElement.mount(stripeElementMountRef.current);
@@ -14280,7 +14281,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       cancelled = true;
       if (stripeElementMountRef.current) stripeElementMountRef.current.innerHTML = "";
     };
-  }, [paymentClientSecret, paymentPublicKey]);
+  }, [paymentClientSecret, paymentPublicKey, paymentStripeAccount]);
 
   function addItem(item) {
     if ((item.optionGroups || []).length > 0) {
@@ -14384,6 +14385,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setOrderStatus({ ...payload.order, tracking: payload.tracking });
       setPaymentStatus(payload.payment);
       setPaymentPublicKey(payload.publishableKey || "");
+      setPaymentStripeAccount(payload.stripeAccountId || "");
       setPaymentClientSecret(payload.clientSecret || "");
       await loadHistory();
     } catch (orderError) {

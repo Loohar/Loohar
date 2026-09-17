@@ -1,3 +1,4 @@
+import { stripeSubscriptionPeriod } from "../utils/stripeSubscriptionPeriod.js";
 import { publicUrlForRestaurant } from "./domainService.js";
 
 export function calculateTechnologyFee(amountCents, technologyFeeBps = 50) {
@@ -98,6 +99,7 @@ export async function createCheckoutSession({ order, technologyFeeBps = 50 }) {
 export function normalizeStripeEvent(payload = {}) {
   const eventType = payload.type || payload.eventType;
   const object = payload.data?.object || payload.object || {};
+  const period = stripeSubscriptionPeriod(object);
   return {
     eventType,
     providerPaymentId: object.id || payload.providerPaymentId,
@@ -106,8 +108,8 @@ export function normalizeStripeEvent(payload = {}) {
     stripeSubscriptionId: eventType?.startsWith("customer.subscription.") ? object.id : payload.stripeSubscriptionId,
     orderId: object.metadata?.orderId || payload.orderId,
     restaurantId: object.metadata?.restaurantId || payload.restaurantId,
-    currentPeriodStart: object.current_period_start || payload.currentPeriodStart,
-    currentPeriodEnd: object.current_period_end || payload.currentPeriodEnd,
+    currentPeriodStart: period.currentPeriodStart || payload.currentPeriodStart,
+    currentPeriodEnd: period.currentPeriodEnd || payload.currentPeriodEnd,
     failureReason: object.last_payment_error?.message || payload.failureReason
   };
 }
