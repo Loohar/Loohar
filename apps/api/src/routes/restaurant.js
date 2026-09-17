@@ -24,6 +24,7 @@ import { emitDeliveryUpdate, emitKitchenUpdate, emitOrderUpdate } from "../servi
 import { deleteImageFromSupabaseStorage } from "../services/uploadService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
 import { domainInfoForRestaurant, domainUpdateDataForRestaurant } from "../services/domainService.js";
+import { normalizeMerchantPaymentReadiness } from "../modules/orderPayments/merchantReadiness.js";
 import {
   buildCustomerDetail,
   buildCustomerInsights,
@@ -627,15 +628,15 @@ function publicRestaurantShape(restaurant) {
 function onboardingReadiness(restaurant) {
   const website = restaurant.websiteSettings || {};
   const domain = restaurant.domains?.[0] || {};
-  const settings = asObject(restaurant.settingsJson);
   const categories = restaurant.categories || [];
   const activeCategories = categories.filter((category) => category.active !== false);
   const availableItems = activeCategories.flatMap((category) => category.items || []).filter((item) => item.available !== false);
   const activeZones = (restaurant.deliveryZones || []).filter((zone) => zone.active !== false);
   const hours = website.storeHoursJson || restaurant.storeHoursJson;
   const hasDeliveryCoverage = !restaurant.deliveryEnabled || activeZones.length > 0 || Number(restaurant.deliveryRadiusMiles || 0) > 0 || Boolean(restaurant.deliveryZoneJson);
-  const payment = asObject(settings.paymentSetup || settings.payments);
-  const paymentReady = Boolean(payment.stripeConnectAccountId || payment.providerAccountId || payment.status === "CONNECTED" || payment.connected === true);
+  const merchantAccount = (restaurant.merchantAccounts || []).find((account) => account.provider === "STRIPE_CONNECT") || null;
+  const paymentReadiness = normalizeMerchantPaymentReadiness(merchantAccount);
+  const paymentReady = paymentReadiness.ready;
   const activeLocations = (restaurant.locations || []).filter((location) => location.active !== false);
   const taxReady = activeLocations.length > 0 && activeLocations.every((location) =>
     (location.taxProfiles || []).some((profile) => isActiveTaxProfile(profile))
@@ -682,6 +683,7 @@ function onboardingReadiness(restaurant) {
     taxStatus: taxReady ? "ACTIVE" : activeLocations[0]?.taxStatus || "UNCONFIGURED",
     paymentReady,
     paymentStatus: paymentReady ? "CONNECTED" : "NOT_CONNECTED",
+    paymentReadiness,
     completionPercentage: Math.round((completedCount / Object.keys(sections).length) * 100),
     counts: {
       activeCategories: activeCategories.length,
@@ -707,6 +709,7 @@ async function ensureOnboardingRestaurant(req) {
       categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
       deliveryZones: { orderBy: { createdAt: "asc" } },
       locations: { where: { active: true }, include: { taxProfiles: { orderBy: { effectiveAt: "desc" } } } },
+      merchantAccounts: { where: { provider: "STRIPE_CONNECT" }, take: 1 },
       users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
     }
   });
@@ -722,6 +725,7 @@ async function ensureOnboardingRestaurant(req) {
       categories: { orderBy: { sortOrder: "asc" }, include: { items: { orderBy: { name: "asc" } } } },
       deliveryZones: { orderBy: { createdAt: "asc" } },
       locations: { where: { active: true }, include: { taxProfiles: { orderBy: { effectiveAt: "desc" } } } },
+      merchantAccounts: { where: { provider: "STRIPE_CONNECT" }, take: 1 },
       users: { select: { id: true, email: true, name: true, phone: true, role: true, status: true } }
     }
   });
@@ -1903,19 +1907,21 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
     const restaurantId = restaurantIdFor(req);
     const order = await prisma.order.findUnique({ where: { id_restaurantId: { id: req.params.orderId, restaurantId } }, include: { customer: true, restaurant: true } });
     if (!order) return res.status(404).json({ error: "Order not found" });
+    const assignedDriver = await prisma.driver.findFirst({ where: { id: String(req.body.driverId || ""), restaurantId }, select: { id: true } });
+    if (!assignedDriver) return res.status(404).json({ error: "Driver not found for this restaurant", code: "DRIVER_NOT_FOUND" });
     const delivery = await prisma.delivery.upsert({
       where: { orderId: order.id },
       create: {
         restaurantId,
         orderId: order.id,
-        driverId: req.body.driverId,
+        driverId: assignedDriver.id,
         tipCents: order.driverTipCents ?? order.tipCents,
         baseEarningsCents: req.body.baseEarningsCents || 500,
         pickupAddress: req.body.pickupAddress || order.restaurant.address || "Restaurant pickup",
         dropoffAddress: order.deliveryAddress || req.body.dropoffAddress || "Customer dropoff",
         statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } }
       },
-      update: { driverId: req.body.driverId, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } } },
+      update: { driverId: assignedDriver.id, status: "ASSIGNED", statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } } },
       include: { driver: { include: { user: true } }, order: true }
     });
     await Promise.allSettled([notifyDriverAssignment({ delivery })]);

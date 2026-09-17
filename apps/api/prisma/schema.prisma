@@ -1357,6 +1357,8 @@ model RestaurantOrderPayment {
   providerChargeId           String?
   providerCustomerId         String?
   providerClientSecret       String?
+  checkoutIdempotencyKeyHash String?            @unique
+  checkoutRequestHash        String?
   failureReason              String?
   authorizedAt               DateTime?
   paidAt                     DateTime?
@@ -1399,6 +1401,8 @@ model RestaurantRefund {
   orderPaymentId        String
   provider              PaymentProvider         @default(STRIPE_CONNECT)
   providerRefundId      String?
+  // Column and unique index created by migration 20260720090000_stripe_payment_certification.
+  idempotencyKey        String?                 @unique
   status                RefundStatus            @default(PENDING)
   amountCents           Int
   reason                String?

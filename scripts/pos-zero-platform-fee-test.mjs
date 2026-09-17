@@ -7,6 +7,7 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
 const schema = readFileSync(join(root, "apps/api/prisma/schema.prisma"), "utf8");
 const quoteService = readFileSync(join(root, "apps/api/src/modules/orderPayments/quoteService.js"), "utf8");
 const paymentService = readFileSync(join(root, "apps/api/src/modules/orderPayments/orderPaymentService.js"), "utf8");
+const merchantReadiness = readFileSync(join(root, "apps/api/src/modules/orderPayments/merchantReadiness.js"), "utf8");
 const posService = readFileSync(join(root, "apps/api/src/services/posService.js"), "utf8");
 const app = readFileSync(join(root, "apps/web/src/App.jsx"), "utf8");
 const failures = [];
@@ -72,12 +73,12 @@ if (mode === "all" || mode === "connected-account-routing") {
     "stripeAccount: merchant.stripeAccountId"
   ]), "Stripe Connect payment intents charge directly on the restaurant connected account and omit app fees when zero");
   assertCheck(!paymentService.includes("\"transfer_data[destination]\"") && !paymentService.includes("transfer_data[destination]"), "Stripe destination-charge transfer data is not used for restaurant payments");
-  assertCheck(includesAll(paymentService, [
-    "merchantReady",
+  assertCheck(paymentService.includes("isMerchantAccountPaymentReady(merchant)") && includesAll(merchantReadiness, [
     "provider === \"STRIPE_CONNECT\"",
-    "stripeChargesEnabled",
-    "Complete Stripe Connect onboarding"
-  ]), "Payments require a ready restaurant Stripe Connect merchant account");
+    "status === \"ENABLED\"",
+    "stripeAccountId",
+    "stripeChargesEnabled"
+  ]) && paymentService.includes("Complete Stripe Connect onboarding"), "Payments require a ready restaurant Stripe Connect merchant account");
 }
 
 if (mode === "all" || mode === "payment-reporting") {
