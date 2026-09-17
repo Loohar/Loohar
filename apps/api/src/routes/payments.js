@@ -44,12 +44,11 @@ async function markPaymentPaid({ payment, providerPaymentId, stripePaymentIntent
       }
     });
     if (claimed.count === 0) return null;
-    const order = await tx.order.update({
+    const accepted = await tx.order.updateMany({ where: { id: payment.orderId, status: "PENDING" }, data: { status: "ACCEPTED" } });
+    if (accepted.count === 0) return { unexpectedOrderStatus: true };
+    await tx.orderStatusHistory.create({ data: { orderId: payment.orderId, status: "ACCEPTED", note: "Payment succeeded" } });
+    const order = await tx.order.findUnique({
       where: { id: payment.orderId },
-      data: {
-        status: "ACCEPTED",
-        statusHistory: { create: { status: "ACCEPTED", note: "Payment succeeded" } }
-      },
       include: { restaurant: true, customer: true, items: true, statusHistory: true }
     });
     await issueLoyaltyPoints({ order, client: tx });
@@ -66,6 +65,10 @@ async function markPaymentPaid({ payment, providerPaymentId, stripePaymentIntent
     return { payment: updatedPayment, order };
   });
   if (!settled) return { ignored: true, reason: "payment_already_settled" };
+  if (settled.unexpectedOrderStatus) {
+    await recordAudit({ action: "payment.paid_on_closed_order", entityType: "Payment", entityId: payment.id, metadata: { requiresReview: true } });
+    return { reviewRequired: true, reason: "order_not_awaiting_payment" };
+  }
   const { payment: updatedPayment, order } = settled;
   await Promise.allSettled([notifyOrderConfirmation({ order }), notifyNewOrderAlert({ order })]);
   emitOrderUpdate(order);

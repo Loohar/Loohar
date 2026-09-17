@@ -741,12 +741,16 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
       }
     });
     if (claimed.count === 0) return null;
-    const order = await tx.order.update({
+    // Only a waiting order is accepted by payment; a payment that lands on a cancelled or already
+    // progressed order is recorded and flagged instead of reviving or rewinding the order.
+    const accepted = await tx.order.updateMany({ where: { id: payment.orderId, status: "PENDING" }, data: { status: "ACCEPTED" } });
+    if (accepted.count === 0) {
+      const current = await tx.order.findUnique({ where: { id: payment.orderId }, select: { status: true } });
+      return { unexpectedOrderStatus: current?.status || "MISSING" };
+    }
+    await tx.orderStatusHistory.create({ data: { orderId: payment.orderId, status: "ACCEPTED", note: "Restaurant order payment succeeded" } });
+    const order = await tx.order.findUnique({
       where: { id: payment.orderId },
-      data: {
-        status: "ACCEPTED",
-        statusHistory: { create: { status: "ACCEPTED", note: "Restaurant order payment succeeded" } }
-      },
       include: { restaurant: true, customer: true, items: true, statusHistory: true }
     });
     await issueLoyaltyPoints(order, tx);
@@ -763,6 +767,10 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
     return { payment: updatedPayment, order };
   });
   if (!settled) return { ignored: true, reason: "payment_already_settled" };
+  if (settled.unexpectedOrderStatus) {
+    await recordAudit({ restaurantId: payment.restaurantId, action: "order_payment.paid_on_closed_order", entityType: "RestaurantOrderPayment", entityId: payment.id, metadata: { orderStatus: settled.unexpectedOrderStatus, requiresReview: true } });
+    return { reviewRequired: true, reason: "order_not_awaiting_payment", orderStatus: settled.unexpectedOrderStatus };
+  }
   const { payment: updatedPayment, order } = settled;
   await Promise.allSettled([notifyOrderConfirmation({ order }), notifyNewOrderAlert({ order })]);
   emitOrderUpdate(order);
@@ -1001,10 +1009,10 @@ export async function handleStripeConnectWebhook(payload = {}) {
     eventType: eventType || "unknown",
     payloadJson: payload
   };
-  return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }));
+  return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment, eventAccount: payload.account || null }));
 }
 
-async function applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }) {
+async function applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment, eventAccount }) {
   if (accountLifecycleEvent) {
     const readiness = normalizeStripeConnectAccountReadiness(accountObject || object);
     if (!readiness.providerAccountId) return { received: true, ignored: true, reason: "account_id_missing" };
@@ -1017,6 +1025,18 @@ async function applyStripeConnectEvent({ eventType, object, accountObject, accou
   if (!payment) return { received: true, ignored: true, reason: "payment_not_found" };
   if (["payment_intent.succeeded", "payment.succeeded"].includes(eventType)) {
     if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    // The event must be for this payment's own PaymentIntent, on this restaurant's connected account,
+    // for the exact server-computed amount; metadata alone is not trusted.
+    const merchant = await prisma.restaurantMerchantAccount.findUnique({ where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } }, select: { stripeAccountId: true } });
+    const mismatch = object.id !== payment.providerPaymentIntentId
+      || Number(object.amount_received ?? object.amount) !== payment.totalCents
+      || String(object.currency || "").toLowerCase() !== String(payment.currency || "").toLowerCase()
+      || !eventAccount
+      || eventAccount !== merchant?.stripeAccountId;
+    if (mismatch) {
+      await recordAudit({ restaurantId: payment.restaurantId, action: "order_payment.webhook_mismatch", entityType: "RestaurantOrderPayment", entityId: payment.id, metadata: { paymentIntentId: object.id, amount: object.amount_received ?? object.amount, currency: object.currency, account: eventAccount || null } });
+      return { received: true, ignored: true, reason: "payment_event_mismatch" };
+    }
     return { received: true, ...(await markOrderPaymentPaid({ payment, providerChargeId: object.latest_charge })) };
   }
   if (["payment_intent.payment_failed", "payment.failed"].includes(eventType)) {

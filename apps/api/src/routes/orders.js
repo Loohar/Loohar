@@ -52,8 +52,14 @@ router.patch("/:orderId/tip", async (req, res, next) => {
     if (order.type === "DELIVERY") {
       await assertFeatureForRestaurant({ restaurantId: order.restaurantId, feature: FEATURE.DELIVERY, method: req.method });
     }
-    if (["DELIVERED", "CANCELLED"].includes(order.status) || ["PAID", "REFUNDED"].includes(order.payment?.status)) {
+    if (["DELIVERED", "CANCELLED", "REJECTED"].includes(order.status) || ["PAID", "REFUNDED"].includes(order.payment?.status)) {
       return res.status(409).json({ error: "Tips cannot be changed after final payment settlement in this workflow" });
+    }
+    // Card orders charge the tip chosen at checkout; changing it afterwards would make the order
+    // disagree with the amount actually charged (and could inflate driver earnings).
+    const onlinePayment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId: order.id }, select: { id: true } });
+    if (onlinePayment) {
+      return res.status(409).json({ error: "Tips for card orders are set at checkout and cannot be changed here.", code: "ORDER_TIP_LOCKED" });
     }
     const tipBreakdown = normalizeTipInput({ body: req.body, orderType: order.type, subtotalCents: order.subtotalCents });
     const nextTotal = Math.max(0, order.subtotalCents - (order.discountCents || 0)) + (order.deliveryFeeCents || 0) + (order.taxCents || 0) + tipBreakdown.tipCents;

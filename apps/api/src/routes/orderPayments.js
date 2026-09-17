@@ -24,8 +24,8 @@ const modifierSelectionSchema = z.object({
 });
 
 const orderItemSchema = z.object({
-  menuItemId: z.string(),
-  quantity: z.number().int().positive(),
+  menuItemId: z.string().max(64),
+  quantity: z.number().int().positive().max(99),
   modifierSelections: z.array(modifierSelectionSchema).optional(),
   selectedModifiers: z.array(modifierSelectionSchema).optional(),
   modifierOptionIds: z.array(z.string()).optional(),
@@ -38,15 +38,14 @@ const quoteSchema = z.object({
     restaurantId: z.string(),
     locationId: z.string().optional(),
     type: z.enum(["PICKUP", "DELIVERY"]),
-    couponCode: z.string().optional(),
+    couponCode: z.string().max(40).optional(),
     tipCents: z.number().int().nonnegative().default(0),
     restaurantTipCents: z.number().int().nonnegative().optional(),
     driverTipCents: z.number().int().nonnegative().optional(),
     customTipCents: z.number().int().nonnegative().optional(),
     tipPercentage: z.number().int().min(0).max(100).optional(),
     tipType: z.string().optional(),
-    serviceFeeCents: z.number().int().nonnegative().optional(),
-    items: z.array(orderItemSchema).min(1)
+    items: z.array(orderItemSchema).min(1).max(100)
   })
 });
 
@@ -57,8 +56,8 @@ const createSchema = z.object({
       email: z.string().email(),
       phone: z.string().optional()
     }),
-    deliveryAddress: z.string().optional(),
-    notes: z.string().optional()
+    deliveryAddress: z.string().max(300).optional(),
+    notes: z.string().max(500).optional()
   })
 });
 

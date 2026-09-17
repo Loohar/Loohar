@@ -116,7 +116,7 @@ export async function createOrder(req, res, next) {
     if (req.body.couponCode) {
       await assertFeatureForRestaurant({ restaurantId: req.body.restaurantId, feature: FEATURE.COUPONS, method: req.method });
     }
-    res.status(201).json(await createOrderPayment({ body: req.body }));
+    res.status(201).json(await createOrderPayment({ body: req.body, idempotencyKey: req.get("Idempotency-Key") }));
   } catch (error) {
     next(error);
   }

@@ -33,8 +33,9 @@ function hashString(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest("hex");
 }
 
-function inferDeviceType(userAgent = "") {
-  const ua = userAgent.toLowerCase();
+function inferDeviceType(userAgent) {
+  // Clients may omit User-Agent entirely; that must not break sign-in.
+  const ua = String(userAgent || "").toLowerCase();
   if (ua.includes("ipad") || ua.includes("tablet")) return "TABLET";
   if (ua.includes("mobile") || ua.includes("iphone") || ua.includes("android")) return "MOBILE";
   if (ua) return "DESKTOP";

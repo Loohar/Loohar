@@ -37,6 +37,8 @@ import {
 } from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { isActiveTaxProfile } from "../services/taxDomain.js";
+import { POS_PERMISSION } from "../services/posService.js";
+import { assertOrderTransition, closeOnlinePaymentForCancellation } from "../services/orderLifecycleService.js";
 
 const router = Router();
 const restaurantRoles = ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"];
@@ -212,6 +214,80 @@ function sanitizeEmployeeRole(role = "KITCHEN_STAFF") {
   const allowed = ["RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"];
   return allowed.includes(role) ? role : "KITCHEN_STAFF";
 }
+
+const OWNER_LEVEL_ROLES = new Set(["SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN"]);
+const FRONTLINE_ROLES = new Set(["CASHIER", "KITCHEN_STAFF", "DRIVER"]);
+
+function employeeAuthorizationError(message) {
+  const error = new Error(message);
+  error.status = 403;
+  error.code = "EMPLOYEE_MANAGEMENT_FORBIDDEN";
+  return error;
+}
+
+// Managers may only create or manage frontline staff; owners and admins may also manage managers.
+// Nobody below Super Admin can create or modify owner-level accounts through these routes.
+function assertCanManageEmployeeRole(actor, role) {
+  if (OWNER_LEVEL_ROLES.has(role)) throw employeeAuthorizationError("Owner and admin accounts cannot be managed here.");
+  if (actor.role === "RESTAURANT_MANAGER" && !FRONTLINE_ROLES.has(role)) {
+    throw employeeAuthorizationError("Managers can only manage cashier, kitchen and driver accounts.");
+  }
+}
+
+// Custom permission lists are an owner/admin decision and are limited to known POS permissions.
+function permissionsFromRequest(actor, role, requested) {
+  if (requested === undefined || requested === null) return permissionsForRole(role);
+  if (!OWNER_LEVEL_ROLES.has(actor.role)) throw employeeAuthorizationError("Only owners and admins can set custom permissions.");
+  if (!Array.isArray(requested)) throw employeeAuthorizationError("Permissions must be a list.");
+  const known = new Set(Object.values(POS_PERMISSION));
+  return requested.filter((permission) => known.has(permission));
+}
+
+const couponCreateSchema = z.object({
+  code: z.string().trim().min(2).max(40).regex(/^[A-Za-z0-9_-]+$/),
+  type: z.enum(["FIXED_DISCOUNT", "PERCENTAGE_DISCOUNT", "FREE_DELIVERY"]).default("FIXED_DISCOUNT"),
+  description: z.string().max(500).nullable().optional(),
+  percentOff: z.number().int().min(1).max(100).nullable().optional(),
+  amountOffCents: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  freeDelivery: z.boolean().optional(),
+  usageLimit: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  minimumOrderAmountCents: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  active: z.boolean().optional(),
+  startsAt: z.coerce.date().nullable().optional(),
+  expiresAt: z.coerce.date().nullable().optional()
+}).strict().refine((coupon) => coupon.type !== "PERCENTAGE_DISCOUNT" || coupon.percentOff, { message: "percentOff is required for percentage coupons" })
+  .refine((coupon) => coupon.type !== "FIXED_DISCOUNT" || coupon.amountOffCents, { message: "amountOffCents is required for fixed coupons" });
+
+const loyaltyRewardSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  type: z.enum(["FREE_DRINK", "FREE_APPETIZER", "DISCOUNT_COUPON", "FREE_DELIVERY"]),
+  pointsRequired: z.number().int().min(1).max(1_000_000),
+  active: z.boolean().optional()
+}).strict();
+
+const loyaltySettingsSchema = z.object({
+  pointsPerDollar: z.number().min(0).max(100).optional(),
+  welcomeBonus: z.number().int().min(0).max(100_000).optional(),
+  birthdayRewardsPlaceholder: z.boolean().optional(),
+  referralRewardPlaceholder: z.boolean().optional()
+}).passthrough().refine((settings) => JSON.stringify(settings).length <= 4000, { message: "Settings are too large" });
+
+const restaurantProfileSchema = z.object({
+  name: z.string().trim().min(1).max(160).optional(),
+  businessName: z.string().trim().max(160).nullable().optional(),
+  description: z.string().max(4000).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  email: z.string().max(254).nullable().optional(),
+  address: z.string().max(300).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  state: z.string().max(80).nullable().optional(),
+  zip: z.string().max(20).nullable().optional(),
+  timezone: z.string().max(80).nullable().optional(),
+  logoUrl: z.string().max(2048).nullable().optional(),
+  storeHoursJson: z.any().optional(),
+  deliveryEnabled: z.boolean().optional(),
+  pickupEnabled: z.boolean().optional()
+}).strict();
 
 function generateTemporaryPassword() {
   return `Temp-${crypto.randomBytes(9).toString("base64url")}1!`;
@@ -1251,7 +1327,12 @@ router.get("/:restaurantId/profile", async (req, res, next) => {
 
 router.patch("/:restaurantId/profile", async (req, res, next) => {
   try {
-    const restaurant = await prisma.restaurant.update({ where: { id: restaurantIdFor(req) }, data: req.body });
+    // Allowlisted fields only: status, slug, billing, classification and relations are never tenant-editable.
+    const parsed = restaurantProfileSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Only business profile fields can be updated here.", code: "RESTAURANT_PROFILE_FIELDS_INVALID", details: parsed.error.issues.map((issue) => issue.path.join(".") || issue.message) });
+    }
+    const restaurant = await prisma.restaurant.update({ where: { id: restaurantIdFor(req) }, data: parsed.data });
     await recordAudit({ actorUserId: req.user.id, restaurantId: restaurant.id, action: "restaurant.profile.updated", entityType: "Restaurant", entityId: restaurant.id });
     res.json({ restaurant });
   } catch (error) {
@@ -1885,12 +1966,19 @@ router.get("/:restaurantId/orders", async (req, res, next) => {
 
 router.patch("/:restaurantId/orders/:orderId/status", async (req, res, next) => {
   try {
-    const order = await prisma.order.update({
-      where: { id_restaurantId: { id: req.params.orderId, restaurantId: restaurantIdFor(req) } },
-      data: {
-        status: req.body.status,
-        statusHistory: { create: { status: req.body.status, note: req.body.note, changedBy: req.user.id } }
-      },
+    const restaurantId = restaurantIdFor(req);
+    const existing = await prisma.order.findUnique({ where: { id_restaurantId: { id: req.params.orderId, restaurantId } }, select: { id: true, status: true } });
+    if (!existing) return res.status(404).json({ error: "Order not found" });
+    const nextStatus = String(req.body.status || "");
+    assertOrderTransition(existing.status, nextStatus);
+    if (["CANCELLED", "REJECTED"].includes(nextStatus)) await closeOnlinePaymentForCancellation(existing.id);
+    // Conditional on the status we validated so concurrent changes cannot skip the transition rules.
+    const moved = await prisma.order.updateMany({ where: { id: existing.id, restaurantId, status: existing.status }, data: { status: nextStatus } });
+    if (moved.count !== 1) return res.status(409).json({ error: "Order status changed; refresh and try again.", code: "ORDER_STATUS_CONFLICT" });
+    await prisma.orderStatusHistory.create({ data: { orderId: existing.id, status: nextStatus, note: req.body.note ? String(req.body.note).slice(0, 500) : null, changedBy: req.user.id } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "order.status.changed", entityType: "Order", entityId: existing.id, metadata: { from: existing.status, to: nextStatus } });
+    const order = await prisma.order.findUnique({
+      where: { id: existing.id },
       include: { statusHistory: true, delivery: true, customer: true, restaurant: true, items: true, location: true }
     });
     await Promise.allSettled([notifyOrderStatusUpdate({ order })]);
@@ -2024,13 +2112,17 @@ router.get("/:restaurantId/staff", async (req, res, next) => {
 router.post("/:restaurantId/staff", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
+    const role = sanitizeEmployeeRole(req.body.role);
+    assertCanManageEmployeeRole(req.user, role);
+    const permissionsJson = permissionsFromRequest(req.user, role, req.body.permissionsJson);
     await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email, name: req.body.name, passwordHash, role: req.body.role, restaurantId, phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name, passwordHash, role, restaurantId, phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
-    const staff = await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role: req.body.role, permissionsJson: req.body.permissionsJson || permissionsForRole(req.body.role) } });
+    const staff = await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, permissionsJson } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.created", entityType: "User", entityId: user.id, metadata: { role } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ staff });
   } catch (error) {
@@ -2081,16 +2173,18 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
     const role = sanitizeEmployeeRole(req.body.role);
+    assertCanManageEmployeeRole(req.user, role);
+    const permissionsJson = role === "DRIVER" ? null : permissionsFromRequest(req.user, role, req.body.permissionsJson);
     await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
     const user = await prisma.user.create({
-      data: { email, name: req.body.name || email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status || "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      data: { email, name: req.body.name || email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status === "SUSPENDED" ? "SUSPENDED" : "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
     });
     if (role === "DRIVER") {
       await prisma.driver.create({ data: { restaurantId, userId: user.id, available: Boolean(req.body.available) } });
     } else {
-      await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, active: req.body.status !== "SUSPENDED", permissionsJson: req.body.permissionsJson || permissionsForRole(role) } });
+      await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, active: req.body.status !== "SUSPENDED", permissionsJson } });
     }
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.created", entityType: "User", entityId: user.id, metadata: { role } });
@@ -2105,8 +2199,12 @@ router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
     const restaurantId = restaurantIdFor(req);
     const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
     if (!existing) return res.status(404).json({ error: "Employee not found" });
+    assertCanManageEmployeeRole(req.user, existing.role);
     const role = req.body.role ? sanitizeEmployeeRole(req.body.role) : existing.role;
+    assertCanManageEmployeeRole(req.user, role);
     const normalizedStatus = req.body.status ? req.body.status.toString().toUpperCase() : null;
+    if (normalizedStatus && !["ACTIVE", "SUSPENDED"].includes(normalizedStatus)) return res.status(400).json({ error: "Invalid employee status" });
+    const permissionsJson = role === "DRIVER" ? null : permissionsFromRequest(req.user, role, req.body.permissionsJson);
     const revokeSessions = role !== existing.role || (normalizedStatus && normalizedStatus !== "ACTIVE");
     const user = await prisma.user.update({
       where: { id: existing.id },
@@ -2133,8 +2231,8 @@ router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
       if (existing.driverProfile) await prisma.driver.delete({ where: { id: existing.driverProfile.id } });
       await prisma.restaurantStaff.upsert({
         where: { userId: user.id },
-        update: { role, active: user.status === "ACTIVE", permissionsJson: req.body.permissionsJson || permissionsForRole(role) },
-        create: { restaurantId, userId: user.id, role, active: user.status === "ACTIVE", permissionsJson: req.body.permissionsJson || permissionsForRole(role) }
+        update: { role, active: user.status === "ACTIVE", permissionsJson },
+        create: { restaurantId, userId: user.id, role, active: user.status === "ACTIVE", permissionsJson }
       });
     }
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.updated", entityType: "User", entityId: user.id, metadata: { role, status: user.status } });
@@ -2149,6 +2247,7 @@ router.patch("/:restaurantId/employees/:employeeId/disable", async (req, res, ne
     const restaurantId = restaurantIdFor(req);
     const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
     if (!existing) return res.status(404).json({ error: "Employee not found" });
+    assertCanManageEmployeeRole(req.user, existing.role);
     const user = await prisma.user.update({ where: { id: existing.id }, data: { status: "SUSPENDED", sessionVersion: { increment: 1 } }, include: { staffProfile: true, driverProfile: true } });
     await revokeAllUserSessions({ userId: user.id, reason: "employee_disabled" });
     if (user.staffProfile) await prisma.restaurantStaff.update({ where: { id: user.staffProfile.id }, data: { active: false } });
@@ -2220,7 +2319,11 @@ router.get("/:restaurantId/coupons", async (req, res, next) => {
 
 router.post("/:restaurantId/coupons", async (req, res, next) => {
   try {
-    const coupon = await prisma.coupon.create({ data: { ...req.body, restaurantId: restaurantIdFor(req) } });
+    const parsed = couponCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid coupon", code: "COUPON_INVALID", details: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`) });
+    // Codes are matched case-insensitively at checkout, so store them upper-case.
+    const coupon = await prisma.coupon.create({ data: { ...parsed.data, code: parsed.data.code.toUpperCase(), restaurantId: restaurantIdFor(req) } });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: coupon.restaurantId, action: "coupon.created", entityType: "Coupon", entityId: coupon.id, metadata: { code: coupon.code, type: coupon.type } });
     res.status(201).json({ coupon });
   } catch (error) {
     next(error);
@@ -2256,7 +2359,9 @@ router.get("/:restaurantId/loyalty", async (req, res, next) => {
 
 router.patch("/:restaurantId/loyalty/settings", async (req, res, next) => {
   try {
-    const restaurant = await prisma.restaurant.update({ where: { id: restaurantIdFor(req) }, data: { loyaltySettingsJson: req.body } });
+    const parsed = loyaltySettingsSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid loyalty settings", code: "LOYALTY_SETTINGS_INVALID" });
+    const restaurant = await prisma.restaurant.update({ where: { id: restaurantIdFor(req) }, data: { loyaltySettingsJson: parsed.data } });
     res.json({ settings: restaurant.loyaltySettingsJson });
   } catch (error) {
     next(error);
@@ -2265,7 +2370,9 @@ router.patch("/:restaurantId/loyalty/settings", async (req, res, next) => {
 
 router.post("/:restaurantId/loyalty/rewards", async (req, res, next) => {
   try {
-    const reward = await prisma.loyaltyReward.create({ data: { ...req.body, restaurantId: restaurantIdFor(req) } });
+    const parsed = loyaltyRewardSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: "Invalid loyalty reward", code: "LOYALTY_REWARD_INVALID" });
+    const reward = await prisma.loyaltyReward.create({ data: { ...parsed.data, restaurantId: restaurantIdFor(req) } });
     res.status(201).json({ reward });
   } catch (error) {
     next(error);

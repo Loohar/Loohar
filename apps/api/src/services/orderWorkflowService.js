@@ -74,7 +74,19 @@ export function receiptOrderInclude() {
   };
 }
 
+function tipInputError(message) {
+  const error = new Error(message);
+  error.status = 400;
+  error.code = "TIP_INVALID";
+  return error;
+}
+
 export function normalizeTipInput({ body = {}, orderType = "PICKUP", subtotalCents = 0 }) {
+  for (const field of ["tipCents", "restaurantTipCents", "driverTipCents", "customTipCents", "tipPercentage"]) {
+    const value = body[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (!Number.isSafeInteger(Number(value)) || Number(value) < 0) throw tipInputError(`${field} must be a whole, non-negative number`);
+  }
   const legacyTipCents = Math.max(0, Number(body.tipCents || 0));
   const restaurantTipCents = Math.max(0, Number(body.restaurantTipCents ?? (orderType === "DELIVERY" ? 0 : legacyTipCents)));
   const driverTipCents = orderType === "DELIVERY" ? Math.max(0, Number(body.driverTipCents ?? legacyTipCents)) : 0;

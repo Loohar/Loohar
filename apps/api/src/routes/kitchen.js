@@ -4,6 +4,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { featureGuard } from "../middleware/entitlements.js";
 import { notifyOrderStatusUpdate } from "../services/notificationService.js";
+import { allowedLocationIdsForUser } from "../services/staffLocationAccess.js";
 import { emitKitchenUpdate, emitOrderUpdate, kitchenEligibleOrderItems, serializeKitchenOrder } from "../services/realtimeService.js";
 
 const router = Router();
@@ -77,23 +78,41 @@ async function resolveKitchenRestaurant(req, res) {
 }
 
 async function resolveKitchenLocations(req, res, restaurantId) {
+  const allowedLocationIds = await allowedLocationIdsForUser(req.user, restaurantId);
   const locations = await prisma.restaurantLocation.findMany({
-    where: { restaurantId, active: true },
+    where: { restaurantId, active: true, ...(allowedLocationIds ? { id: { in: allowedLocationIds } } : {}) },
     select: { id: true, name: true, address: true, timezone: true },
     orderBy: { createdAt: "asc" }
   });
   const requestedLocationId = req.query.locationId ? String(req.query.locationId) : null;
-  if (requestedLocationId === "all") return { locations, selectedLocation: null };
+  // "All locations" for a location-restricted employee means only their assigned locations.
+  if (requestedLocationId === "all") return { locations, selectedLocation: null, allowedLocationIds };
   if (requestedLocationId) {
     const selectedLocation = locations.find((location) => location.id === requestedLocationId);
     if (!selectedLocation) {
       res.status(403).json({ error: "Kitchen location access denied", code: "KITCHEN_LOCATION_FORBIDDEN" });
       return null;
     }
-    return { locations, selectedLocation };
+    return { locations, selectedLocation, allowedLocationIds };
   }
-  return { locations, selectedLocation: locations[0] || null };
+  if (allowedLocationIds && !locations.length) {
+    res.status(403).json({ error: "Kitchen location access denied", code: "KITCHEN_LOCATION_FORBIDDEN" });
+    return null;
+  }
+  return { locations, selectedLocation: locations[0] || null, allowedLocationIds };
 }
+
+function kitchenLocationWhere(locationContext) {
+  if (locationContext.selectedLocation) return { locationId: locationContext.selectedLocation.id };
+  if (locationContext.allowedLocationIds) return { locationId: { in: locationContext.allowedLocationIds } };
+  return {};
+}
+
+// Online card orders reach the kitchen only after payment succeeds, so unpaid or abandoned
+// checkouts cannot flood the display or be cooked without payment.
+const HIDE_UNPAID_ONLINE_ORDERS = {
+  NOT: { restaurantOrderPayment: { is: { checkoutIdempotencyKeyHash: { not: null }, status: { notIn: ["PAID", "PARTIALLY_REFUNDED"] } } } }
+};
 
 function parseSince(value) {
   if (!value) return null;
@@ -113,7 +132,8 @@ async function listKitchenOrders(req, res, next) {
 
     const where = {
       restaurantId: restaurant.id,
-      ...(locationContext.selectedLocation ? { locationId: locationContext.selectedLocation.id } : {}),
+      ...kitchenLocationWhere(locationContext),
+      ...HIDE_UNPAID_ONLINE_ORDERS,
       ...(since ? { updatedAt: { gt: since } } : { status: { in: activeOrderStatuses } })
     };
     const orders = await prisma.order.findMany({
@@ -151,12 +171,16 @@ async function updateKitchenOrderStatus(req, res, next) {
       where: {
         id: req.params.orderId,
         restaurantId: restaurant.id,
-        ...(locationContext.selectedLocation ? { locationId: locationContext.selectedLocation.id } : {})
+        ...kitchenLocationWhere(locationContext),
+        ...HIDE_UNPAID_ONLINE_ORDERS
       },
-      select: { id: true, items: { select: { optionsJson: true } } }
+      select: { id: true, status: true, items: { select: { optionsJson: true } } }
     });
     if (!existing || !kitchenEligibleOrderItems(existing.items).length) {
       return res.status(404).json({ error: "Kitchen order not found" });
+    }
+    if (["CANCELLED", "REJECTED", "DELIVERED"].includes(existing.status)) {
+      return res.status(409).json({ error: "This order is closed.", code: "ORDER_STATUS_FINAL" });
     }
 
     const order = await prisma.order.update({

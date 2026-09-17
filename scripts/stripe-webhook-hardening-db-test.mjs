@@ -67,6 +67,13 @@ async function deliver(path, event, { secret, signature } = {}) {
 
 const legacy = (event, options = {}) => deliver("/api/payments/webhook", event, { secret: LEGACY_SECRET, ...options });
 const connect = (event, options = {}) => deliver("/api/webhooks/stripe-connect", event, { secret: CONNECT_SECRET, ...options });
+// Genuine Connect events name the connected account and carry the PaymentIntent amount and currency.
+const connectPaymentEvent = (label, type, payment, overrides = {}) => ({
+  id: eventId(label),
+  type,
+  account: `acct_${runId}`,
+  data: { object: { id: payment.providerPaymentIntentId, amount: 1000, amount_received: 1000, currency: "usd", latest_charge: `ch_${runId}`, metadata: { orderPaymentId: payment.id }, ...overrides } }
+});
 const eventId = (label) => `evt_${runId}_${label}`;
 const historyCount = (orderId) => prisma.orderStatusHistory.count({ where: { orderId } });
 
@@ -76,6 +83,9 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 
   const restaurant = await prisma.restaurant.create({ data: { name: `L04 ${runId}`, slug: `${runId}-webhooks`, status: "ACTIVE" } });
+  await prisma.restaurantMerchantAccount.create({
+    data: { restaurantId: restaurant.id, provider: "STRIPE_CONNECT", status: "ENABLED", stripeAccountId: `acct_${runId}`, stripeChargesEnabled: true }
+  });
   const customer = await prisma.customer.create({ data: { restaurantId: restaurant.id, name: "Webhook Tester", email: `webhook-${runId}@example.test` } });
   await prisma.coupon.create({ data: { restaurantId: restaurant.id, code: `SAVE${runId}`.toUpperCase().slice(0, 20) } });
   const coupon = await prisma.coupon.findFirst({ where: { restaurantId: restaurant.id } });
@@ -230,12 +240,13 @@ test("Stripe Connect webhook keeps failing closed without its secret", async () 
   }
 });
 
-test("Stripe Connect webhook applies payment once, deduplicates, and ignores late failures", async () => {
-  const succeeded = {
-    id: eventId("connect-paid"),
-    type: "payment_intent.succeeded",
-    data: { object: { id: seeded.connectPayment.providerPaymentIntentId, latest_charge: `ch_${runId}`, metadata: { orderPaymentId: seeded.connectPayment.id } } }
-  };
+test("Stripe Connect webhook verifies account and amount, applies payment once, deduplicates, and ignores late failures", async () => {
+  const forgedAccount = await connect({ ...connectPaymentEvent("connect-forged-account", "payment_intent.succeeded", seeded.connectPayment), account: "acct_attacker" });
+  assert.equal(forgedAccount.body.reason, "payment_event_mismatch");
+  const wrongAmount = await connect(connectPaymentEvent("connect-wrong-amount", "payment_intent.succeeded", seeded.connectPayment, { amount: 100, amount_received: 100 }));
+  assert.equal(wrongAmount.body.reason, "payment_event_mismatch");
+  assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: seeded.connectPayment.id } })).status, "REQUIRES_PAYMENT_METHOD", "forged or mismatched events never mark a payment paid");
+  const succeeded = connectPaymentEvent("connect-paid", "payment_intent.succeeded", seeded.connectPayment);
   assert.equal((await connect(succeeded)).status, 200);
   assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: seeded.connectPayment.id } })).status, "PAID");
   const history = await historyCount(seeded.connectOrder.id);
@@ -257,11 +268,7 @@ test("Stripe Connect webhook applies payment once, deduplicates, and ignores lat
 });
 
 test("concurrent deliveries of one Stripe Connect event apply side effects exactly once", async () => {
-  const event = {
-    id: eventId("connect-race"),
-    type: "payment_intent.succeeded",
-    data: { object: { id: seeded.raceConnectPayment.providerPaymentIntentId, metadata: { orderPaymentId: seeded.raceConnectPayment.id } } }
-  };
+  const event = connectPaymentEvent("connect-race", "payment_intent.succeeded", seeded.raceConnectPayment);
   const couponBefore = (await prisma.coupon.findUnique({ where: { id: seeded.coupon.id } })).redeemedCount;
   const historyBefore = await historyCount(seeded.raceConnectOrder.id);
   const results = await Promise.all(Array.from({ length: 6 }, () => connect(event)));

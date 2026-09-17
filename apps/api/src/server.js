@@ -167,7 +167,9 @@ app.use(rateLimit({
     code: "RATE_LIMITED"
   }
 }));
-app.use(morgan("dev"));
+// Request logs keep the path only: query strings can carry order tracking tokens.
+morgan.token("url-path", (req) => String(req.originalUrl || req.url || "").split("?")[0]);
+app.use(morgan(":method :url-path :status :response-time ms - :res[content-length]"));
 app.use((req, res, next) => {
   const json = res.json.bind(res);
   res.json = (body) => json(sanitizeSensitiveFields(body));

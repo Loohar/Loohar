@@ -210,7 +210,8 @@ export async function calculateOrderQuote({ restaurantId, body }) {
     ? Math.round((taxableAmountCents * taxRateBps) / (10000 + taxRateBps))
     : Math.round((taxableAmountCents * taxRateBps) / 10000);
   const tipBreakdown = normalizeTipInput({ body, orderType, subtotalCents });
-  const serviceFeeCents = nonnegativeInt(body.serviceFeeCents, 0);
+  // No restaurant service fee is configured in Loohar yet; never accept one from the client.
+  const serviceFeeCents = 0;
   const totalCents = taxableAmountCents + deliveryFeeCents + (taxInclusive ? 0 : taxCents) + serviceFeeCents + tipBreakdown.tipCents;
   const feeCents = platformFeeCents();
   const restaurantGrossCents = totalCents - (tipBreakdown.driverTipCents || 0);

@@ -40,7 +40,8 @@ export const POS_PERMISSION = {
   VIEW_REPORTS: "POS_VIEW_REPORTS",
   MANAGE_SHIFTS: "POS_MANAGE_SHIFTS",
   OPEN_CASH_DRAWER: "POS_OPEN_CASH_DRAWER",
-  CLOSE_CASH_DRAWER: "POS_CLOSE_CASH_DRAWER"
+  CLOSE_CASH_DRAWER: "POS_CLOSE_CASH_DRAWER",
+  APPLY_DISCOUNT: "POS_APPLY_DISCOUNT"
 };
 
 const ALL_POS_PERMISSIONS = Object.values(POS_PERMISSION);
@@ -1007,6 +1008,12 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
 
   const subtotalCents = normalizedItems.reduce((sum, line) => sum + line.lineTotalCents, 0);
   const discountCents = cents(body?.discountCents);
+  if (discountCents > 0) {
+    // Discounts change money owed, so they need a manager-level permission and cannot exceed the items.
+    await assertPosPermission(user, restaurantId, POS_PERMISSION.APPLY_DISCOUNT);
+    if (discountCents > subtotalCents) throw httpError("Discount cannot exceed the order subtotal.", 400, { code: "POS_DISCOUNT_EXCEEDS_SUBTOTAL" });
+    await recordAudit({ actorUserId: user.id, restaurantId, action: "pos.discount.applied", entityType: "OrderQuote", entityId: null, metadata: { discountCents, subtotalCents, deviceId } });
+  }
   const { deliveryFeeCents } = resolvePosDeliveryPricing(orderConfiguration, orderType, body, subtotalCents);
   const pricing = calculatePosPricingSnapshot({
     lineItems: normalizedItems,
@@ -1957,6 +1964,10 @@ function validatePosOfflineTransaction({ transaction, restaurantId, user, sessio
   if (delivery.deliveryFeeCents !== Number(transaction.orderSnapshot?.deliveryFeeCents)) {
     throw posOfflineError("Offline delivery price does not match its signed configuration.", "POS_OFFLINE_DELIVERY_PRICE_MISMATCH");
   }
+  // Discounts and tips are not covered by the signed offline configuration, so offline sales cannot carry them.
+  if (Number(transaction.orderSnapshot?.discountCents || 0) !== 0 || Number(transaction.orderSnapshot?.tipCents || 0) !== 0) {
+    throw posOfflineError("Offline sales cannot include discounts or tips.", "POS_OFFLINE_ADJUSTMENT_UNSUPPORTED");
+  }
   if (
     !configurationProof.taxConfiguration
     || configurationProof.taxConfiguration.locationId !== locationId
@@ -2376,6 +2387,12 @@ export async function cashPayment({
   ) {
     throw httpError("This order already has an active or completed payment.", 409, { code: "POS_CASH_ALREADY_PAID" });
   }
+  // An open online checkout could still be paid by card after cash is taken; the restaurant must
+  // cancel the online order (which cancels its payment) before settling it in cash.
+  if (order.restaurantOrderPayment?.providerPaymentIntentId && order.restaurantOrderPayment.status === "REQUIRES_PAYMENT_METHOD" && order.restaurantOrderPayment.checkoutIdempotencyKeyHash) {
+    throw httpError("This order has an open online card checkout. Cancel the online order before taking cash.", 409, { code: "POS_CASH_ONLINE_CHECKOUT_OPEN" });
+  }
+  if (["CANCELLED", "REJECTED"].includes(order.status)) throw httpError("This order is closed.", 409, { code: "POS_ORDER_CLOSED" });
   const settlement = cashSettlementAmounts(order.totalCents, amountCents, 0);
   const cashTender = {
     tenderType: "CASH",
@@ -2455,8 +2472,15 @@ export async function cardPaymentIntent({ restaurantId, user, orderId, deviceId,
   await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCEPT_CARD);
   const device = await requireActiveDevice({ restaurantId, deviceId, fingerprint });
   if (!device.cardPaymentsEnabled) throw httpError("Card payments are not enabled for this device.", 403, { code: "POS_CARD_DEVICE_DISABLED" });
-  const order = await prisma.order.findFirst({ where: { id: orderId, restaurantId } });
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, restaurantId, ...(device.locationId ? { locationId: device.locationId } : {}) },
+    include: { restaurantOrderPayment: { select: { status: true } } }
+  });
   if (!order) throw httpError("Order not found.", 404);
+  if (["AUTHORIZED", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"].includes(order.restaurantOrderPayment?.status)) {
+    throw httpError("This order already has a completed payment.", 409, { code: "POS_CARD_ALREADY_PAID" });
+  }
+  if (["CANCELLED", "REJECTED"].includes(order.status)) throw httpError("This order is closed.", 409, { code: "POS_ORDER_CLOSED" });
   const merchant = await prisma.restaurantMerchantAccount.findFirst({
     where: { restaurantId, provider: "STRIPE_CONNECT" }
   });

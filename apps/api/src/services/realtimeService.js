@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "../config/prisma.js";
 import { entitlementDecision, FEATURE } from "../config/entitlements.js";
 import { authenticateAccessToken } from "../middleware/auth.js";
+import { allowedLocationIdsForUser } from "./staffLocationAccess.js";
 import { loadRestaurantEntitlements } from "../middleware/entitlements.js";
 
 let ioRef = null;
@@ -189,6 +190,14 @@ async function authorizeSocket(socket, next) {
         return next(socketError(decision.error || "Kitchen display is unavailable.", decision.code || "SOCKET_FEATURE_FORBIDDEN"));
       }
       locationId = auth.locationId ? String(auth.locationId) : null;
+      const allowedLocationIds = await allowedLocationIdsForUser(user, restaurantId);
+      if (allowedLocationIds) {
+        // Location-restricted staff may only join rooms for their assigned locations.
+        if (!locationId && allowedLocationIds.length === 1) locationId = allowedLocationIds[0];
+        if (!locationId || !allowedLocationIds.includes(locationId)) {
+          return next(socketError("Kitchen location access denied.", "SOCKET_LOCATION_FORBIDDEN"));
+        }
+      }
       if (locationId) {
         const location = await prisma.restaurantLocation.findFirst({
           where: { id: locationId, restaurantId, active: true },
