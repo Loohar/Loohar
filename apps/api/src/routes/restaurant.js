@@ -6,7 +6,7 @@ import { prisma } from "../config/prisma.js";
 import { entitlementDecision, FEATURE, FEATURE_LABELS, requiredPlanForFeature, USAGE_LIMIT } from "../config/entitlements.js";
 import { EMPLOYEE_SEAT_ROLES } from "../../../shared/planEntitlements.js";
 import { requireAuth, requireRole, requireTenantAccess } from "../middleware/auth.js";
-import { assertUsageLimitForRestaurant, featureGuard, loadRestaurantEntitlements } from "../middleware/entitlements.js";
+import { assertFeatureForRestaurant, assertUsageLimitForRestaurant, assertUsageWithinEntitlement, featureGuard, loadRestaurantEntitlements } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
@@ -102,12 +102,18 @@ async function assertMenuItemLimit(restaurantId) {
 // Creates one employee login inside a transaction that holds a per-restaurant seat lock, so
 // concurrent invitations cannot exceed the plan's employee seats.
 async function createEmployeeWithinSeatLimit(restaurantId, create) {
+  const entitlement = await loadRestaurantEntitlements(restaurantId);
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`employee-seats:${restaurantId}`}))`;
     const used = await tx.user.count({ where: { restaurantId, role: { in: EMPLOYEE_SEAT_ROLES }, status: { not: "DELETED" } } });
-    await assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.STAFF_MEMBERS, used, requestedIncrement: 1 });
+    assertUsageWithinEntitlement({ entitlement, limitCode: USAGE_LIMIT.STAFF_MEMBERS, used, requestedIncrement: 1 });
     return create(tx);
   });
+}
+
+// Driver logins are only useful where the plan includes driver management.
+async function assertDriverRoleAllowed(restaurantId, role, method) {
+  if (role === "DRIVER") await assertFeatureForRestaurant({ restaurantId, feature: FEATURE.DRIVER_MANAGEMENT, method });
 }
 
 async function assertDeliveryZoneLimit(restaurantId) {
@@ -2189,6 +2195,7 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
     const role = sanitizeEmployeeRole(req.body.role);
     assertCanManageEmployeeRole(req.user, role);
     const permissionsJson = role === "DRIVER" ? null : permissionsFromRequest(req.user, role, req.body.permissionsJson);
+    await assertDriverRoleAllowed(restaurantId, role, req.method);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
     const user = await createEmployeeWithinSeatLimit(restaurantId, async (tx) => {
@@ -2213,11 +2220,13 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
 router.patch("/:restaurantId/employees/:employeeId", async (req, res, next) => {
   try {
     const restaurantId = restaurantIdFor(req);
-    const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId }, include: { staffProfile: true, driverProfile: true } });
+    // Deleted employees no longer hold a seat, so they cannot be edited back into use here.
+    const existing = await prisma.user.findFirst({ where: { id: req.params.employeeId, restaurantId, status: { not: "DELETED" } }, include: { staffProfile: true, driverProfile: true } });
     if (!existing) return res.status(404).json({ error: "Employee not found" });
     assertCanManageEmployeeRole(req.user, existing.role);
     const role = req.body.role ? sanitizeEmployeeRole(req.body.role) : existing.role;
     assertCanManageEmployeeRole(req.user, role);
+    if (role !== existing.role) await assertDriverRoleAllowed(restaurantId, role, req.method);
     const normalizedStatus = req.body.status ? req.body.status.toString().toUpperCase() : null;
     if (normalizedStatus && !["ACTIVE", "SUSPENDED"].includes(normalizedStatus)) return res.status(400).json({ error: "Invalid employee status" });
     const permissionsJson = role === "DRIVER" ? null : permissionsFromRequest(req.user, role, req.body.permissionsJson);

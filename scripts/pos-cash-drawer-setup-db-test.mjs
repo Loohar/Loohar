@@ -24,6 +24,7 @@ mock.module(new URL("../apps/api/src/middleware/entitlements.js", import.meta.ur
   namedExports: {
     assertFeatureForRestaurant: async () => true,
     assertUsageLimitForRestaurant: async () => true,
+    assertUsageWithinEntitlement: () => true,
     featureGuard: () => (req, res, next) => next(),
     loadRestaurantEntitlements: async () => ({})
   }

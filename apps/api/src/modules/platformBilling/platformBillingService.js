@@ -4,6 +4,7 @@ import { prisma } from "../../config/prisma.js";
 import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
 import { stripeSubscriptionPeriod } from "../../utils/stripeSubscriptionPeriod.js";
 import { planLimitSummary } from "../../../../shared/planEntitlements.js";
+import { FEATURE, planAllowsFeature } from "../../config/entitlements.js";
 import { recordAudit } from "../../services/auditService.js";
 import { sendAccountSetupEmail } from "../../services/accountAccessService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
@@ -320,14 +321,14 @@ async function ensureTenantSubscriptionPlan(tx, planCode) {
       name,
       monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
       maxLocations: planLimitSummary(code).locationLimit,
-      maxDrivers: planLimitSummary(code).staffLimit,
+      maxDrivers: planAllowsFeature(code, FEATURE.DRIVER_MANAGEMENT) ? planLimitSummary(code).staffLimit : 0,
       featuresJson: { source: "introductory_program", features: PLAN_FEATURES[code] || [] }
     },
     update: {
       name,
       monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
       maxLocations: planLimitSummary(code).locationLimit,
-      maxDrivers: planLimitSummary(code).staffLimit,
+      maxDrivers: planAllowsFeature(code, FEATURE.DRIVER_MANAGEMENT) ? planLimitSummary(code).staffLimit : 0,
       featuresJson: { source: "introductory_program", features: PLAN_FEATURES[code] || [] }
     }
   });

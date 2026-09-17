@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
-import { assertFeatureForRestaurant, assertUsageLimitForRestaurant } from "../middleware/entitlements.js";
+import { assertFeatureForRestaurant, assertUsageWithinEntitlement, loadRestaurantEntitlements } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
 import { validateSelectedModifiers } from "./modifierValidationService.js";
@@ -23,7 +23,7 @@ import {
   resolvePosDeliveryPricingSnapshot,
   validatePosOfflinePricingSnapshot
 } from "../../../shared/posOfflinePricing.js";
-import { DEVICE_TYPE_USAGE_LIMIT, deviceTypesForUsageLimit } from "../../../shared/planEntitlements.js";
+import { DEVICE_TYPE_USAGE_LIMIT, POS_SESSION_DEVICE_TYPES, deviceTypesForUsageLimit } from "../../../shared/planEntitlements.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -546,6 +546,7 @@ export async function requireActiveDevice({ restaurantId, deviceId, fingerprint 
   const device = await touchDevice({ restaurantId, deviceId, fingerprint });
   if (!device) throw httpError("Active POS device is required for this action.", 403, { code: "POS_DEVICE_REQUIRED" });
   if (device.status !== "ACTIVE") throw httpError("POS device is not active.", 403, { code: "POS_DEVICE_INACTIVE" });
+  if (!POS_SESSION_DEVICE_TYPES.includes(device.deviceType)) throw httpError("This device is not registered as a POS register.", 403, { code: "POS_DEVICE_NOT_REGISTER" });
   return device;
 }
 
@@ -2541,12 +2542,13 @@ async function writeWithinDeviceEntitlement({ restaurantId, previous, next }, wr
   const limitCode = DEVICE_TYPE_USAGE_LIMIT[next.deviceType];
   const alreadyCounted = previous?.status === "ACTIVE" && DEVICE_TYPE_USAGE_LIMIT[previous.deviceType] === limitCode;
   if (!limitCode || next.status !== "ACTIVE" || alreadyCounted) return write(prisma);
+  const entitlement = await loadRestaurantEntitlements(restaurantId);
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pos-devices:${restaurantId}:${limitCode}`}))`;
     const used = await tx.posDevice.count({
       where: { restaurantId, status: "ACTIVE", deviceType: { in: deviceTypesForUsageLimit(limitCode) }, ...(previous?.id ? { id: { not: previous.id } } : {}) }
     });
-    await assertUsageLimitForRestaurant({ restaurantId, limitCode, used, requestedIncrement: 1 });
+    assertUsageWithinEntitlement({ entitlement, limitCode, used, requestedIncrement: 1 });
     return write(tx);
   });
 }

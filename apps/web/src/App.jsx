@@ -225,9 +225,9 @@ const featureRequiredPlans = {
   CUSTOMER_CRM: "PROFESSIONAL",
   LOYALTY: "PROFESSIONAL",
   COUPONS: "PROFESSIONAL",
-  EMPLOYEE_MANAGEMENT: "PROFESSIONAL",
+  EMPLOYEE_MANAGEMENT: "STARTER",
   DRIVER_MANAGEMENT: "PROFESSIONAL",
-  KITCHEN_DISPLAY: "PROFESSIONAL",
+  KITCHEN_DISPLAY: "STARTER",
   DELIVERY_ZONES: "PROFESSIONAL",
   INVENTORY: "PROFESSIONAL",
   PRINTING: "PROFESSIONAL",
@@ -12297,7 +12297,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const lockFor = (feature) => featureLocks[feature];
   const hasLock = (feature) => Boolean(lockFor(feature));
   const entitlementSummary = profile.entitlements || {};
-  const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY") || (lockFor("PRINTING") ? { ...lockFor("PRINTING"), featureLabel: featureLabels.KITCHEN_DISPLAY, requiredPlan: featureRequiredPlans.KITCHEN_DISPLAY } : null);
+  const kitchenDisplayLock = lockFor("KITCHEN_DISPLAY");
   const settingsCenterLinks = restaurantSettingsLinks.map((item) => {
     const normalizedId = normalizeRestaurantSettingsSectionId(item.id);
     const lock = item.feature ? lockFor(item.feature) : null;

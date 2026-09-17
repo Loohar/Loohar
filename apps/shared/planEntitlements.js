@@ -57,18 +57,21 @@ export const PLAN_USAGE_LIMITS = {
 // suspended accounts keep their seat.
 export const EMPLOYEE_SEAT_ROLES = ["RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"];
 
-// Active POS devices that take orders count as registers; kitchen screens count separately.
-// Manager approval devices are not metered.
+// Every active device that can open a POS session counts as a register (manager devices can take
+// orders and payments too); kitchen screens count separately and cannot open POS sessions.
 export const DEVICE_TYPE_USAGE_LIMIT = {
   MAIN_TERMINAL: USAGE_LIMIT.POS_REGISTERS,
   POS_KIOSK: USAGE_LIMIT.POS_REGISTERS,
   APPROVED_MOBILE: USAGE_LIMIT.POS_REGISTERS,
+  MANAGER_DEVICE: USAGE_LIMIT.POS_REGISTERS,
   KITCHEN_DISPLAY: USAGE_LIMIT.KITCHEN_DISPLAYS
 };
 
 export function deviceTypesForUsageLimit(limitCode) {
   return Object.entries(DEVICE_TYPE_USAGE_LIMIT).filter(([, code]) => code === limitCode).map(([type]) => type);
 }
+
+export const POS_SESSION_DEVICE_TYPES = deviceTypesForUsageLimit(USAGE_LIMIT.POS_REGISTERS);
 
 export function planLimitSummary(planCode) {
   const limits = PLAN_USAGE_LIMITS[planCode] || PLAN_USAGE_LIMITS.STARTER;

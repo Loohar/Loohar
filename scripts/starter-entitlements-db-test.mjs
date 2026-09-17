@@ -17,8 +17,10 @@ if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
   console.log("SKIP Starter entitlements DB test: set LOOHAR_TEST_DATABASE_URL to a disposable local database.");
   process.exit(0);
 }
+// A deliberately small pool proves the seat/device locks never need a second connection mid-transaction.
+const pooledUrl = `${databaseUrl}${databaseUrl.includes("?") ? "&" : "?"}connection_limit=2&pool_timeout=10`;
 Object.assign(process.env, {
-  DATABASE_URL: databaseUrl,
+  DATABASE_URL: pooledUrl,
   DIRECT_URL: databaseUrl,
   NODE_ENV: "test",
   EMAIL_PROVIDER: "console",
@@ -33,7 +35,7 @@ const restaurantRoutes = (await import("../apps/api/src/routes/restaurant.js")).
 const { errorHandler } = await import("../apps/api/src/middleware/errorHandler.js");
 const { createAuthSession } = await import("../apps/api/src/services/authSessionService.js");
 const { signAccessToken } = await import("../apps/api/src/utils/tokens.js");
-const { registerPosDevice, updatePosDevice } = await import("../apps/api/src/services/posService.js");
+const { listPosOrders, registerPosDevice, updatePosDevice } = await import("../apps/api/src/services/posService.js");
 const { PLAN_USAGE_LIMITS, USAGE_LIMIT } = await import("../apps/shared/planEntitlements.js");
 
 const app = express();
@@ -88,7 +90,7 @@ test("Starter includes five employee seats; owners and admins do not use one", a
   await prisma.restaurantStaff.create({ data: { restaurantId: restaurant.id, userId: admin.id, role: "RESTAURANT_ADMIN" } });
   assert.equal(STARTER_SEATS, 5);
   for (let index = 0; index < STARTER_SEATS; index += 1) {
-    const role = ["CASHIER", "KITCHEN_STAFF", "RESTAURANT_MANAGER", "DRIVER", "CASHIER"][index];
+    const role = ["CASHIER", "KITCHEN_STAFF", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF"][index];
     const created = await call("POST", `/api/restaurants/${restaurant.id}/employees`, { token, body: employee(`a${index}`, role) });
     assert.equal(created.status, 201, `employee ${index + 1} fits in Starter (${JSON.stringify(created.body)})`);
   }
@@ -147,7 +149,35 @@ test("Starter allows one active register and one kitchen display", async () => {
   const replacement = await outcome(updatePosDevice({ restaurantId: restaurant.id, user: owner, deviceId: pendingDevice.id, body: { status: "ACTIVE" } }));
   assert.equal(replacement.ok, true, "revoking the old register frees the entitlement for a replacement");
 
-  const concurrent = await Promise.all(["x1", "x2", "x3", "x4"].map((fingerprint) => outcome(register(fingerprint))));
-  assert.equal(concurrent.filter((result) => result.ok).length, 0, "no concurrent registration exceeds the limit");
+  await updatePosDevice({ restaurantId: restaurant.id, user: owner, deviceId: pendingDevice.id, body: { status: "REVOKED" } });
+  const concurrent = await Promise.all(["x1", "x2", "x3", "x4", "x5", "x6"].map((fingerprint) => outcome(register(fingerprint))));
+  assert.equal(concurrent.filter((result) => result.ok).length, 1, "exactly one concurrent registration takes the free register");
   assert.equal(await prisma.posDevice.count({ where: { restaurantId: restaurant.id, status: "ACTIVE", deviceType: { in: ["MAIN_TERMINAL", "POS_KIOSK", "APPROVED_MOBILE"] } } }), 1);
+});
+
+test("manager devices count as registers and kitchen displays cannot run POS sessions", async () => {
+  const { restaurant, owner } = await starterRestaurant("d");
+  const register = (fingerprint, deviceType) => registerPosDevice({ restaurantId: restaurant.id, user: owner, body: { name: fingerprint, deviceType }, fingerprint: `${runId}-d-${fingerprint}` });
+  const outcome = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, status: error.status, code: error.code }));
+  assert.equal((await outcome(register("manager", "MANAGER_DEVICE"))).ok, true);
+  const extra = await outcome(register("kiosk", "POS_KIOSK"));
+  assert.equal(extra.code, "USAGE_LIMIT_REACHED", "a manager device uses the Starter register");
+  const kds = await register("kds", "KITCHEN_DISPLAY");
+  const posOnKds = await outcome(listPosOrders({ restaurantId: restaurant.id, user: owner, deviceId: kds.id, fingerprint: `${runId}-d-kds` }));
+  assert.equal(posOnKds.code, "POS_DEVICE_NOT_REGISTER");
+});
+
+test("Starter cannot create driver logins and deleted employees cannot be reactivated", async () => {
+  const { restaurant, token } = await starterRestaurant("e");
+  const driver = await call("POST", `/api/restaurants/${restaurant.id}/employees`, { token, body: employee("e-driver", "DRIVER") });
+  assert.equal(driver.status, 403);
+  assert.equal(driver.body.code, "FEATURE_NOT_INCLUDED");
+  const cashier = await call("POST", `/api/restaurants/${restaurant.id}/employees`, { token, body: employee("e-cashier") });
+  assert.equal(cashier.status, 201);
+  const toDriver = await call("PATCH", `/api/restaurants/${restaurant.id}/employees/${cashier.body.employee.id}`, { token, body: { role: "DRIVER" } });
+  assert.equal(toDriver.status, 403, "changing an employee into a driver needs driver management");
+  await prisma.user.update({ where: { id: cashier.body.employee.id }, data: { status: "DELETED" } });
+  const reactivate = await call("PATCH", `/api/restaurants/${restaurant.id}/employees/${cashier.body.employee.id}`, { token, body: { status: "ACTIVE" } });
+  assert.equal(reactivate.status, 404);
+  assert.equal((await prisma.user.findUnique({ where: { id: cashier.body.employee.id } })).status, "DELETED");
 });

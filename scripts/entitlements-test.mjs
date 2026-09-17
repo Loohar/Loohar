@@ -149,6 +149,7 @@ for (const file of ["apps/api/src/modules/platformBilling/platformBillingService
   const source = readFileSync(file, "utf8");
   assert.equal(/staffLimit:\s*(plan\.code|\d)/.test(source), false, `${file} must not hardcode plan staff limits`);
   assert.equal(/maxDrivers:\s*code ===/.test(source), false, `${file} must not hardcode plan driver limits`);
+  assert.equal(/(locationLimit|maxLocations):\s*(plan\.)?code ===/.test(source), false, `${file} must not hardcode plan location limits`);
 }
 
 console.log("Entitlement tests passed.");

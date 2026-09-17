@@ -1,5 +1,6 @@
 import { prisma } from "../config/prisma.js";
 import { verifyPosSessionToken } from "../utils/tokens.js";
+import { POS_SESSION_DEVICE_TYPES } from "../../../shared/planEntitlements.js";
 
 function deny(res, error, code = "POS_SESSION_REQUIRED") {
   return res.status(401).json({ error, code });
@@ -43,7 +44,7 @@ export async function requirePosSession(req, res, next) {
         }
       })
     ]);
-    if (!staff || !device) {
+    if (!staff || !device || !POS_SESSION_DEVICE_TYPES.includes(device.deviceType)) {
       return deny(res, "The employee or register is no longer authorized.", "POS_SESSION_REVOKED");
     }
     if ((payload.locationId || null) !== (device.locationId || null)) {

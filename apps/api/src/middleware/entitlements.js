@@ -294,6 +294,12 @@ export async function assertFeatureForRestaurant({ restaurantId, feature, method
 
 export async function assertUsageLimitForRestaurant({ restaurantId, limitCode, used = 0, requestedIncrement = 1 }) {
   const entitlement = await loadRestaurantEntitlements(restaurantId);
+  return assertUsageWithinEntitlement({ entitlement, limitCode, used, requestedIncrement });
+}
+
+// Synchronous check against an already-loaded entitlement, for callers counting usage inside a
+// transaction (loading entitlements there would need a second pooled connection).
+export function assertUsageWithinEntitlement({ entitlement, limitCode, used = 0, requestedIncrement = 1 }) {
   const decision = usageLimitDecision({ entitlement, limitCode, used, requestedIncrement });
   if (!decision.allowed) {
     throw httpError(decision.error, decision.status || 403, {
