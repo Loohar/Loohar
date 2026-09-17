@@ -4737,6 +4737,18 @@ textarea {
     @apply min-h-11 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700;
   }
 
+  .pos-tip-picker {
+    @apply mx-auto mt-4 grid w-full max-w-4xl gap-2 rounded-md border border-line bg-slate-50 p-3;
+  }
+
+  .pos-tip-head {
+    @apply flex items-center justify-between text-sm font-bold text-slate-600;
+  }
+
+  .pos-tip-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
   .pos-tender-switch {
     @apply mx-auto mt-4 flex w-full max-w-4xl gap-2;
   }

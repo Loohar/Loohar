@@ -97,6 +97,8 @@ test("the daily summary totals only this restaurant's settled money for the day"
   const summary = await buildBasicSalesSummary({ restaurantId: ctx.a.restaurant.id, day: "", locationId: "" });
   assert.equal(summary.payments.collectedCents, 2000 + 1000 + 1500 + 2500, "settled payments only");
   assert.equal(summary.payments.tipsCents, 300);
+  assert.equal(summary.payments.restaurantTipsCents, 300, "restaurant tips are reported separately");
+  assert.equal(summary.payments.driverTipsCents, 0, "driver tips are reported separately for tip-out");
   assert.equal(summary.payments.taxCollectedCents, 150);
   assert.equal(summary.refunds.amountCents, 500);
   assert.equal(summary.reconciliation.netCollectedCents, 7000 - 500);

@@ -8522,6 +8522,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const [tableNumber, setTableNumber] = useState("");
   const [locationId, setLocationId] = useState("");
   const [amountReceived, setAmountReceived] = useState("");
+  const [tipCents, setTipCents] = useState(0);
   const [terminalReaders, setTerminalReaders] = useState([]);
   const [selectedReaderId, setSelectedReaderId] = useState("");
   const [terminalStatus, setTerminalStatus] = useState("");
@@ -9462,6 +9463,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   }
 
   async function calculateQuote(lines = cart, options = {}) {
+    const quoteTipCents = options.tipCents === undefined ? tipCents : options.tipCents;
     if (!lines.length) {
       setError("Add at least one menu item before calculating a quote.");
       return null;
@@ -9487,6 +9489,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
         method: "POST",
         body: {
           orderType,
+          tipCents: quoteTipCents,
           deliveryZoneId: customer.deliveryZoneId || null,
           locationId: locationId || activeDevice?.locationId || null,
           lineItems: lines.map((line) => ({
@@ -9855,6 +9858,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     setLastOrder(null);
     setLastOrderReceiptKind("guest");
     setAmountReceived("");
+    setTipCents(0);
     setPaymentResult(null);
     setCustomer(emptyPosCustomer());
     setOrderType("WALK_IN");
@@ -9908,6 +9912,20 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     recordPosPerformanceMetric("cashPaymentApiRequestCount", cashPaymentRequestCountRef.current);
     cashPaymentStartedAtRef.current = 0;
     cashPaymentServerConfirmedAtRef.current = 0;
+  }
+
+  // The tip is part of the server-verified total, so changing it always re-quotes.
+  async function applyTip(nextTipCents) {
+    const normalized = Math.max(0, Math.round(Number(nextTipCents) || 0));
+    setTipCents(normalized);
+    if (lastOrder?.id) return;
+    if (!cart.length) return;
+    if (!apiOnline || connectionFailed) {
+      setError("Tips need an internet connection. Take the order offline without a tip, or reconnect.");
+      setTipCents(0);
+      return;
+    }
+    await calculateQuote(cart, { tipCents: normalized });
   }
 
   async function loadTerminalReaders() {
@@ -10349,6 +10367,9 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           quote={quote}
           canAcceptCash={canAcceptCash}
           cashDisabledReason={cashDisabledReason}
+          tipCents={tipCents}
+          onTip={applyTip}
+          tipsAvailable={apiOnline && !connectionFailed && !lastOrder?.id}
           canAcceptCard={canAcceptCard}
           cardDisabledReason={cardDisabledReason}
           terminalReaders={terminalReaders}

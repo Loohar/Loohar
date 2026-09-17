@@ -73,6 +73,8 @@ const ROLE_PERMISSIONS = {
 };
 
 const ORDER_TYPES = new Set(["PICKUP", "DELIVERY", "DINE_IN", "WALK_IN", "DRIVE_THRU", "CURBSIDE", "CATERING"]);
+// Small orders still allow a generous tip; larger ones are capped at twice the subtotal.
+const POS_MINIMUM_TIP_CEILING_CENTS = 10_000;
 const ACTIVE_RESTAURANT_STATUSES = new Set(["ACTIVE"]);
 const POS_ROLES = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER", "CASHIER"]);
 const PIN_MANAGEMENT_ROLES = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER"]);
@@ -1017,13 +1019,23 @@ export async function createPosQuote({ restaurantId, user, body, deviceId = null
     await recordAudit({ actorUserId: user.id, restaurantId, action: "pos.discount.applied", entityType: "OrderQuote", entityId: null, metadata: { discountCents, subtotalCents, deviceId } });
   }
   const { deliveryFeeCents } = resolvePosDeliveryPricing(orderConfiguration, orderType, body, subtotalCents);
+  // The register enters the tip the guest chose. Item prices still come from the menu; only the tip
+  // is taken from the request, bounded so a mistyped amount cannot become a runaway charge.
+  const requestedTipCents = Math.round(Number(body?.tipCents ?? 0));
+  if (!Number.isSafeInteger(requestedTipCents) || requestedTipCents < 0) {
+    throw httpError("Enter a valid tip amount.", 400, { code: "POS_TIP_INVALID" });
+  }
+  const tipCeilingCents = Math.max(POS_MINIMUM_TIP_CEILING_CENTS, subtotalCents * 2);
+  if (requestedTipCents > tipCeilingCents) {
+    throw httpError("That tip is larger than this register allows. Check the amount.", 400, { code: "POS_TIP_TOO_LARGE", maxTipCents: tipCeilingCents });
+  }
   const pricing = calculatePosPricingSnapshot({
     lineItems: normalizedItems,
     discountCents,
     deliveryFeeCents,
     taxRateBps: taxConfiguration.taxRateBps,
     taxInclusive: taxConfiguration.taxInclusive,
-    tipCents: 0
+    tipCents: requestedTipCents
   });
   const { taxCents, tipCents, totalCents } = pricing;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -1171,7 +1183,9 @@ async function createPosOrderTransaction({
       deliveryFeeCents: quote.deliveryFeeCents,
       taxCents: quote.taxCents,
       tipCents: quote.tipCents,
+      // A tip taken at the register belongs to the restaurant; driver tips are collected at delivery checkout.
       restaurantTipCents: quote.tipCents,
+      driverTipCents: 0,
       totalCents: quote.totalCents,
       deliveryAddress: normalizedCustomer.deliveryAddress || null,
       notes: String(notes || "").slice(0, 1000),

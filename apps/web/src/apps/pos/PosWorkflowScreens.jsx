@@ -468,6 +468,9 @@ export function PaymentSelectionScreen({
   pendingSyncCount = 0,
   canAcceptCard = false,
   cardDisabledReason = "",
+  tipCents = 0,
+  onTip = null,
+  tipsAvailable = false,
   terminalReaders = [],
   selectedReaderId = "",
   setSelectedReaderId = () => {},
@@ -510,6 +513,38 @@ export function PaymentSelectionScreen({
         <div><span>Amount paid</span><strong>{money(0)}</strong></div>
         <div><span>Amount due</span><strong>{quoteReady ? money(total) : "..."}</strong></div>
       </div>
+      {onTip ? (
+        <div className="pos-tip-picker" aria-label="Tip">
+          <div className="pos-tip-head"><span>Tip</span><strong>{money(tipCents)}</strong></div>
+          <div className="pos-tip-actions">
+            {[0, 15, 18, 20].map((percent) => {
+              const amount = percent === 0 ? 0 : Math.round((Number(quote?.subtotalCents || 0) * percent) / 100);
+              return (
+                <button
+                  className={`seg ${tipCents === amount && (percent > 0 || tipCents === 0) ? "active" : ""}`}
+                  type="button"
+                  key={percent}
+                  onClick={() => onTip(amount)}
+                  disabled={!tipsAvailable || Boolean(saving)}
+                >
+                  {percent === 0 ? "No tip" : `${percent}%`}
+                </button>
+              );
+            })}
+            <input
+              className="input max-w-28"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Custom"
+              aria-label="Custom tip amount"
+              onBlur={(event) => event.target.value !== "" && onTip(Math.round(Number(event.target.value) * 100))}
+              disabled={!tipsAvailable || Boolean(saving)}
+            />
+          </div>
+          {!tipsAvailable ? <small className="pos-cash-disabled-reason">{offline ? "Tips need an internet connection." : "The tip is set before the order is sent."}</small> : null}
+        </div>
+      ) : null}
       {tender === "CARD" ? (
         <div className="pos-card-workspace">
           <label>

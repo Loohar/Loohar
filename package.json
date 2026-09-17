@@ -222,6 +222,7 @@
     "test:starter-entitlements-db": "node scripts/starter-entitlements-db-test.mjs",
     "test:storefront-checkout-db": "node --experimental-test-module-mocks scripts/storefront-checkout-db-test.mjs",
     "test:basic-reporting-db": "node scripts/basic-reporting-db-test.mjs",
+    "test:pos-tips-db": "node scripts/pos-tips-db-test.mjs",
     "test:pos-terminal-db": "node scripts/pos-terminal-db-test.mjs",
     "test:pos-cash-drawer-setup-db": "node --experimental-test-module-mocks scripts/pos-cash-drawer-setup-db-test.mjs",
     "test:stripe-connect-accounts-v2": "node scripts/stripe-connect-accounts-v2-test.mjs",

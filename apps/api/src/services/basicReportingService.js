@@ -99,6 +99,8 @@ export async function listRestaurantPayments({ restaurantId, day, locationId, li
         taxCents: payment.taxCents,
         deliveryFeeCents: payment.deliveryFeeCents,
         tipCents: (payment.restaurantTipCents || 0) + (payment.driverTipCents || 0),
+        restaurantTipCents: payment.restaurantTipCents || 0,
+        driverTipCents: payment.driverTipCents || 0,
         totalCents: payment.totalCents,
         refundedCents,
         refundableCents: ["PAID", "PARTIALLY_REFUNDED"].includes(payment.status) ? Math.max(0, payment.totalCents - refundedCents) : 0,
@@ -161,7 +163,10 @@ export async function buildBasicSalesSummary({ restaurantId, day, locationId }) 
   }
 
   const countedOrders = orders.filter((order) => !["CANCELLED", "REJECTED"].includes(order.status));
-  const tipsCents = sumBy(settled, "restaurantTipCents") + sumBy(settled, "driverTipCents");
+  // Restaurant and driver tips stay separate: they are paid out to different people.
+  const restaurantTipsCents = sumBy(settled, "restaurantTipCents");
+  const driverTipsCents = sumBy(settled, "driverTipCents");
+  const tipsCents = restaurantTipsCents + driverTipsCents;
   const collectedCents = sumBy(settled, "totalCents");
   const refundedCents = sumBy(scopedRefunds, "amountCents");
   const paidOrderIds = new Set(settled.map((payment) => payment.orderId));
@@ -184,6 +189,8 @@ export async function buildBasicSalesSummary({ restaurantId, day, locationId }) 
     payments: {
       collectedCents,
       tipsCents,
+      restaurantTipsCents,
+      driverTipsCents,
       taxCollectedCents: sumBy(settled, "taxCents"),
       settledCount: settled.length,
       byMethod: [...byMethod.values()].sort((left, right) => right.amountCents - left.amountCents)
