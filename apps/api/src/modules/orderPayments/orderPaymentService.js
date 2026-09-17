@@ -466,8 +466,8 @@ export async function createOrderPayment({ body }) {
   const created = await prisma.$transaction(async (tx) => {
     const order = await tx.order.create({
       data: {
-        restaurantId: quote.restaurant.id,
-        locationId: quote.locationId,
+        restaurant: { connect: { id: quote.restaurant.id } },
+        ...(quote.locationId ? { location: { connect: { id: quote.locationId } } } : {}),
         orderNumber,
         type: body.type,
         deliveryAddress: body.deliveryAddress,
