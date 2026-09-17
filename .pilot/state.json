@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T06:31:00Z",
+  "updatedAt": "2026-09-17T10:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -9,14 +9,14 @@
       "webUrl": "https://loohar.com",
       "apiSha": "0526862bceb2dc3a483de96561755052076df060",
       "webSha": "0526862bceb2dc3a483de96561755052076df060",
-      "verifiedAt": "2026-09-17T06:31:00Z",
+      "verifiedAt": "2026-09-17T10:00:00Z",
       "frozen": true,
       "changeRequiresOwnerApproval": true
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
       "apiSha": "4c48815283adce470b9130f4bf49aa50f57119a7",
-      "apiVerifiedAt": "2026-09-17T06:31:00Z",
+      "apiVerifiedAt": "2026-09-17T10:00:00Z",
       "webUrl": "https://loohar-kds-staging-git-fix-la-14814b-subashsunar-8870s-projects.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel Deployment Protection; available CLI login cannot access the subashsunar-8870s-projects team",
@@ -30,10 +30,10 @@
       "sha": "4c48815283adce470b9130f4bf49aa50f57119a7"
     },
     "candidate": {
-      "branch": "fix/launch-legacy-stripe-webhook-v01",
-      "sha": "1d30522c07926a519affe5e99782bdd5f989b96a",
+      "branch": "fix/launch-pilot-review-fixes-v01",
+      "sha": "48c27e933d9c29d8809cc370b1e0c3c4c4246a5c",
       "pushed": true,
-      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-l04-legacy-webhook-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-review2-fixes-v01",
       "chain": [
         {
           "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
@@ -79,6 +79,31 @@
           "sha": "1d30522c07926a519affe5e99782bdd5f989b96a",
           "item": "L-03/L-04",
           "summary": "atomic settlement and replay safety from security review"
+        },
+        {
+          "sha": "6d61d61",
+          "item": "L-15",
+          "summary": "restaurant cash drawer setup and drawer/location/register tenant scoping"
+        },
+        {
+          "sha": "7304418",
+          "item": "L-07",
+          "summary": "idempotent, capped, connected-account refunds"
+        },
+        {
+          "sha": "ca55a25",
+          "item": "L-06",
+          "summary": "race-safe driver claims and delivery transitions; tenant-checked assignment"
+        },
+        {
+          "sha": "a8fdeff",
+          "item": "L-09",
+          "summary": "platform billing webhook event ledger"
+        },
+        {
+          "sha": "48c27e9",
+          "item": "L-15/L-07/L-06/L-09",
+          "summary": "second security review fixes: refund outcome safety, shared drawers, delivery state guards, webhook lease"
         }
       ]
     },
@@ -134,22 +159,32 @@
     "L-06": {
       "title": "Driver delivery claim race",
       "priority": "P1",
-      "status": "NOT_STARTED"
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "ca55a25",
+      "certification": "NOT_STAGED",
+      "alsoFixed": "driver-set base pay; re-claim reset of delivered orders; cross-tenant driver assignment"
     },
     "L-07": {
       "title": "Refund idempotency",
       "priority": "P1",
-      "status": "NOT_STARTED"
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "7304418",
+      "certification": "NOT_STAGED",
+      "alsoFixed": "refunds were sent without Stripe-Account header and could never succeed"
     },
     "L-08": {
       "title": "Delivery zone enforcement at quote",
       "priority": "P1",
-      "status": "NOT_STARTED"
+      "status": "BLOCKED",
+      "blocker": "Zones are radius-based; enforcement needs a geocoding provider (vendor/business decision). Minimum-order enforcement for delivery fee rules can be done without geocoding.",
+      "verified": true
     },
     "L-09": {
       "title": "Platform billing webhook event ledger",
       "priority": "P1",
-      "status": "NOT_STARTED"
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "a8fdeff",
+      "certification": "NOT_STAGED"
     },
     "L-10": {
       "title": "Prisma schema vs migration drift",
@@ -170,9 +205,11 @@
     "L-15": {
       "title": "Cash drawers can only be created by the development setup script",
       "priority": "P0",
-      "status": "NOT_STARTED",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
       "evidence": "only cashDrawer.upsert is apps/api/prisma/setup-development-pos.js; no API route or UI",
-      "verified": true
+      "verified": true,
+      "sha": "6d61d61",
+      "certification": "NOT_STAGED"
     },
     "L-16": {
       "title": "Refunds have no restaurant UI (API only)",
@@ -188,7 +225,8 @@
       "priority": "P1",
       "status": "NOT_STARTED",
       "verified": false,
-      "source": "manual drafting code review 2026-09-17"
+      "source": "manual drafting code review 2026-09-17",
+      "note": "PIN API supports cashier self-setup; UI paths need runtime POS acceptance on staging"
     },
     "L-18": {
       "title": "Driver app shows sample deliveries while offline",
@@ -205,23 +243,43 @@
       "title": "Client-supplied service fee and tips accepted (non-negative)",
       "priority": "P2",
       "status": "NEEDS_OWNER_DECISION"
+    },
+    "L-19": {
+      "title": "test:pos-enterprise and test:enterprise-pos-blockers fail (not in npm test aggregate)",
+      "priority": "P2",
+      "status": "NOT_STARTED",
+      "evidence": "Fail on production baseline 0526862 as well; stale string assertions"
+    },
+    "L-20": {
+      "title": "Stale PENDING refund sweep and dashboard-created refunds not mirrored",
+      "priority": "P2",
+      "status": "NOT_STARTED"
+    },
+    "L-21": {
+      "title": "Concurrent main-terminal registration can create two drawers; concurrent checkout.session.completed after lease expiry",
+      "priority": "P2",
+      "status": "NOT_STARTED"
     }
   },
   "tests": {
-    "candidateSha": "1d30522c07926a519affe5e99782bdd5f989b96a",
+    "candidateSha": "48c27e9",
     "ranAt": "2026-09-17",
-    "npmTest": "PASS (66 suites)",
+    "npmTest": "PASS",
     "lint": "PASS",
-    "build": "PASS (with staging VITE_API_URL/VITE_REALTIME_URL)",
+    "build": "PASS (staging VITE_API_URL/VITE_REALTIME_URL)",
     "securityScan": "PASS",
     "npmAuditHighCritical": "0 high, 0 critical (5 moderate)",
     "prismaValidate": "PASS",
-    "migrationsFreshDatabase": "PASS (32 migrations on disposable Postgres 16)",
     "dbSuites": {
       "test:checkout-idempotency-db": "PASS (9)",
-      "test:stripe-webhook-hardening-db": "PASS (10)"
+      "test:stripe-webhook-hardening-db": "PASS (11)",
+      "test:pos-cash-drawer-setup-db": "PASS (6)",
+      "test:refund-idempotency-db": "PASS (10)",
+      "test:driver-claim-race-db": "PASS (5)",
+      "test:platform-billing-webhook-ledger-db": "PASS (3)"
     },
-    "schemaDrift": "PRE-EXISTING (see L-10); unrelated to candidate changes"
+    "securityReview": "Two adversarial reviews (4c48815..1d30522 and 1d30522..a8fdeff); all CONFIRMED findings fixed in 1d30522 and 48c27e9; remaining low/plausible items tracked",
+    "schemaDrift": "PRE-EXISTING (L-10); refund idempotencyKey now modelled"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -233,15 +291,16 @@
     ]
   },
   "humanActionsRequired": [
-    "Deploy branch fix/launch-legacy-stripe-webhook-v01 (1d30522) to the staging API and staging web, or grant a Render API key / Vercel team access usable by automation",
+    "Deploy branch fix/launch-pilot-review-fixes-v01 (48c27e9) to the staging API and staging web, or grant a Render API key / Vercel team access usable by automation",
     "Confirm STRIPE_WEBHOOK_SECRET is configured on staging (and later production) or that the legacy /api/payments/webhook endpoint is not registered in Stripe",
     "Append the exact staging web origin to CORS_ORIGINS on loohar-api-staging only (not first entry)",
     "Report the staging web /version.json commitSha (Vercel-protected)",
-    "Decide whether the Starter plan should include employee seats (currently 0) for the pilot restaurant's plan"
+    "Decide whether the Starter plan should include employee seats (currently 0) for the pilot restaurant's plan",
+    "Choose a geocoding/maps provider (or confirm pickup-only / manual delivery radius for the pilot) to unblock delivery zone enforcement (L-08)"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "L-15 restaurant-managed cash drawer setup (P0 for cash POS pilot) \u2014 verify register/drawer model and add owner/manager API + UI; then L-06 driver claim race, L-07 refund idempotency"
+  "nextAutonomousTask": "L-10 schema drift reconciliation; delivery minimum-order enforcement (L-08 partial); resume L-01C when staging access exists"
 }

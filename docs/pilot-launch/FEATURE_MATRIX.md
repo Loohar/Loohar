@@ -1,6 +1,6 @@
 # Feature Matrix — Pilot View
 
-Evidence date 2026-09-17. Source: code review of `47fa9cc`/`1d30522` (UI + API) and test suites.
+Evidence date 2026-09-17. Source: code review of `47fa9cc`/`48c27e9` (UI + API) and test suites.
 "Code status" reflects what the code contains; "Certified" requires staging runtime evidence.
 Nothing in this table is STAGING CERTIFIED yet.
 
@@ -23,11 +23,11 @@ re-verified.
 | Online ordering | Order tracking & receipt | Available | Required | Token-gated (L-01) |
 | Payments | Stripe Connect onboarding (Accounts v2) | Available | Required | `test:stripe-connect-accounts-v2` |
 | Payments | Webhooks | Available | Required | L-04 hardening in candidate |
-| Payments | Refunds | Partial (API only, no UI) | Required | Verified: no web call to refund API; L-07 idempotency missing |
+| Payments | Refunds | Partial (API only, no UI) | Required | API idempotent, balance-capped, connected-account correct (L-07, `48c27e9`); no UI (L-16) |
 | Payments | Platform (SaaS) billing | Partial | Recommended | In-app plan change not available (Reported); L-09 ledger gap |
 | Tips | Online tips | Partial | Required | POS tips not available (Reported) |
 | POS | Register sign-in, cart, modifiers, hold/recall | Available | Required | POS suites pass |
-| POS | Cash tender | Available in code | Required | **Blocked in practice:** cash drawers only creatable by development setup script (Verified, L-15) |
+| POS | Cash tender | Available in code | Required | Drawers now provisioned per main terminal with shared-drawer shifts (L-15, `48c27e9`); needs staging POS acceptance |
 | POS | Card payments at register | Planned in UI | Out of pilot scope | API exists; no card tender UI (Reported) |
 | POS | Staff PIN self-setup | Partial | Required | Reported: cashier cannot set own PIN in register (L-17) |
 | POS | Receipt print by cashier | Partial | Required | Reported: preview limited to owner/admin/manager (L-17) |
@@ -37,9 +37,9 @@ re-verified.
 | POS | Kiosk mode | Partial | Optional | Kiosk screen not linked for cashiers (Reported) |
 | Printers | Auto-print | Planned | Recommended | Switches save but print nothing (Reported); browser print only |
 | KDS | Kitchen display & status updates | Available | Required | Authenticated realtime rooms; `test:realtime-kds` |
-| Delivery | Zones & fees | Partial | Required if delivery | Zones not enforced at quote (Verified, L-08) |
+| Delivery | Zones & fees | Partial | Required if delivery | Zones not enforced at quote (L-08, BLOCKED on geocoding provider) |
 | Drivers | Driver app: today, accept, status, history | Available | Required if delivery | |
-| Drivers | Claim safety | Partial | Required if delivery | Claim race (Verified, L-06) |
+| Drivers | Claim safety | Available in candidate | Required if delivery | Race-safe claims and transitions (L-06, `48c27e9`) |
 | Drivers | Claim QR on delivery slip, GPS, proof, payouts | Planned | Optional | Reported |
 | Drivers | Offline app shows sample deliveries | Defect | Required if delivery | Reported (L-18) |
 | Employees | Add/disable staff | Partial | Required | Starter plan has 0 employee seats (Verified: `entitlements.js`) — pricing decision |

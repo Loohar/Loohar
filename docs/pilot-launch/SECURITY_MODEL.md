@@ -1,6 +1,6 @@
 # Loohar Security Model (current)
 
-Describes controls present in code at candidate `1d30522`. Anything listed under "Gaps" is
+Describes controls present in code at candidate `48c27e9`. Anything listed under "Gaps" is
 not yet guaranteed.
 
 ## Identity and sessions
@@ -36,8 +36,10 @@ not yet guaranteed.
   (Stripe Connect direct charges on the restaurant account).
 - Monetary truth: quotes computed server-side; modifiers validated against the menu (L-02);
   PaymentIntent amounts come from the persisted payment row (L-03).
-- Idempotency: checkout creation requires `Idempotency-Key`; PaymentIntents use a Stripe
-  idempotency key bound to the payment id; Connect account creation idempotent.
+- Idempotency: checkout creation and refunds require `Idempotency-Key`; PaymentIntents and
+  refunds use Stripe idempotency keys bound to their rows; refunds are reserved under a payment
+  row lock and capped at the remaining balance; uncertain provider outcomes keep the balance
+  reserved.
 - Live-key guard: Stripe live keys refused outside production (`assertStripeConnectModeAllowed`).
 
 ## Webhooks
@@ -47,7 +49,14 @@ not yet guaranteed.
   success; processed redeliveries acknowledged as duplicates.
 - Settlement is a conditional, transactional claim so concurrent deliveries apply side effects
   once and settled payments are never downgraded.
-- Gap: platform billing webhook still reprocesses redeliveries (L-09).
+- Platform billing events use the same ledger (L-09). Concurrent duplicate deliveries of an
+  unprocessed event receive 409 during a 60 s lease so Stripe retries.
+
+## POS and delivery
+- Cash drawer, register and location ids in device/shift requests are verified per restaurant;
+  clock-in locks the drawer row; clock-out only closes open shifts.
+- Driver claims and delivery transitions are conditional writes; drivers cannot set pay or
+  revive cancelled orders; restaurants can only assign their own drivers.
 
 ## Network
 - CORS: explicit allowlist from env plus production origins; wildcard refused in production;

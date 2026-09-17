@@ -13,16 +13,16 @@
 
 | Field | Value |
 | --- | --- |
-| Branch | `fix/launch-legacy-stripe-webhook-v01` (pushed) |
-| SHA | `1d30522c07926a519affe5e99782bdd5f989b96a` |
+| Branch | `fix/launch-pilot-review-fixes-v01` (pushed) |
+| SHA | `48c27e933d9c29d8809cc370b1e0c3c4c4246a5c` |
 | Base | production `0526862` (fast-forward; 0 commits behind `origin/main`) |
-| Included | L-01 (`2d85007`, `b291ddd`, `cfec6a4`, `a3262dc`), L-02 (`4c48815`), L-05 (`0e69db3`), L-03 (`7e0833a`), L-04 (`47fa9cc`), review fixes (`1d30522`) |
+| Included | L-01 (`2d85007`, `b291ddd`, `cfec6a4`, `a3262dc`), L-02 (`4c48815`), L-05 (`0e69db3`), L-03 (`7e0833a`), L-04 (`47fa9cc`), review 1 fixes (`1d30522`), L-15 (`6d61d61`), L-07 (`7304418`), L-06 (`ca55a25`), L-09 (`a8fdeff`), review 2 fixes (`48c27e9`) |
 | Staged | No |
 | Staging certified | No |
 
 ### Migrations since production
-`git diff --name-only 0526862..1d30522 -- apps/api/prisma/migrations` lists exactly one
-migration (34 files changed overall):
+`git diff --name-only 0526862..48c27e9 -- apps/api/prisma/migrations` lists exactly one
+migration:
 - `20260916090000_checkout_idempotency` — adds nullable `checkoutIdempotencyKeyHash`,
   `checkoutRequestHash` and a unique index on `RestaurantOrderPayment`. Additive; old code
   ignores the columns. The index build briefly locks writes on that table (small in pilot).
@@ -34,10 +34,13 @@ migration (34 files changed overall):
 2. Deploy web together with or before the API: the API requires `Idempotency-Key` on checkout,
    and browsers still holding an old bundle get a 400 until they reload.
 3. Staging web preview origin appended to staging `CORS_ORIGINS` for certification.
+4. Refund API now requires `Idempotency-Key` (no web caller today; external/admin clients must send it).
+5. POS: each main terminal now owns a drawer created on registration/update; existing terminals
+   without a drawer get one on their next device update or registration.
 
 ### Evidence
 - Tests: see `docs/pilot-launch/CONTROL_CENTER.md` §5.
-- Adversarial security review 2026-09-17: findings M1, M2, L1, L2, P1 fixed in `1d30522`.
+- Adversarial security reviews 2026-09-17: review 1 findings fixed in `1d30522`; review 2 findings fixed in `48c27e9`.
 
 ## Production release candidate report (template)
 
