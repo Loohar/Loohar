@@ -47,7 +47,13 @@ function testReconnect() {
   check(includesAll(app, ["reconciliationCursorRef", "loadKitchen({ reconcile: true, silent: true })", "skipDedupe: true"]), "Kitchen client reconciles from its last database cursor");
   check(includesAll(app, ["realtimePrerequisitesReady", "setRealtimePrerequisitesReady(true)", "routeSlug, realtimePrerequisitesReady"]), "Initial Kitchen reconciliation explicitly unlocks the realtime socket effect");
   check(app.includes('socket.on("connect", () => {') && app.includes('setRealtimeState("reconciling")'), "Socket reconnect runs reconciliation before returning to live state");
-  check(app.includes("30_000") && app.includes("reconciliationTimer"), "Kitchen keeps a bounded reconciliation safety interval");
+  check(app.includes("KITCHEN_RECONCILE_INTERVAL_MS = 30_000") && app.includes("reconciliationTimer"), "Kitchen keeps a bounded reconciliation safety interval");
+  const kitchenRealtimeBlock = app.slice(app.indexOf("const startReconciliation ="));
+  check(
+    kitchenRealtimeBlock.indexOf("startReconciliation(KITCHEN_POLL_INTERVAL_MS);") < kitchenRealtimeBlock.indexOf("loadSocketIoClient().then"),
+    "Kitchen polls for tickets before realtime is available"
+  );
+  check(app.includes('setRealtimeState("polling")') && app.includes("Tickets keep refreshing every few seconds instead."), "Kitchen falls back to polling when the realtime client cannot load");
   check(app.includes('socket.on("realtime:session-ended"'), "Kitchen handles revoked or expired realtime sessions explicitly");
 }
 

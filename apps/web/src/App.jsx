@@ -14064,6 +14064,11 @@ function DevelopmentEntitlementSimulator({ apiOnline, token, restaurantKey }) {
   );
 }
 
+// The kitchen polls for tickets while realtime is not live, and slows to a reconciliation sweep once
+// the socket is connected.
+const KITCHEN_POLL_INTERVAL_MS = 8_000;
+const KITCHEN_RECONCILE_INTERVAL_MS = 30_000;
+
 function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
   const routeSlug = initialSlug || (window.location.pathname.startsWith("/kitchen/") ? window.location.pathname.split("/")[2] : "");
   const demoKitchenOrders = demoOrders
@@ -14209,6 +14214,13 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
     let reconciliationTimer;
     let disposed = false;
     let sessionEnded = false;
+    // The kitchen must keep receiving tickets even when realtime never comes up, so reconciliation
+    // polling starts immediately and only slows down once the socket is live.
+    const startReconciliation = (intervalMs) => {
+      if (reconciliationTimer) window.clearInterval(reconciliationTimer);
+      reconciliationTimer = window.setInterval(() => loadKitchen({ reconcile: true, silent: true }), intervalMs);
+    };
+    startReconciliation(KITCHEN_POLL_INTERVAL_MS);
     loadSocketIoClient().then(({ io }) => {
       if (disposed) return;
       socket = io(REALTIME_ORIGIN, {
@@ -14243,11 +14255,11 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
       socket.on("kitchen.ticket.updated.v1", applyKitchenEvent);
       socket.on("kitchen.ticket.cancelled.v1", applyKitchenEvent);
       socket.on("order.status.updated.v1", applyKitchenEvent);
-      reconciliationTimer = window.setInterval(() => loadKitchen({ reconcile: true, silent: true }), 30_000);
+      startReconciliation(KITCHEN_RECONCILE_INTERVAL_MS);
     }).catch(() => {
       if (!disposed) {
-        setRealtimeState("error");
-        setError("Kitchen realtime connection failed to load. Manual refresh remains available.");
+        setRealtimeState("polling");
+        setError("Kitchen realtime could not start. Tickets keep refreshing every few seconds instead.");
       }
     });
     return () => {
@@ -14297,7 +14309,7 @@ function KitchenApp({ apiOnline, token, user, initialSlug = "" }) {
 
   return (
     <div className="kds-shell" id="kitchen">
-      <SectionHeader eyebrow="Kitchen Display System" title={restaurant.businessName || restaurant.name || "Kitchen"} icon={ReceiptText} action={<div className="flex flex-wrap items-center gap-2">{locations.length > 1 ? <select className="select" aria-label="Kitchen location" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select> : null}<StatusPill tone={realtimeState === "live" ? "good" : realtimeState === "error" ? "bad" : "warn"}>{realtimeState === "live" ? "Realtime" : readable(realtimeState)}</StatusPill><button className="button-muted" onClick={() => loadKitchen()}><RefreshCw size={18} />{loading ? "Loading" : "Refresh"}</button></div>} />
+      <SectionHeader eyebrow="Kitchen Display System" title={restaurant.businessName || restaurant.name || "Kitchen"} icon={ReceiptText} action={<div className="flex flex-wrap items-center gap-2">{locations.length > 1 ? <select className="select" aria-label="Kitchen location" value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select> : null}<StatusPill tone={realtimeState === "live" ? "good" : realtimeState === "error" ? "bad" : "warn"}>{realtimeState === "live" ? "Realtime" : realtimeState === "polling" ? "Refreshing every 8s" : readable(realtimeState)}</StatusPill><button className="button-muted" onClick={() => loadKitchen()}><RefreshCw size={18} />{loading ? "Loading" : "Refresh"}</button></div>} />
       <InlineError message={error} />
       {newOrderAlert ? <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700" role="status" aria-live="assertive"><ReceiptText size={18} />{newOrderAlert}</div> : null}
       <div className="grid gap-4 md:grid-cols-4" id="kitchen-summary">
