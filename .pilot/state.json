@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T23:30:00Z",
+  "updatedAt": "2026-09-18T01:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -34,7 +34,7 @@
     },
     "candidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "ca08e874505c14822b0590ec1cc76fb7360d50a1",
+      "sha": "c79f071",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -187,6 +187,26 @@
           "sha": "ca08e87",
           "item": "L-16",
           "summary": "payments list endpoint and restaurant payments/refunds page"
+        },
+        {
+          "sha": "cabf82c",
+          "item": "L-37",
+          "summary": "POS register tips (server-verified, restaurant vs driver kept distinct)"
+        },
+        {
+          "sha": "e4c7779",
+          "item": "L-38",
+          "summary": "itemized customer receipt email"
+        },
+        {
+          "sha": "07f86f8",
+          "item": "L-39",
+          "summary": "KDS polling fallback when realtime cannot start"
+        },
+        {
+          "sha": "c79f071",
+          "item": "review",
+          "summary": "review fixes: dashboard render crash, refund status/idempotency, tracking token rotation, tip carry-over, cash refundability, receipt totals, log redaction"
         }
       ],
       "deployedToStaging": false
@@ -455,10 +475,36 @@
       "priority": "P2",
       "status": "BLOCKED (owner)",
       "note": "/api/webhooks/stripe-platform returns 503 fail-closed on staging. Restaurant order payments are unaffected. Set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks."
+    },
+    "L-37": {
+      "title": "POS register tips",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Tips were impossible in store before this. Server-verified, capped, untaxed, recorded as restaurant tips; reporting separates restaurant and driver tips."
+    },
+    "L-38": {
+      "title": "Itemized customer receipt email",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Replaces a JSON dump. EMAIL_PROVIDER defaults to console, so real delivery still needs a provider (RESEND_API_KEY) on staging/production."
+    },
+    "L-39": {
+      "title": "KDS keeps polling when realtime cannot start",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY"
+    },
+    "L-40": {
+      "title": "Offline POS NEEDS_REVIEW queue has no operator screen",
+      "priority": "P2",
+      "status": "OPEN",
+      "note": "Reconciliation failures are terminal and invisible to staff; next autonomous task."
     }
   },
   "tests": {
-    "candidateSha": "ca08e87",
+    "candidateSha": "c79f071",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -466,7 +512,7 @@
     "securityScan": "PASS",
     "prismaValidate": "PASS",
     "dbSuites": {
-      "test:checkout-idempotency-db": "PASS (10)",
+      "test:checkout-idempotency-db": "PASS (11)",
       "test:stripe-webhook-hardening-db": "PASS (12)",
       "test:refund-idempotency-db": "PASS (10)",
       "test:driver-claim-race-db": "PASS (5)",
@@ -476,16 +522,18 @@
       "test:schema-migration-drift-db": "PASS",
       "test:online-fulfillment-db": "PASS (4)",
       "test:starter-entitlements-db": "PASS (6)",
-      "test:storefront-checkout-db": "PASS (11)",
+      "test:storefront-checkout-db": "PASS (14)",
       "test:basic-reporting-db": "PASS (8)",
       "test:pos-terminal-db": "PASS (19)",
-      "test:pos-cash-drawer-setup-db": "PASS (6)"
+      "test:pos-cash-drawer-setup-db": "PASS (6)",
+      "test:pos-tips-db": "PASS (4)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
       "8d427c5 \u2192 fixed in f8614e7",
       "aba7638 \u2192 fixed in 97d4d02",
-      "d6a3fc3 \u2192 fixed in bf7430a"
+      "d6a3fc3 \u2192 fixed in bf7430a",
+      "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ]
   },
   "restaurant1Readiness": {
@@ -498,17 +546,18 @@
     ]
   },
   "humanActionsRequired": [
-    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at ca08e874505c14822b0590ec1cc76fb7360d50a1 (payments/refunds page and payments list endpoint; no new environment variables, no new migrations)",
+    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at c79f071 (tips, receipts, payments page, KDS fallback; no new environment variables, no new migrations)",
     "Vercel: invite subashsunar00@gmail.com (username subashsunar, account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer, or paste the staging preview /version.json contents",
     "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account and leave the generated file in that folder; it contains no secrets and unblocks MFA, KDS, POS and reporting staging evidence",
     "Optional for platform billing certification: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging (currently fails closed with 503)",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when convenient",
     "Geocoding provider decision for automatic delivery-zone verification (pilot is pickup-only on Starter)",
-    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
+    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
+    "Optional: set RESEND_API_KEY (or another email provider) on staging so customer receipt emails actually send; EMAIL_PROVIDER defaults to console"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Rehearse a simulated Stripe Terminal sale on staging once a POS session is available; meanwhile refund/void/tip workstream, KDS device binding, offline POS and performance evidence."
+  "nextAutonomousTask": "Offline POS NEEDS_REVIEW resolution screen (L-40), then Super Admin and operations evidence."
 }
