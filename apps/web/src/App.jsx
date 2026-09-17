@@ -9088,11 +9088,6 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     else if (workflow.value === POS_WORKFLOW.OFFLINE) dispatchWorkflow({ type: POS_EVENT.API_ONLINE });
   }, [apiOnline, apiMode, workflow.value]);
 
-  // Card readers are per register, so refresh them whenever the register session or device changes.
-  useEffect(() => {
-    void loadTerminalReaders();
-  }, [posSessionActive, apiOnline, connectionFailed, activeDevice?.id, activeDevice?.cardPaymentsEnabled]);
-
   useEffect(() => {
     if (apiOnline && posSessionActive && pendingOfflineCount > 0) {
       void syncPendingOfflineTransactions();
@@ -9218,6 +9213,11 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
         : terminalReaders.length === 0
           ? "Pair a card reader in register settings first."
           : "";
+  // Card readers are per register, so refresh them whenever the register session or device changes.
+  useEffect(() => {
+    void loadTerminalReaders();
+  }, [posSessionActive, apiOnline, connectionFailed, activeDevice?.id, activeDevice?.cardPaymentsEnabled]);
+
   const canAcceptCash = Boolean(
     activeDevice?.status === "ACTIVE"
     && activeDevice.deviceType === "MAIN_TERMINAL"
