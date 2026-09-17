@@ -23,10 +23,13 @@ mock.module(new URL("../apps/api/src/middleware/entitlements.js", import.meta.ur
 const express = (await import("express")).default;
 const { prisma } = await import("../apps/api/src/config/prisma.js");
 const customerRoutes = (await import("../apps/api/src/routes/customer.js")).default;
+const publicRoutes = (await import("../apps/api/src/routes/public.js")).default;
+const { stripeSubscriptionPeriod } = await import("../apps/api/src/utils/stripeSubscriptionPeriod.js");
 const { errorHandler } = await import("../apps/api/src/middleware/errorHandler.js");
 const app = express();
 app.use(express.json());
 app.use("/api/customer", customerRoutes);
+app.use("/api/public", publicRoutes);
 app.use(errorHandler);
 
 const runId = `sf${Date.now().toString(36)}`;
@@ -60,6 +63,30 @@ for (const path of ["restaurants", "sites"]) {
     }
   });
 }
+
+const INTERNAL_FIELDS = ["billingMode", "tenantClassification", "trialConfigJson", "paymentLifecycleStatus", "settingsJson", "tenantLifecycleStatus", "trialEndsAt", "onboardingSkippedSteps", "deliveryZoneJson", "coupons"];
+for (const path of [`restaurants/${"SLUG"}`, `sites/${"SLUG"}`, `restaurants/${"SLUG"}/site`, `sites/${"SLUG"}/site`, `restaurants/${"SLUG"}/order-config`]) {
+  test(`/api/public/${path} returns no internal tenant fields`, async () => {
+    const response = await fetch(`${baseUrl}/api/public/${path.replace("SLUG", runId)}`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    for (const key of ["restaurant", "tenant"]) {
+      if (!body[key]) continue;
+      assert.equal(body[key].id !== undefined, true);
+      for (const field of INTERNAL_FIELDS) assert.equal(field in body[key], false, `${key}.${field} is not public`);
+    }
+  });
+}
+
+test("subscription periods pair start and end from the item that renews first", () => {
+  assert.deepEqual(stripeSubscriptionPeriod({ current_period_start: 10, current_period_end: 20 }), { currentPeriodStart: 10, currentPeriodEnd: 20 });
+  assert.deepEqual(stripeSubscriptionPeriod({ items: { data: [
+    { current_period_start: 100, current_period_end: 1000 },
+    { current_period_start: 500, current_period_end: 600 }
+  ] } }), { currentPeriodStart: 500, currentPeriodEnd: 600 });
+  assert.deepEqual(stripeSubscriptionPeriod({ items: { data: [] } }), { currentPeriodStart: null, currentPeriodEnd: null });
+  assert.deepEqual(stripeSubscriptionPeriod({}), { currentPeriodStart: null, currentPeriodEnd: null });
+});
 
 test("web checkout initialises Stripe.js with the restaurant's connected account", () => {
   const app = readFileSync("apps/web/src/App.jsx", "utf8");

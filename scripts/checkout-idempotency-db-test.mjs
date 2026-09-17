@@ -132,6 +132,13 @@ test("sequential retry replays the original order, PaymentIntent, and tracking t
   assert.equal(second.tracking.token, first.tracking.token);
   assert.equal(first.stripeAccountId, `acct_test_${runId}_a`, "checkout returns the connected account Stripe.js must use");
   assert.equal(second.stripeAccountId, first.stripeAccountId, "replay returns the same connected account");
+  for (const response of [first, second]) {
+    assert.equal("restaurant" in response.order && "billingMode" in response.order.restaurant, false, "checkout order omits tenant internals");
+    for (const field of ["checkoutIdempotencyKeyHash", "checkoutRequestHash", "quoteJson", "providerClientSecret", "restaurantNetCents"]) {
+      assert.equal(field in response.payment, false, `checkout payment omits ${field}`);
+    }
+    assert.equal(response.payment.status, "REQUIRES_PAYMENT_METHOD");
+  }
   const stored = await prisma.order.findUnique({ where: { id: first.order.id } });
   assert.equal(stored.trackingTokenHash, hashToken(first.tracking.token));
   assert.equal(await ordersFor(restaurantA), 1);
@@ -189,7 +196,7 @@ test("the same client key is isolated per restaurant", async () => {
   const onA = await createOrderPayment({ body: bodyFor(restaurantA), idempotencyKey: keyFor("tenant") });
   const onB = await createOrderPayment({ body: bodyFor(restaurantB), idempotencyKey: keyFor("tenant") });
   assert.notEqual(onA.order.id, onB.order.id);
-  assert.equal(onB.order.restaurantId, restaurantB.id);
+  assert.equal((await prisma.order.findUnique({ where: { id: onB.order.id } })).restaurantId, restaurantB.id);
   assert.equal(onB.checkout.idempotentReplay, false);
   assert.notEqual(onA.tracking.token, onB.tracking.token);
 });
@@ -204,7 +211,7 @@ test("a Stripe in-progress conflict leaves the order intact and a retry complete
   const retry = await createOrderPayment({ body, idempotencyKey: keyFor("conflict") });
   assert.equal(retry.order.id, pending.orderId);
   assert.ok(retry.payment.providerPaymentIntentId);
-  assert.equal(retry.order.status, "PENDING");
+  assert.equal(retry.order.internalStatus, "PENDING");
 });
 
 test("a terminal PaymentIntent failure cancels once and replays as a failed attempt", async () => {
@@ -221,4 +228,18 @@ test("a terminal PaymentIntent failure cancels once and replays as a failed atte
   assert.equal(retry.code, "CHECKOUT_ATTEMPT_FAILED");
   assert.equal(await ordersFor(restaurantC), 1);
   stripe.failKeys.delete(restaurantC.id);
+});
+
+test("replay fails visibly when the connected account is no longer available", async () => {
+  const restaurantD = await seedRestaurant("d");
+  const body = bodyFor(restaurantD);
+  const first = await createOrderPayment({ body, idempotencyKey: keyFor("noacct") });
+  assert.ok(first.clientSecret);
+  await prisma.restaurantMerchantAccount.update({
+    where: { restaurantId_provider: { restaurantId: restaurantD.id, provider: "STRIPE_CONNECT" } },
+    data: { stripeAccountId: null }
+  });
+  const replay = await outcome(createOrderPayment({ body, idempotencyKey: keyFor("noacct") }));
+  assert.equal(replay.ok, false);
+  assert.equal(replay.status, 503);
 });

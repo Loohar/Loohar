@@ -5,6 +5,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { getWebsiteBundleBySlug } from "../services/websiteService.js";
+import { publicRestaurantProfile } from "../utils/publicRestaurant.js";
 import { prisma } from "../config/prisma.js";
 import { domainInfoForRestaurant, publicUrlForRestaurant, resolvePublicTenant } from "../services/domainService.js";
 
@@ -252,8 +253,8 @@ function buildPublicSiteResponse(bundle, req) {
     ...bundle,
     domain: domainInfo,
     domainInfo,
-    restaurant: { ...bundle.restaurant, categories },
-    tenant: { ...bundle.restaurant, categories },
+    restaurant: publicRestaurantProfile({ ...bundle.restaurant, categories }),
+    tenant: publicRestaurantProfile({ ...bundle.restaurant, categories }),
     websiteSettings: bundle.website,
     menuCategories: categories,
     menuItems: items,
@@ -335,7 +336,7 @@ async function sendSiteBundle(req, res, next) {
     const { bundle } = await bundleForResolvedTenant({ req, slug: req.params.slug });
     if (!bundle || bundle.website.websiteEnabled === false) return res.status(404).json({ error: "Website not found" });
     await assertFeatureForRestaurant({ restaurantId: bundle.restaurant.id, feature: FEATURE.BASIC_WEBSITE, method: req.method });
-    res.json(bundle);
+    res.json({ ...bundle, restaurant: publicRestaurantProfile(bundle.restaurant) });
   } catch (error) {
     next(error);
   }
@@ -455,7 +456,7 @@ async function sendOrderConfig(req, res, next) {
       featureAllowed(restaurantId, FEATURE.LOYALTY)
     ]);
     res.json({
-      restaurant: bundle.restaurant,
+      restaurant: publicRestaurantProfile(bundle.restaurant),
       orderingEnabled: orderingAllowed && ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(bundle.restaurant.businessType),
       pickupEnabled: pickupAllowed && bundle.restaurant.pickupEnabled,
       deliveryEnabled: deliveryAllowed && bundle.restaurant.deliveryEnabled,

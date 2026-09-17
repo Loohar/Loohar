@@ -505,10 +505,13 @@ async function attachPaymentIntent({ order, payment, merchant }) {
   });
 }
 
+// Anonymous checkout callers get the same limited order and payment views as order tracking, not the
+// raw rows (which carry tenant settings, idempotency hashes and quote internals).
 function checkoutResponse({ order, payment, trackingToken, idempotentReplay, stripeAccountId }) {
+  const limitedOrder = limitedTrackingOrder(order);
   return {
-    order,
-    payment,
+    order: { ...limitedOrder, totalCents: limitedOrder.totals?.totalCents ?? null },
+    payment: { id: payment.id, providerPaymentIntentId: payment.providerPaymentIntentId || null, ...publicOrderPaymentStatus(payment) },
     publishableKey: stripeConnectPublishableKey(),
     // Direct charges live on the restaurant's connected account; Stripe.js must be initialised with it
     // to confirm the PaymentIntent. The account id is an identifier, not a credential.
@@ -544,8 +547,10 @@ async function replayCheckout({ existing, keyHash, requestHash }) {
   }
   const replayMerchant = await prisma.restaurantMerchantAccount.findUnique({
     where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } },
-    select: { stripeAccountId: true }
+    select: { stripeAccountId: true, status: true }
   });
+  // Without the connected account the client cannot confirm the PaymentIntent; fail visibly instead.
+  if (payment.providerClientSecret && !replayMerchant?.stripeAccountId) throw merchantNotReadyError(replayMerchant);
   return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true, stripeAccountId: replayMerchant?.stripeAccountId });
 }
 

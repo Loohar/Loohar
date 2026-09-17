@@ -14387,6 +14387,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setPaymentPublicKey(payload.publishableKey || "");
       setPaymentStripeAccount(payload.stripeAccountId || "");
       setPaymentClientSecret(payload.clientSecret || "");
+      if (payload.clientSecret && !payload.stripeAccountId) setError("Online payment is not available for this restaurant right now. Please contact the restaurant.");
       await loadHistory();
     } catch (orderError) {
       if (["CHECKOUT_ATTEMPT_FAILED", "CHECKOUT_IDEMPOTENCY_KEY_REUSED"].includes(orderError.code)) checkoutAttemptRef.current = null;
