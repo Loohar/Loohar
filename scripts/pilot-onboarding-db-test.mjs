@@ -1,0 +1,180 @@
+// End-to-end pilot readiness: a brand new restaurant signs up, is provisioned on Starter, configures
+// tax and payments, and then takes money at the register and online. Every step runs the real
+// services against a disposable local database; Stripe is stubbed locally.
+//
+//   LOOHAR_TEST_DATABASE_URL=postgresql://user@127.0.0.1:5432/db node scripts/pilot-onboarding-db-test.mjs
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
+
+const databaseUrl = process.env.LOOHAR_TEST_DATABASE_URL || "";
+const host = (() => {
+  try {
+    return new URL(databaseUrl).hostname;
+  } catch {
+    return "";
+  }
+})();
+if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+  console.log("SKIP pilot onboarding DB test: set LOOHAR_TEST_DATABASE_URL to a disposable local database.");
+  process.exit(0);
+}
+Object.assign(process.env, {
+  DATABASE_URL: databaseUrl,
+  DIRECT_URL: databaseUrl,
+  NODE_ENV: "test",
+  EMAIL_PROVIDER: "console",
+  JWT_SECRET: "local-onboarding-test-secret",
+  REFRESH_TOKEN_SECRET: "local-onboarding-test-refresh",
+  STRIPE_CONNECT_SECRET_KEY: "sk_test_local_fake_onboarding"
+});
+console.log = () => {};
+
+const runId = `ob${Date.now().toString(36)}`;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, options = {}) => {
+  const target = String(url);
+  if (!target.startsWith("https://api.stripe.com/")) return realFetch(url, options);
+  const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (target.endsWith("/payment_intents")) {
+    const body = Object.fromEntries(new URLSearchParams(String(options.body || "")));
+    return json({ id: `pi_${runId}`, object: "payment_intent", status: "requires_payment_method", amount: Number(body.amount), client_secret: `pi_${runId}_secret_x` });
+  }
+  return json({ id: `obj_${runId}` });
+};
+
+const { prisma } = await import("../apps/api/src/config/prisma.js");
+const { startRegistration, createRegistrationIntroTrial } = await import("../apps/api/src/modules/registration/registrationService.js");
+const { loadRestaurantEntitlements } = await import("../apps/api/src/middleware/entitlements.js");
+const { entitlementLimitForPlan, USAGE_LIMIT } = await import("../apps/api/src/config/entitlements.js");
+const { createPosQuote } = await import("../apps/api/src/services/posService.js");
+const { createOrderPayment } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
+
+const ctx = {};
+const outcome = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, status: error.status, code: error.code, message: error.message }));
+
+after(async () => {
+  globalThis.fetch = realFetch;
+  await prisma.$disconnect();
+});
+
+before(async () => {
+  // Plans must exist before a public signup can pick one, exactly as on a provisioned environment.
+  for (const [code, name, price] of [["STARTER", "Starter", 9900], ["PROFESSIONAL", "Professional", 19900], ["ENTERPRISE", "Enterprise", 39900]]) {
+    await prisma.platformPlan.upsert({ where: { code }, create: { code, name, monthlyPriceCents: price }, update: {} });
+    await prisma.subscriptionPlan.upsert({ where: { code }, create: { code, name, monthlyPriceCents: price }, update: {} });
+  }
+});
+
+test("a public signup provisions a working Starter restaurant", async () => {
+  const registration = await startRegistration({
+    body: {
+      firstName: "Pilot",
+      lastName: "Owner",
+      email: `owner-${runId}@example.test`,
+      password: "a-strong-pilot-password",
+      businessName: `Pilot Diner ${runId}`,
+      publicBusinessName: `Pilot Diner ${runId}`,
+      preferredSlug: `pilot-${runId}`,
+      businessType: "RESTAURANT",
+      planCode: "STARTER",
+      phone: "555-0100"
+    }
+  });
+  assert.ok(registration.registration?.id, "the signup is recorded before any money is taken");
+
+  const provisioned = await createRegistrationIntroTrial({ registrationId: registration.registration.id, planCode: "STARTER", billingInterval: "MONTHLY" });
+  ctx.restaurantId = provisioned.restaurant?.id;
+  assert.ok(ctx.restaurantId, "the trial provisions a real restaurant");
+
+  const owner = await prisma.user.findFirst({ where: { restaurantId: ctx.restaurantId, role: "TENANT_OWNER" } });
+  assert.ok(owner, "the owner account is attached to the restaurant");
+  assert.equal(owner.status, "ACTIVE");
+  ctx.owner = owner;
+
+  const location = await prisma.restaurantLocation.findFirst({ where: { restaurantId: ctx.restaurantId } });
+  assert.ok(location, "the restaurant has a location to sell from");
+  ctx.location = location;
+});
+
+test("the new restaurant is on Starter with the pilot entitlements", async () => {
+  const entitlement = await loadRestaurantEntitlements(ctx.restaurantId);
+  assert.equal(entitlement.planCode, "STARTER");
+  assert.equal(["ACTIVE", "TRIALING"].includes(entitlement.subscriptionStatus), true, `subscription is usable (${entitlement.subscriptionStatus})`);
+  assert.equal(entitlementLimitForPlan(entitlement.planCode, USAGE_LIMIT.STAFF_MEMBERS), 5, "five employee seats");
+  assert.equal(entitlementLimitForPlan(entitlement.planCode, USAGE_LIMIT.POS_REGISTERS), 1, "one register");
+  assert.equal(entitlementLimitForPlan(entitlement.planCode, USAGE_LIMIT.KITCHEN_DISPLAYS), 1, "one kitchen display");
+  assert.equal(entitlementLimitForPlan(entitlement.planCode, USAGE_LIMIT.LOCATIONS), 1, "one location");
+});
+
+test("nothing can be sold until tax is configured, and then the register works", async () => {
+  const category = await prisma.menuCategory.create({ data: { restaurantId: ctx.restaurantId, name: "Mains" } });
+  ctx.menuItem = await prisma.menuItem.create({ data: { restaurantId: ctx.restaurantId, categoryId: category.id, name: "Pilot Plate", priceCents: 1800 } });
+
+  const beforeTax = await outcome(createPosQuote({
+    restaurantId: ctx.restaurantId,
+    user: ctx.owner,
+    body: { orderType: "WALK_IN", locationId: ctx.location.id, lineItems: [{ menuItemId: ctx.menuItem.id, quantity: 1 }] }
+  }));
+  assert.equal(beforeTax.ok, false, "a restaurant without a verified tax profile cannot sell");
+  assert.equal(beforeTax.code, "POS_TAX_CONFIGURATION_REQUIRED");
+
+  const verifiedAt = new Date(Date.now() - 60_000);
+  await prisma.locationTaxProfile.create({
+    data: {
+      restaurantId: ctx.restaurantId,
+      locationId: ctx.location.id,
+      status: "ACTIVE",
+      verificationStatus: "VERIFIED",
+      provider: "MANUAL",
+      source: "MANUAL_VERIFIED",
+      taxRateBps: 825,
+      taxInclusive: false,
+      enabled: true,
+      countryCode: "US",
+      stateCode: "CO",
+      jurisdictionCode: "US:CO:DENVER",
+      jurisdictionJson: { code: "US:CO:DENVER" },
+      sourceMetadataJson: { source: "pilot-onboarding-test" },
+      effectiveAt: verifiedAt,
+      verifiedAt,
+      lastVerifiedAt: verifiedAt,
+      configurationVersion: `${runId}-v1`,
+      acknowledgementVersion: `${runId}-v1`,
+      acknowledgedAt: verifiedAt,
+      acknowledgedByUserId: ctx.owner.id,
+      activatedAt: verifiedAt
+    }
+  });
+
+  const quote = await createPosQuote({
+    restaurantId: ctx.restaurantId,
+    user: ctx.owner,
+    body: { orderType: "WALK_IN", locationId: ctx.location.id, tipCents: 200, lineItems: [{ menuItemId: ctx.menuItem.id, quantity: 1 }] }
+  });
+  assert.equal(quote.subtotalCents, 1800);
+  assert.equal(quote.taxCents, 149, "tax comes from the restaurant's own verified profile, never a default rate");
+  assert.equal(quote.tipCents, 200);
+  assert.equal(quote.totalCents, 2149);
+});
+
+test("online orders wait for payment onboarding, then take a card", async () => {
+  const body = {
+    restaurantId: ctx.restaurantId,
+    type: "PICKUP",
+    customer: { name: "First Guest", email: `guest-${runId}@example.test` },
+    items: [{ menuItemId: ctx.menuItem.id, quantity: 2 }]
+  };
+  const beforeOnboarding = await outcome(createOrderPayment({ body, idempotencyKey: `onboarding-${runId}-1` }));
+  assert.equal(beforeOnboarding.ok, false, "a restaurant that has not onboarded cannot take card payments");
+  assert.equal(beforeOnboarding.status, 503);
+
+  await prisma.restaurantMerchantAccount.create({
+    data: { restaurantId: ctx.restaurantId, provider: "STRIPE_CONNECT", status: "ENABLED", stripeAccountId: `acct_${runId}`, stripeChargesEnabled: true, stripeDetailsSubmitted: true }
+  });
+
+  const checkout = await createOrderPayment({ body, idempotencyKey: `onboarding-${runId}-2` });
+  assert.equal(checkout.payment.totalCents, 3600 + 297, "the customer is charged the menu price plus the restaurant's tax");
+  assert.equal(checkout.stripeAccountId, `acct_${runId}`, "the browser is told which connected account to confirm on");
+  assert.ok(checkout.clientSecret, "the customer can complete the payment");
+  assert.equal(checkout.payment.status, "REQUIRES_PAYMENT_METHOD", "nothing is marked paid before the webhook");
+});

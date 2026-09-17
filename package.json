@@ -223,6 +223,7 @@
     "test:storefront-checkout-db": "node --experimental-test-module-mocks scripts/storefront-checkout-db-test.mjs",
     "test:basic-reporting-db": "node scripts/basic-reporting-db-test.mjs",
     "test:web-surface-smoke": "node scripts/web-surface-smoke-test.mjs",
+    "test:pilot-onboarding-db": "node scripts/pilot-onboarding-db-test.mjs",
     "test:pos-tips-db": "node scripts/pos-tips-db-test.mjs",
     "test:pos-terminal-db": "node scripts/pos-terminal-db-test.mjs",
     "test:pos-cash-drawer-setup-db": "node --experimental-test-module-mocks scripts/pos-cash-drawer-setup-db-test.mjs",
