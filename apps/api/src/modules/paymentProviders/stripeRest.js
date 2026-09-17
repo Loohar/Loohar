@@ -99,7 +99,7 @@ export async function stripeRequest({ secretKey, path, body, stripeAccount, idem
       ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {}),
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
-    ...(method === "DELETE" ? {} : { body })
+    ...(["DELETE", "GET"].includes(method) ? {} : { body })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {

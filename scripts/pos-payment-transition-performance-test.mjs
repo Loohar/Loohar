@@ -66,7 +66,8 @@ assert.ok(healthEffect.includes("if (!loadedOnceRef.current)") && healthEffect.i
 for (const label of ["Order", "Payment method", "Cash received", "Amount paid", "Change due"]) {
   assert.ok(screens.includes(label), `Payment Complete should show ${label}`);
 }
-assert.ok(success.includes('paymentMethod: "Cash"'), "successful settlement should identify Cash as the payment method");
+assert.ok(success.includes('paymentMethod: settlement.paymentMethod || "Cash"'), "successful settlement should identify the tender, defaulting to Cash");
+assert.ok(app.includes('completeSuccessfulTransaction(order, { amountPaidCents: settled.totalCents, paymentMethod: "Card" })'), "a settled card payment should be labelled Card");
 
 assert.ok(app.includes("if (cashPaymentInFlightRef.current) return"), "rapid double taps should be blocked in memory");
 assert.ok(posService.includes("tx.payment.updateMany") && posService.includes('code: "POS_CASH_ALREADY_PAID"'), "the server should atomically reject duplicate settlement");

@@ -11,7 +11,8 @@ import {
   createTerminalConnectionToken,
   listTerminalReaders,
   registerTerminalReader,
-  removeTerminalReader
+  removeTerminalReader,
+  terminalPaymentStatus
 } from "../modules/posTerminal/posTerminalService.js";
 import {
   cardPaymentIntent,
@@ -115,6 +116,15 @@ const posOfflineReconcileLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Offline reconciliation is temporarily rate limited.", code: "RATE_LIMITED" }
+});
+
+// Each Terminal write fans out to two or three Stripe calls; keep a register from flooding them.
+const terminalWriteLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Card reader requests are temporarily rate limited.", code: "RATE_LIMITED" }
 });
 
 function deviceContext(req) {
@@ -541,7 +551,7 @@ router.get("/:restaurantId/pos/terminal/readers", posReadLimiter, requirePosSess
   }
 });
 
-router.post("/:restaurantId/pos/terminal/readers", requirePosSession, async (req, res, next) => {
+router.post("/:restaurantId/pos/terminal/readers", terminalWriteLimiter, requirePosSession, async (req, res, next) => {
   try {
     res.status(201).json(await registerTerminalReader({ restaurantId: req.resolvedRestaurantId, user: req.user, body: req.body }));
   } catch (error) {
@@ -557,7 +567,7 @@ router.delete("/:restaurantId/pos/terminal/readers/:readerId", requirePosSession
   }
 });
 
-router.post("/:restaurantId/pos/terminal/connection-token", requirePosSession, async (req, res, next) => {
+router.post("/:restaurantId/pos/terminal/connection-token", terminalWriteLimiter, requirePosSession, async (req, res, next) => {
   try {
     res.status(201).json(await createTerminalConnectionToken({ restaurantId: req.resolvedRestaurantId, user: req.user, ...deviceContext(req) }));
   } catch (error) {
@@ -565,7 +575,7 @@ router.post("/:restaurantId/pos/terminal/connection-token", requirePosSession, a
   }
 });
 
-router.post("/:restaurantId/pos/payments/terminal", requirePosSession, async (req, res, next) => {
+router.post("/:restaurantId/pos/payments/terminal", terminalWriteLimiter, requirePosSession, async (req, res, next) => {
   try {
     res.status(201).json(await collectTerminalPayment({
       restaurantId: req.resolvedRestaurantId,
@@ -579,9 +589,22 @@ router.post("/:restaurantId/pos/payments/terminal", requirePosSession, async (re
   }
 });
 
+router.get("/:restaurantId/pos/payments/terminal/status", posReadLimiter, requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await terminalPaymentStatus({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      orderId: req.query?.orderId?.toString(),
+      ...deviceContext(req)
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/:restaurantId/pos/payments/terminal/cancel", requirePosSession, async (req, res, next) => {
   try {
-    res.json(await cancelTerminalPayment({ restaurantId: req.resolvedRestaurantId, user: req.user, readerId: req.body?.readerId, ...deviceContext(req) }));
+    res.json(await cancelTerminalPayment({ restaurantId: req.resolvedRestaurantId, user: req.user, readerId: req.body?.readerId, orderId: req.body?.orderId, ...deviceContext(req) }));
   } catch (error) {
     next(error);
   }

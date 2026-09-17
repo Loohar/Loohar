@@ -2389,6 +2389,15 @@ export async function cashPayment({
   ) {
     throw httpError("This order already has an active or completed payment.", 409, { code: "POS_CASH_ALREADY_PAID" });
   }
+  // A card-present payment already handed to a reader can still be tapped after cash is taken.
+  // Cancel it on the reader (which cancels the PaymentIntent) before settling in cash.
+  if (
+    order.restaurantOrderPayment?.provider === "STRIPE_CONNECT"
+    && order.restaurantOrderPayment.providerPaymentIntentId
+    && !["CANCELED", "FAILED"].includes(order.restaurantOrderPayment.status)
+  ) {
+    throw httpError("This order has a card payment waiting on a reader. Cancel it on the reader before taking cash.", 409, { code: "POS_CASH_CARD_PAYMENT_OPEN" });
+  }
   // An open online checkout could still be paid by card after cash is taken; the restaurant must
   // cancel the online order (which cancels its payment) before settling it in cash.
   if (order.restaurantOrderPayment?.checkoutIdempotencyKeyHash && ["REQUIRES_PAYMENT_METHOD", "FAILED"].includes(order.restaurantOrderPayment.status)) {

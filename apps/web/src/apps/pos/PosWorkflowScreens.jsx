@@ -27,7 +27,7 @@ import {
   WifiOff,
   X
 } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { applyPosPinKey, isPosPinSubmittable, POS_PIN_MAX_LENGTH, POS_PIN_MIN_LENGTH } from "./pinKeypad.js";
 import {
   applyCashKey,
@@ -453,7 +453,29 @@ export function OrderReviewScreen({ cart, quote, orderType, customer, notes, onE
   );
 }
 
-export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReason, amountReceived, setAmountReceived, saving, error, onBack, onCash, onFirstRender, offline = false, pendingSyncCount = 0 }) {
+export function PaymentSelectionScreen({
+  quote,
+  canAcceptCash,
+  cashDisabledReason,
+  amountReceived,
+  setAmountReceived,
+  saving,
+  error,
+  onBack,
+  onCash,
+  onFirstRender,
+  offline = false,
+  pendingSyncCount = 0,
+  canAcceptCard = false,
+  cardDisabledReason = "",
+  terminalReaders = [],
+  selectedReaderId = "",
+  setSelectedReaderId = () => {},
+  terminalStatus = "",
+  onCard = null,
+  onCancelCard = null
+}) {
+  const [tender, setTender] = useState("CASH");
   const firstRenderReportedRef = useRef(false);
   useLayoutEffect(() => {
     if (firstRenderReportedRef.current) return;
@@ -463,7 +485,7 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
   const quoteReady = Boolean(quote?.id);
   const total = Number(quote?.totalCents || 0);
   const tenderedCents = cashTenderInputToCents(amountReceived) ?? 0;
-  const tender = cashTenderSummary(total, tenderedCents);
+  const cashTender = cashTenderSummary(total, tenderedCents);
   const quickAmounts = quickCashTenderAmounts(total);
   const keypadRows = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["00", "0", "."]];
   const enterKey = (key) => setAmountReceived((current) => applyCashKey(current, key));
@@ -473,7 +495,13 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
   };
   return (
     <section className="pos-workflow-screen">
-      <PosScreenHeader eyebrow="Checkout" title="Cash payment" detail="Enter the cash received and complete the sale." onBack={onBack} />
+      <PosScreenHeader eyebrow="Checkout" title={tender === "CARD" ? "Card payment" : "Cash payment"} detail={tender === "CARD" ? "Send the total to a card reader and wait for the customer to pay." : "Enter the cash received and complete the sale."} onBack={onBack} />
+      {onCard ? (
+        <div className="pos-tender-switch" role="group" aria-label="Tender type">
+          <button className={`seg ${tender === "CASH" ? "active" : ""}`} type="button" onClick={() => setTender("CASH")}><Banknote size={17} />Cash</button>
+          <button className={`seg ${tender === "CARD" ? "active" : ""}`} type="button" onClick={() => setTender("CARD")}><CreditCard size={17} />Card</button>
+        </div>
+      ) : null}
       {error ? <div className="pos-alert" role="alert">{error}</div> : null}
       {offline ? <div className="pos-cash-connectivity" role="status"><span><WifiOff size={17} />Offline cash available</span><span>Card requires internet</span><span>Pending Sync: {pendingSyncCount}</span></div> : null}
       {!quoteReady ? <div className="pos-menu-state refreshing" role="status">{offline ? "Preparing the signed cached total..." : "Preparing the server-verified total..."}</div> : null}
@@ -482,7 +510,23 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
         <div><span>Amount paid</span><strong>{money(0)}</strong></div>
         <div><span>Amount due</span><strong>{quoteReady ? money(total) : "..."}</strong></div>
       </div>
-      <div className="pos-cash-workspace">
+      {tender === "CARD" ? (
+        <div className="pos-card-workspace">
+          <label>
+            <span>Card reader</span>
+            <select value={selectedReaderId} onChange={(event) => setSelectedReaderId(event.target.value)} disabled={!terminalReaders.length || Boolean(saving)}>
+              {terminalReaders.length ? null : <option value="">No reader paired</option>}
+              {terminalReaders.map((reader) => <option value={reader.id} key={reader.id}>{reader.label}{reader.simulated ? " (simulated)" : ""}</option>)}
+            </select>
+          </label>
+          {terminalStatus ? <p className="pos-card-status" role="status">{terminalStatus}</p> : null}
+          <p className="pos-card-note">The customer taps, inserts or swipes on the reader. Loohar never sees the card number, and the order is marked paid only once Stripe confirms it.</p>
+          <button className="button-primary" type="button" onClick={() => onCard?.()} disabled={!quoteReady || !canAcceptCard || Boolean(saving)}><CreditCard size={18} />{saving === "card" ? "Waiting for the reader..." : `Charge ${quoteReady ? money(total) : "card"}`}</button>
+          {saving === "card" && onCancelCard ? <button className="button-muted" type="button" onClick={() => onCancelCard()}>Cancel on reader</button> : null}
+          {!canAcceptCard && cardDisabledReason ? <small className="pos-cash-disabled-reason">{cardDisabledReason}</small> : null}
+        </div>
+      ) : null}
+      <div className="pos-cash-workspace" hidden={tender === "CARD"}>
         <div className="pos-cash-entry">
           <div className="pos-cash-entry-head"><Banknote size={28} /><div><span>Tender type</span><strong>Cash</strong></div></div>
           <label><span>Cash received</span><input type="text" inputMode="decimal" autoComplete="off" value={amountReceived} onChange={(event) => updateAmount(event.target.value)} placeholder="0.00" aria-label="Cash received" disabled={!quoteReady} /></label>
@@ -491,9 +535,9 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
             {quickAmounts.map((amount) => <button type="button" onClick={() => setAmountReceived(cashTenderCentsToInput(amount))} disabled={!quoteReady} key={amount}>{money(amount)}</button>)}
           </div>
           <dl className="pos-cash-breakdown">
-            <div><dt>Cash tendered</dt><dd>{money(tender.tenderedCents)}</dd></div>
-            <div><dt>Cash applied</dt><dd>{money(tender.appliedCents)}</dd></div>
-            {tender.covered ? <div className="change"><dt>Change due</dt><dd>{money(tender.changeDueCents)}</dd></div> : <div className="remaining"><dt>Remaining due</dt><dd>{money(tender.remainingDueCents)}</dd></div>}
+            <div><dt>Cash tendered</dt><dd>{money(cashTender.tenderedCents)}</dd></div>
+            <div><dt>Cash applied</dt><dd>{money(cashTender.appliedCents)}</dd></div>
+            {cashTender.covered ? <div className="change"><dt>Change due</dt><dd>{money(cashTender.changeDueCents)}</dd></div> : <div className="remaining"><dt>Remaining due</dt><dd>{money(cashTender.remainingDueCents)}</dd></div>}
           </dl>
         </div>
         <div className="pos-cash-keypad" aria-label="Cash amount keypad">
@@ -501,7 +545,7 @@ export function PaymentSelectionScreen({ quote, canAcceptCash, cashDisabledReaso
           <button className="backspace" type="button" onClick={() => enterKey("backspace")} aria-label="Backspace" disabled={!quoteReady}><Delete size={22} />Backspace</button>
           <button className="clear" type="button" onClick={() => enterKey("clear")} disabled={!quoteReady}><X size={20} />Clear</button>
         </div>
-        <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(tender.tenderedCents)} disabled={!quoteReady || !canAcceptCash || !tender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
+        <button className="button-primary pos-complete-cash" type="button" onClick={() => onCash(cashTender.tenderedCents)} disabled={!quoteReady || !canAcceptCash || !cashTender.covered || saving}><Banknote size={18} />{saving ? "Processing..." : "Complete cash payment"}</button>
         {!canAcceptCash ? <small className="pos-cash-disabled-reason">{cashDisabledReason || "Cash is not available on this register."}</small> : null}
       </div>
     </section>
@@ -568,7 +612,7 @@ export function ShiftManagementScreen({ shift, drawer, openingCashCents, setOpen
   );
 }
 
-export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, locations, saving, ownerOperator, pinConfigured, pinValue, setPinValue, currentPinValue = "", setCurrentPinValue = () => {}, onSavePin, onRegister, onKiosk, onBack }) {
+export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, locations, saving, ownerOperator, pinConfigured, pinValue, setPinValue, currentPinValue = "", setCurrentPinValue = () => {}, onSavePin, onRegister, onKiosk, onBack, terminalReaders = [], readerForm = { registrationCode: "", label: "" }, setReaderForm = () => {}, onPairReader = null, onRemoveReader = null }) {
   return (
     <section className="pos-workflow-screen">
       <PosScreenHeader eyebrow="Manager workspace" title="Register settings" detail="Device, location, lock, payment, and kiosk controls stay outside order entry." onBack={device ? onBack : null} />
@@ -581,6 +625,24 @@ export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, loca
         {ownerOperator ? <button className="button-primary" type="submit" disabled={saving}>{device ? "Update register" : "Register this device"}</button> : null}
       </form>
       {device && ownerOperator ? <div className="pos-pin-settings"><div><strong>Cashier PIN</strong><span>{pinConfigured ? "A PIN is configured for your employee account." : "Set a 4–8 digit PIN before unlocking this register."}</span></div>{pinConfigured ? <input type="password" inputMode="numeric" autoComplete="current-password" value={currentPinValue} onChange={(event) => setCurrentPinValue(event.target.value.replace(/\D/g, "").slice(0, 8))} aria-label="Current cashier PIN" placeholder="Current PIN" /> : null}<input type="password" inputMode="numeric" autoComplete="new-password" value={pinValue} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, "").slice(0, 8))} aria-label="New cashier PIN" placeholder="4–8 digits" /><button className="button-muted" type="button" onClick={onSavePin} disabled={saving || pinValue.length < 4 || (pinConfigured && currentPinValue.length < 4)}>Save PIN</button></div> : null}
+      {device && ownerOperator && onPairReader ? (
+        <div className="pos-reader-settings">
+          <div><strong>Card readers</strong><span>Pair a Stripe Terminal reader to take card payments at this register. Enter the pairing code shown on the reader.</span></div>
+          <ul className="pos-reader-list">
+            {terminalReaders.length ? terminalReaders.map((reader) => (
+              <li key={reader.id}>
+                <span>{reader.label}{reader.simulated ? " (simulated)" : ""}</span>
+                {onRemoveReader ? <button className="button-muted" type="button" onClick={() => onRemoveReader(reader)} disabled={saving}>Remove</button> : null}
+              </li>
+            )) : <li><span>No reader paired yet.</span></li>}
+          </ul>
+          <div className="pos-reader-pair">
+            <input value={readerForm.registrationCode} onChange={(event) => setReaderForm((current) => ({ ...current, registrationCode: event.target.value }))} placeholder="Pairing code" aria-label="Reader pairing code" />
+            <input value={readerForm.label} onChange={(event) => setReaderForm((current) => ({ ...current, label: event.target.value }))} placeholder="Label, e.g. Front counter" aria-label="Reader label" />
+            <button className="button-muted" type="button" onClick={() => onPairReader()} disabled={saving || !readerForm.registrationCode.trim()}><CreditCard size={18} />Pair reader</button>
+          </div>
+        </div>
+      ) : null}
       {device && ownerOperator ? <button className="button-muted" type="button" onClick={onKiosk}><MonitorCog size={18} />{device.kioskModeEnabled ? "Review kiosk lock" : "Configure kiosk mode"}</button> : null}
     </section>
   );

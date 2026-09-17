@@ -30,6 +30,7 @@ console.log = () => {};
 
 const runId = `tm${Date.now().toString(36)}`;
 const stripeCalls = [];
+const paymentIntents = new Map();
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, options = {}) => {
   const target = String(url);
@@ -40,7 +41,20 @@ globalThis.fetch = async (url, options = {}) => {
   if (target.endsWith("/terminal/locations")) return json({ id: `tml_${runId}`, object: "terminal.location" });
   if (target.endsWith("/terminal/readers")) return json({ id: `tmr_${runId}_${stripeCalls.length}`, object: "terminal.reader", device_type: "simulated_wisepos_e", serial_number: `SN${stripeCalls.length}` });
   if (target.endsWith("/terminal/connection_tokens")) return json({ secret: `pst_test_${runId}_secret` });
-  if (target.endsWith("/payment_intents")) return json({ id: `pi_${runId}_${stripeCalls.length}`, object: "payment_intent", status: "requires_payment_method", amount: Number(body.amount) });
+  if (target.endsWith("/payment_intents")) {
+    const intent = { id: `pi_${runId}_${stripeCalls.length}`, object: "payment_intent", status: "requires_payment_method", amount: Number(body.amount), payment_method_types: ["card_present"] };
+    paymentIntents.set(intent.id, intent);
+    return json(intent);
+  }
+  if (target.includes("/payment_intents/") && target.endsWith("/cancel")) {
+    const intent = paymentIntents.get(target.split("/payment_intents/")[1].replace("/cancel", ""));
+    if (intent) intent.status = "canceled";
+    return json(intent || { id: "pi_unknown", status: "canceled" });
+  }
+  if (target.includes("/payment_intents/")) {
+    const intent = paymentIntents.get(target.split("/payment_intents/")[1]);
+    return intent ? json(intent) : new Response(JSON.stringify({ error: { message: "No such payment_intent" } }), { status: 404, headers: { "Content-Type": "application/json" } });
+  }
   if (target.includes("/process_payment_intent")) return json({ id: `tmr_action_${runId}`, action: { status: "in_progress", type: "process_payment_intent" } });
   if (target.includes("/present_payment_method")) return json({ id: `tmr_${runId}`, action: { status: "succeeded" } });
   if (target.includes("/cancel_action")) return json({ id: `tmr_${runId}`, status: "online" });
@@ -50,10 +64,13 @@ globalThis.fetch = async (url, options = {}) => {
 const { prisma } = await import("../apps/api/src/config/prisma.js");
 const terminal = await import("../apps/api/src/modules/posTerminal/posTerminalService.js");
 const { handleStripeConnectWebhook } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
+const { cashPayment, openShift } = await import("../apps/api/src/services/posService.js");
 
 const ctx = {};
 const outcome = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, status: error.status, code: error.code, message: error.message }));
 const callsTo = (fragment) => stripeCalls.filter((call) => call.url.includes(fragment));
+// PaymentIntent creations only: retrieves and cancels hit the same path prefix.
+const intentCreations = () => stripeCalls.filter((call) => call.url.endsWith("/payment_intents") && call.method === "POST");
 
 async function seedRestaurant(label, { chargesEnabled = true } = {}) {
   const restaurant = await prisma.restaurant.create({
@@ -153,13 +170,15 @@ test("a terminal payment charges the stored order total on the connected account
   const seed = ctx.a;
   const order = await posOrder(seed);
   const result = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
-  const intentCall = callsTo("/payment_intents").at(-1);
+  const intentCall = intentCreations().at(-1);
   assert.equal(Number(intentCall.body.amount), 2185, "the amount comes from the stored order");
   assert.equal(intentCall.body["payment_method_types[0]"], "card_present");
   assert.equal(intentCall.body["metadata[orderPaymentId]"], result.orderPayment.id);
   assert.equal(intentCall.account, `acct_${runId}_a`);
-  assert.equal(intentCall.idempotencyKey, `terminal_pi_${result.orderPayment.id}`);
+  assert.equal(intentCall.idempotencyKey, `terminal_pi_${result.orderPayment.id}_2185`, "the key is bound to the payment row and the amount");
   assert.equal(callsTo("/process_payment_intent").length, 1);
+  assert.equal(callsTo("/process_payment_intent").at(-1).body["process_config[skip_tipping]"], "true", "on-reader tipping cannot change the captured amount");
+  assert.equal("application_fee_amount" in intentCall.body, false, "Loohar takes no platform fee");
   assert.equal(callsTo("/present_payment_method").length, 1, "simulated readers present a test card");
   assert.equal(result.settlement, "AWAITING_WEBHOOK");
 
@@ -176,17 +195,120 @@ test("a terminal payment charges the stored order total on the connected account
   });
   assert.equal(settled.received, true);
   assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: result.orderPayment.id } })).status, "PAID");
-  assert.equal((await prisma.order.findUnique({ where: { id: order.id } })).paymentStatus ?? "PAID", "PAID");
+  assert.equal((await prisma.order.findUnique({ where: { id: order.id } })).status, "ACCEPTED", "settlement accepts the order");
 });
 
 test("a retried collection reuses the same PaymentIntent", async () => {
   const seed = ctx.a;
   const order = await posOrder(seed);
   const first = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
-  const intentsBefore = callsTo("/payment_intents").length;
+  const intentsBefore = intentCreations().length;
   const retry = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
   assert.equal(retry.paymentIntentId, first.paymentIntentId);
-  assert.equal(callsTo("/payment_intents").length, intentsBefore, "no second PaymentIntent is created");
+  assert.equal(intentCreations().length, intentsBefore, "no second PaymentIntent is created");
+});
+
+test("a changed order total never reuses the old PaymentIntent", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  const first = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  await prisma.order.update({ where: { id: order.id }, data: { subtotalCents: 2500, totalCents: 2685 } });
+  const second = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  assert.notEqual(second.paymentIntentId, first.paymentIntentId, "the stale PaymentIntent is not handed to the reader");
+  assert.equal(Number(intentCreations().at(-1).body.amount), 2685, "the reader is asked for the new total");
+  assert.equal(paymentIntents.get(first.paymentIntentId).status, "canceled", "the stale PaymentIntent is cancelled at Stripe");
+  const stored = await prisma.restaurantOrderPayment.findUnique({ where: { orderId: order.id } });
+  assert.equal(stored.totalCents, 2685);
+  assert.equal(stored.providerPaymentIntentId, second.paymentIntentId);
+});
+
+test("an order already captured for a different amount needs review instead of another charge", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  const collected = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  paymentIntents.get(collected.paymentIntentId).status = "succeeded";
+  await prisma.order.update({ where: { id: order.id }, data: { totalCents: 3000 } });
+  const again = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) }));
+  assert.equal(again.code, "POS_TERMINAL_PAYMENT_NEEDS_REVIEW");
+  const audits = await prisma.auditLog.findMany({ where: { restaurantId: seed.restaurant.id, action: "pos.payment.terminal.amount_mismatch" } });
+  assert.equal(audits.length >= 1, true, "the mismatch is recorded for a human to reconcile");
+});
+
+test("a settled payment is never reset to unpaid by another collect", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  const collected = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  await prisma.restaurantOrderPayment.update({ where: { id: collected.orderPayment.id }, data: { status: "PAID", paidAt: new Date() } });
+  const again = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) }));
+  assert.equal(again.code, "POS_CARD_ALREADY_PAID");
+  assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: collected.orderPayment.id } })).status, "PAID");
+});
+
+test("cancelling on the reader cancels the PaymentIntent and releases the order", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  const collected = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  const cancelled = await terminal.cancelTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, readerId: ctx.reader.id, orderId: order.id, ...deviceRef(seed) });
+  assert.equal(cancelled.releasedOrderId, order.id);
+  assert.equal(paymentIntents.get(collected.paymentIntentId).status, "canceled");
+  const stored = await prisma.restaurantOrderPayment.findUnique({ where: { id: collected.orderPayment.id } });
+  assert.equal(stored.status, "CANCELED");
+  assert.equal(stored.providerPaymentIntentId, null);
+});
+
+test("cash cannot settle an order while a card payment is waiting on a reader", async () => {
+  const seed = ctx.a;
+  await prisma.posDevice.update({ where: { id: seed.device.id }, data: { cashDrawerId: (await prisma.cashDrawer.create({ data: { restaurantId: seed.restaurant.id, locationId: seed.location.id, name: "Drawer" } })).id } });
+  await prisma.restaurantStaff.updateMany({ where: { restaurantId: seed.restaurant.id, userId: seed.owner.id }, data: { posPinHash: null } });
+  await openShift({ restaurantId: seed.restaurant.id, user: seed.owner, deviceId: seed.device.id, body: { openingCashCents: 10000 } });
+  const order = await posOrder(seed);
+  const collected = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  const cash = await outcome(cashPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, amountCents: 2185, ...deviceRef(seed) }));
+  assert.equal(cash.ok, false);
+  assert.equal(cash.code, "POS_CASH_CARD_PAYMENT_OPEN", "cash is refused while the reader still holds a card payment");
+  assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: collected.orderPayment.id } })).status, "REQUIRES_PAYMENT_METHOD");
+
+  // Cancelling on the reader releases the order, and cash then settles it normally.
+  await terminal.cancelTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, readerId: ctx.reader.id, orderId: order.id, ...deviceRef(seed) });
+  const afterCancel = await outcome(cashPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, amountCents: 2185, ...deviceRef(seed) }));
+  assert.equal(afterCancel.ok, true, `cash settles after the card payment is cancelled (${afterCancel.code || ""})`);
+  const settledPayment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId: order.id } });
+  assert.equal(settledPayment.status, "PAID");
+  assert.equal(settledPayment.provider, "MANUAL");
+});
+
+test("an order with an open online checkout is not charged on a reader", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  await prisma.restaurantOrderPayment.create({
+    data: {
+      restaurantId: seed.restaurant.id, orderId: order.id, provider: "STRIPE_CONNECT", status: "REQUIRES_PAYMENT_METHOD",
+      subtotalCents: 2000, totalCents: 2185, restaurantGrossCents: 2185, restaurantNetCents: 2185,
+      checkoutIdempotencyKeyHash: `hash_${runId}_${order.id}`
+    }
+  });
+  const result = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) }));
+  assert.equal(result.code, "POS_TERMINAL_ONLINE_CHECKOUT_OPEN");
+});
+
+test("a reader registered to another restaurant cannot be taken over", async () => {
+  const other = ctx.b;
+  const existing = await prisma.posTerminalReader.findFirst({ where: { restaurantId: ctx.a.restaurant.id, status: "ACTIVE" } });
+  const previousReaderId = existing.stripeReaderId;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/terminal/readers")) {
+      return new Response(JSON.stringify({ id: previousReaderId, object: "terminal.reader", device_type: "simulated_wisepos_e" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return originalFetch(url, options);
+  };
+  try {
+    const result = await outcome(terminal.registerTerminalReader({ restaurantId: other.restaurant.id, user: other.owner, body: { registrationCode: "simulated-wpe", label: "Stolen" } }));
+    assert.equal(result.code, "POS_TERMINAL_READER_CONFLICT");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal((await prisma.posTerminalReader.findUnique({ where: { stripeReaderId: previousReaderId } })).restaurantId, ctx.a.restaurant.id);
 });
 
 test("readers, orders and devices are tenant scoped and closed orders are refused", async () => {
@@ -211,10 +333,59 @@ test("readers, orders and devices are tenant scoped and closed orders are refuse
 test("terminal payments are refused when the restaurant cannot take cards", async () => {
   const seed = await seedRestaurant("c", { chargesEnabled: false });
   const order = await posOrder(seed);
-  const result = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) }));
-  assert.equal(result.code, "POS_TERMINAL_READER_NOT_FOUND");
   const registration = await outcome(terminal.registerTerminalReader({ restaurantId: seed.restaurant.id, user: seed.owner, body: { registrationCode: "simulated-wpe" } }));
   assert.equal(registration.code, "POS_CARD_MERCHANT_NOT_READY");
+  // Give this restaurant its own reader row, so the refusal can only come from the merchant check.
+  const ownReader = await prisma.posTerminalReader.create({
+    data: { restaurantId: seed.restaurant.id, stripeReaderId: `tmr_orphan_${runId}`, stripeLocationId: `tml_orphan_${runId}`, label: "Orphan", simulated: true }
+  });
+  const result = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ownReader.id, ...deviceRef(seed) }));
+  assert.equal(result.code, "POS_CARD_MERCHANT_NOT_READY");
+});
+
+test("a card payment below Stripe's minimum is refused with a readable message", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed, { totalCents: 25 });
+  const result = await outcome(terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) }));
+  assert.equal(result.code, "POS_TERMINAL_AMOUNT_TOO_SMALL");
+});
+
+test("the register reads settlement from the stored payment, not from the reader response", async () => {
+  const seed = ctx.a;
+  const order = await posOrder(seed);
+  const collected = await terminal.collectTerminalPayment({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, readerId: ctx.reader.id, ...deviceRef(seed) });
+  const pending = await terminal.terminalPaymentStatus({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, ...deviceRef(seed) });
+  assert.equal(pending.paid, false);
+  assert.equal(pending.status, "REQUIRES_PAYMENT_METHOD");
+  await handleStripeConnectWebhook({
+    id: `evt_${runId}_status`,
+    type: "payment_intent.succeeded",
+    account: `acct_${runId}_a`,
+    data: { object: { id: collected.paymentIntentId, amount: 2185, amount_received: 2185, currency: "usd", latest_charge: `ch_status_${runId}`, metadata: { orderPaymentId: collected.orderPayment.id } } }
+  });
+  const settled = await terminal.terminalPaymentStatus({ restaurantId: seed.restaurant.id, user: seed.owner, orderId: order.id, ...deviceRef(seed) });
+  assert.equal(settled.paid, true);
+  assert.equal(settled.totalCents, 2185);
+  const otherTenant = await outcome(terminal.terminalPaymentStatus({ restaurantId: ctx.b.restaurant.id, user: ctx.b.owner, orderId: order.id, ...deviceRef(ctx.b) }));
+  assert.equal(otherTenant.status, 404, "another tenant cannot read this order's payment status");
+});
+
+test("the register offers card payment only with a paired reader, card-enabled device and connectivity", () => {
+  const app = readFileSync("apps/web/src/App.jsx", "utf8");
+  assert.ok(app.includes("&& activeDevice.cardPaymentsEnabled"));
+  assert.ok(app.includes('(config?.permissions || []).includes("POS_ACCEPT_CARD")'));
+  assert.ok(app.includes("&& terminalReaders.length > 0"));
+  assert.ok(app.includes("Card payments need an internet connection."), "card payments are refused offline");
+  assert.ok(app.includes("waitForTerminalSettlement"), "the register waits for webhook settlement");
+});
+
+test("register settings can pair and remove a reader", () => {
+  const screens = readFileSync("apps/web/src/apps/pos/PosWorkflowScreens.jsx", "utf8");
+  const app = readFileSync("apps/web/src/App.jsx", "utf8");
+  assert.ok(screens.includes("Card readers"), "register settings shows the card reader panel");
+  assert.ok(screens.includes("Pair reader"));
+  assert.ok(app.includes("async function pairTerminalReader()"));
+  assert.ok(app.includes("async function removeTerminalReader(reader)"));
 });
 
 test("terminal routes require an unlocked POS session and Loohar never accepts card numbers", () => {

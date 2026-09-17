@@ -21,10 +21,11 @@ payment on the restaurant's own connected Stripe account and learns the result f
 This is the staging rehearsal and can be done before any reader arrives.
 
 1. In the POS, sign in as the owner and unlock the register.
-2. Register a simulated reader with the pairing code `simulated-wpe`. Loohar refuses simulated
-   readers unless the Stripe credentials are test credentials, so this can never happen in production.
-3. Ring up an order and take a card payment. Loohar creates the payment, hands it to the simulated
-   reader, and presents a Stripe test card automatically.
+2. In register settings, under **Card readers**, pair a simulated reader with the pairing code
+   `simulated-wpe`. Loohar refuses simulated readers unless the Stripe credentials are test
+   credentials, so this can never happen in production.
+3. Ring up an order, choose **Card** at checkout, pick the reader and charge it. Loohar creates the
+   payment, hands it to the simulated reader, and presents a Stripe test card automatically.
 4. Confirm the order shows as paid once Stripe's webhook arrives, and that the amount on the order,
    the payment and the Stripe dashboard all match.
 
@@ -35,9 +36,9 @@ This is the staging rehearsal and can be done before any reader arrives.
    network with internet access; guest networks that require a browser login do not work.
 3. **Get the pairing code.** On the reader, open Settings and choose to connect to a POS. The reader
    shows a short pairing code (three words, for example `quick-brown-fox`).
-4. **Register the reader in Loohar.** In the POS, go to register settings, choose to add a card
-   reader, enter the pairing code and a label such as "Front counter", and save. Loohar registers it
-   against the restaurant's own Stripe account and its Terminal location.
+4. **Pair the reader in Loohar.** In the POS, open register settings, and under **Card readers**
+   enter the pairing code and a label such as "Front counter", then choose **Pair reader**. Loohar
+   registers it against the restaurant's own Stripe account and its Terminal location.
 5. **Run a live test sale.** Take one real card payment for a small amount, such as $1.00, using a
    card you control. Confirm:
    - the reader prompts for the card and approves it,
@@ -56,14 +57,21 @@ This is the staging rehearsal and can be done before any reader arrives.
   unpaid in Loohar until Stripe confirms.
 - The restaurant's Stripe account is fully onboarded: charges enabled, payouts enabled, bank account
   verified.
-- Someone at the restaurant knows how to remove a lost or broken reader from the POS. Removing it in
-  Loohar also unregisters it at Stripe, so a stolen reader cannot take payments.
+- Someone at the restaurant knows how to remove a lost or broken reader from the POS. Removing it
+  stops Loohar from sending any payment to that reader and asks Stripe to unregister it. If Stripe
+  cannot be reached at that moment the reader stays registered at Stripe, so for a lost or stolen
+  reader also remove it in the Stripe dashboard.
 
 ## 5. What Claude cannot do for you
 
 - Buy hardware or enter into a contract with Stripe.
 - Handle a real card, or run a live-money transaction.
 - Change production Stripe settings or production environment variables.
+
+On-reader tipping is switched off deliberately: tips are taken in Loohar, on the order, before the
+card is charged, so the amount captured always matches the order. If a card payment is waiting on a
+reader, cash is refused for that order until it is cancelled on the reader, which also cancels the
+payment at Stripe.
 
 Anything above marked as an owner step stays with you; everything else is automated and covered by
 tests in `scripts/pos-terminal-db-test.mjs`.

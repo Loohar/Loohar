@@ -8514,6 +8514,11 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   const [tableNumber, setTableNumber] = useState("");
   const [locationId, setLocationId] = useState("");
   const [amountReceived, setAmountReceived] = useState("");
+  const [terminalReaders, setTerminalReaders] = useState([]);
+  const [selectedReaderId, setSelectedReaderId] = useState("");
+  const [terminalStatus, setTerminalStatus] = useState("");
+  const [readerForm, setReaderForm] = useState({ registrationCode: "", label: "" });
+  const terminalPaymentInFlightRef = useRef(false);
   const [paymentResult, setPaymentResult] = useState(null);
   const [fingerprint, setFingerprint] = useState("");
   const [deviceId, setDeviceId] = useState("");
@@ -9074,6 +9079,11 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     else if (workflow.value === POS_WORKFLOW.OFFLINE) dispatchWorkflow({ type: POS_EVENT.API_ONLINE });
   }, [apiOnline, apiMode, workflow.value]);
 
+  // Card readers are per register, so refresh them whenever the register session or device changes.
+  useEffect(() => {
+    void loadTerminalReaders();
+  }, [posSessionActive, apiOnline, connectionFailed, activeDevice?.id, activeDevice?.cardPaymentsEnabled]);
+
   useEffect(() => {
     if (apiOnline && posSessionActive && pendingOfflineCount > 0) {
       void syncPendingOfflineTransactions();
@@ -9181,6 +9191,24 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     && posSessionActive
     && posOfflineInitializationUsable(offlineInitialization)
   );
+  // Card-present payments need connectivity: Loohar never accepts a card offline.
+  const canAcceptCard = Boolean(
+    activeDevice?.status === "ACTIVE"
+    && activeDevice.cardPaymentsEnabled
+    && (config?.permissions || []).includes("POS_ACCEPT_CARD")
+    && apiOnline
+    && !connectionFailed
+    && terminalReaders.length > 0
+  );
+  const cardDisabledReason = !activeDevice
+    ? "Register this device before accepting payments."
+    : !activeDevice.cardPaymentsEnabled
+      ? "Card payments are not enabled for this register."
+      : !apiOnline || connectionFailed
+        ? "Card payments need an internet connection."
+        : terminalReaders.length === 0
+          ? "Pair a card reader in register settings first."
+          : "";
   const canAcceptCash = Boolean(
     activeDevice?.status === "ACTIVE"
     && activeDevice.deviceType === "MAIN_TERMINAL"
@@ -9874,6 +9902,109 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     cashPaymentServerConfirmedAtRef.current = 0;
   }
 
+  async function loadTerminalReaders() {
+    if (!posSessionActive || !apiOnline || connectionFailed || !activeDevice?.cardPaymentsEnabled) {
+      setTerminalReaders([]);
+      return;
+    }
+    try {
+      const payload = await posApi("/terminal/readers");
+      const readers = payload.readers || [];
+      setTerminalReaders(readers);
+      setSelectedReaderId((current) => (readers.some((reader) => reader.id === current) ? current : readers[0]?.id || ""));
+    } catch {
+      setTerminalReaders([]);
+    }
+  }
+
+  async function pairTerminalReader() {
+    const registrationCode = readerForm.registrationCode.trim();
+    if (!registrationCode) return setError("Enter the pairing code shown on the reader.");
+    setSaving("pair-reader");
+    setError("");
+    try {
+      await posApi("/terminal/readers", { method: "POST", body: { registrationCode, label: readerForm.label.trim() || "Card reader", locationId: activeDevice?.locationId || undefined } });
+      setReaderForm({ registrationCode: "", label: "" });
+      setNotice("Card reader paired.");
+      await loadTerminalReaders();
+    } catch (posError) {
+      setError(posError);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  async function removeTerminalReader(reader) {
+    setSaving("remove-reader");
+    setError("");
+    try {
+      await posApi(`/terminal/readers/${reader.id}`, { method: "DELETE" });
+      setNotice(`${reader.label} was removed from this restaurant.`);
+      await loadTerminalReaders();
+    } catch (posError) {
+      setError(posError);
+    } finally {
+      setSaving("");
+    }
+  }
+
+  // The reader talks to Stripe directly; the register waits for Loohar to see the settled webhook.
+  async function acceptTerminalPayment() {
+    if (terminalPaymentInFlightRef.current) return;
+    if (!selectedReaderId) return setError("Choose a card reader first.");
+    if (!apiOnline || connectionFailed) return setError("Card payments need an internet connection.");
+    terminalPaymentInFlightRef.current = true;
+    setSaving("card");
+    setError("");
+    setNotice("");
+    setTerminalStatus("Preparing the order...");
+    dispatchWorkflow({ type: POS_EVENT.PROCESS_PAYMENT });
+    try {
+      const order = lastOrder?.id ? lastOrder : await submitOrder({ preserveCart: true, refreshAfterSubmit: false });
+      if (!order?.id) throw new Error("The order could not be created for a card payment.");
+      setLastOrder(order);
+      await posApi("/payments/terminal", { method: "POST", body: { orderId: order.id, readerId: selectedReaderId } });
+      setTerminalStatus("Waiting for the customer to present a card...");
+      const settled = await waitForTerminalSettlement(order.id);
+      if (!settled.paid) throw new Error(settled.failureReason || "The card payment was not completed.");
+      setLastOrderReceiptKind("final");
+      completeSuccessfulTransaction(order, { amountPaidCents: settled.totalCents, paymentMethod: "Card" });
+    } catch (posError) {
+      setError(posError);
+      setPaymentResult({ success: false, message: posError?.message || "The card payment was not completed." });
+      dispatchWorkflow({ type: POS_EVENT.PAYMENT_FAILED, payload: { message: posError?.message } });
+    } finally {
+      terminalPaymentInFlightRef.current = false;
+      setTerminalStatus("");
+      setSaving("");
+    }
+  }
+
+  async function waitForTerminalSettlement(orderId, { attempts = 45, intervalMs = 2000 } = {}) {
+    let last = { paid: false };
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+      try {
+        last = await posApi(`/payments/terminal/status?orderId=${encodeURIComponent(orderId)}`);
+      } catch {
+        continue;
+      }
+      if (last.paid) return last;
+      if (["FAILED", "CANCELED"].includes(last.status)) return { ...last, paid: false };
+    }
+    return { ...last, paid: false, failureReason: last.failureReason || "The reader did not report a completed payment in time." };
+  }
+
+  async function cancelTerminalPayment() {
+    if (!selectedReaderId) return;
+    try {
+      await posApi("/payments/terminal/cancel", { method: "POST", body: { readerId: selectedReaderId, orderId: lastOrder?.id } });
+      setNotice("Card payment cancelled on the reader.");
+    } catch (posError) {
+      setError(posError);
+    }
+  }
+
   async function completeSuccessfulTransaction(order, settlement = {}) {
     const changeDueCents = Number(settlement.changeDueCents || 0);
     const changeMessage = changeDueCents > 0 ? ` Change due ${money(changeDueCents)}.` : "";
@@ -9885,7 +10016,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       changeDueCents,
       amountPaidCents: Number(settlement.cashAppliedCents || order?.totalCents || 0),
       cashTenderedCents: Number(settlement.cashTenderedCents || settlement.amountReceivedCents || 0),
-      paymentMethod: "Cash",
+      paymentMethod: settlement.paymentMethod || "Cash",
       message,
       drawerRequest: settlement.drawerRequest || null,
       offlinePendingSync: Boolean(settlement.offlinePendingSync)
@@ -10210,6 +10341,14 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           quote={quote}
           canAcceptCash={canAcceptCash}
           cashDisabledReason={cashDisabledReason}
+          canAcceptCard={canAcceptCard}
+          cardDisabledReason={cardDisabledReason}
+          terminalReaders={terminalReaders}
+          selectedReaderId={selectedReaderId}
+          setSelectedReaderId={setSelectedReaderId}
+          terminalStatus={terminalStatus}
+          onCard={acceptTerminalPayment}
+          onCancelCard={cancelTerminalPayment}
           amountReceived={amountReceived}
           setAmountReceived={setAmountReceived}
           saving={savingAction}
@@ -10320,6 +10459,11 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           onSavePin={saveCashierPin}
           onRegister={registerDevice}
           onKiosk={() => activeDevice?.kioskModeEnabled ? setShowKioskExit(true) : setKiosk(true)}
+          terminalReaders={terminalReaders}
+          readerForm={readerForm}
+          setReaderForm={setReaderForm}
+          onPairReader={pairTerminalReader}
+          onRemoveReader={removeTerminalReader}
           onBack={returnFromRegisterSettings}
         />
       );
