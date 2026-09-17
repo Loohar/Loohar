@@ -13,34 +13,21 @@
 
 | Field | Value |
 | --- | --- |
-| Branch | `fix/launch-pilot-review-fixes-v01` (pushed) |
-| SHA | `48c27e933d9c29d8809cc370b1e0c3c4c4246a5c` |
-| Base | production `0526862` (fast-forward; 0 commits behind `origin/main`) |
-| Included | L-01 (`2d85007`, `b291ddd`, `cfec6a4`, `a3262dc`), L-02 (`4c48815`), L-05 (`0e69db3`), L-03 (`7e0833a`), L-04 (`47fa9cc`), review 1 fixes (`1d30522`), L-15 (`6d61d61`), L-07 (`7304418`), L-06 (`ca55a25`), L-09 (`a8fdeff`), review 2 fixes (`48c27e9`) |
+| Branch | `fix/launch-review3-fixes-v01` (pushed) |
+| SHA | `c5347da30944a94dd42fd9fcd1d21231df5b4150` |
+| Base | production `0526862` (fast-forward) |
 | Staged | No |
 | Staging certified | No |
 
 ### Migrations since production
-`git diff --name-only 0526862..48c27e9 -- apps/api/prisma/migrations` lists exactly one
-migration:
-- `20260916090000_checkout_idempotency` — adds nullable `checkoutIdempotencyKeyHash`,
-  `checkoutRequestHash` and a unique index on `RestaurantOrderPayment`. Additive; old code
-  ignores the columns. The index build briefly locks writes on that table (small in pilot).
-  Rollback: code rollback is safe with the columns present; the columns can remain.
+- `20260916090000_checkout_idempotency` — additive (nullable columns + unique index).
+- `20260917090000_privileged_mfa` — additive (MFA columns, recovery-code table, session flag);
+  clears unencrypted or secret-less MFA rows so those users re-enroll.
+Both applied to a fresh database; MFA migration upgraded over a populated database with data retained.
+Rollback: redeploy `0526862`; the added columns/tables are ignored by the old code.
 
 ### Deployment prerequisites
-1. `STRIPE_WEBHOOK_SECRET` configured wherever `/api/payments/webhook` is registered with
-   Stripe (L-04 now rejects all events without it).
-2. Deploy web together with or before the API: the API requires `Idempotency-Key` on checkout,
-   and browsers still holding an old bundle get a 400 until they reload.
-3. Staging web preview origin appended to staging `CORS_ORIGINS` for certification.
-4. Refund API now requires `Idempotency-Key` (no web caller today; external/admin clients must send it).
-5. POS: each main terminal now owns a drawer created on registration/update; existing terminals
-   without a drawer get one on their next device update or registration.
-
-### Evidence
-- Tests: see `docs/pilot-launch/CONTROL_CENTER.md` §5.
-- Adversarial security reviews 2026-09-17: review 1 findings fixed in `1d30522`; review 2 findings fixed in `48c27e9`.
+See `CONTROL_CENTER.md` §7.
 
 ## Production release candidate report (template)
 

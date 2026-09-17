@@ -1,6 +1,6 @@
 # Loohar Security Model (current)
 
-Describes controls present in code at candidate `48c27e9`. Anything listed under "Gaps" is
+Describes controls present in code at candidate `c5347da`. Anything listed under "Gaps" is
 not yet guaranteed.
 
 ## Identity and sessions
@@ -9,6 +9,15 @@ not yet guaranteed.
 - POS session tokens bound to user, restaurant, staff, device, location
   (`signPosSessionToken`, `middleware/posSession.js`).
 - Production refuses to start without `JWT_SECRET` / `REFRESH_TOKEN_SECRET`.
+
+## Multi-factor authentication
+- TOTP (RFC 6238) required for SUPER_ADMIN, TENANT_OWNER, RESTAURANT_OWNER, RESTAURANT_ADMIN,
+  RESTAURANT_MANAGER; enforcement cannot be disabled in production.
+- Secrets AES-256-GCM encrypted with `MFA_ENCRYPTION_KEY`; recovery codes stored as HMACs.
+- Sessions carry `mfaVerifiedAt`; the central access-token check rejects unverified sessions and
+  limits unenrolled privileged users to account setup; refresh refuses unverified sessions.
+- Enrollment requires a code and the current password and revokes other sessions; impersonation
+  sessions cannot change account security; Super Admin can reset another user's MFA (audited).
 
 ## Authorization
 - Roles (`UserRole`): SUPER_ADMIN, TENANT_OWNER, RESTAURANT_ADMIN, RESTAURANT_OWNER,

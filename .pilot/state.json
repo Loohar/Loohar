@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T10:00:00Z",
+  "updatedAt": "2026-09-17T12:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -30,10 +30,10 @@
       "sha": "4c48815283adce470b9130f4bf49aa50f57119a7"
     },
     "candidate": {
-      "branch": "fix/launch-pilot-review-fixes-v01",
-      "sha": "48c27e933d9c29d8809cc370b1e0c3c4c4246a5c",
+      "branch": "fix/launch-review3-fixes-v01",
+      "sha": "c5347da30944a94dd42fd9fcd1d21231df5b4150",
       "pushed": true,
-      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-review2-fixes-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-review3-fixes-v01",
       "chain": [
         {
           "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
@@ -104,6 +104,26 @@
           "sha": "48c27e9",
           "item": "L-15/L-07/L-06/L-09",
           "summary": "second security review fixes: refund outcome safety, shared drawers, delivery state guards, webhook lease"
+        },
+        {
+          "sha": "b383655",
+          "item": "MFA/AUTH",
+          "summary": "TOTP MFA for privileged roles; registration escalation, password change, limiter, token and POS PIN hardening"
+        },
+        {
+          "sha": "94f04b7",
+          "item": "AUTHZ/MONEY",
+          "summary": "profile mass assignment, staff escalation, order lifecycle, webhook payment matching, KDS scoping, POS discount/card/cash guards"
+        },
+        {
+          "sha": "2f0f73c",
+          "item": "L-10",
+          "summary": "schema.prisma reconciled with migrations"
+        },
+        {
+          "sha": "c5347da",
+          "item": "REVIEW-3",
+          "summary": "enroll password, impersonation limits, MFA key, lockout race, login loop, PIN change UI, declined checkout cancel, duplicate settlement flag"
         }
       ]
     },
@@ -189,7 +209,8 @@
     "L-10": {
       "title": "Prisma schema vs migration drift",
       "priority": "P1",
-      "status": "NOT_STARTED"
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "2f0f73c"
     },
     "L-11": {
       "title": "Monitoring, alerting, backup/restore proof, runbooks",
@@ -259,27 +280,76 @@
       "title": "Concurrent main-terminal registration can create two drawers; concurrent checkout.session.completed after lease expiry",
       "priority": "P2",
       "status": "NOT_STARTED"
+    },
+    "L-22": {
+      "title": "Privileged-role MFA",
+      "priority": "P0",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "c5347da",
+      "certification": "TESTED_LOCAL (12 DB cases + browser flow); not staged"
+    },
+    "L-23": {
+      "title": "Public registration creates owner on any tenant",
+      "priority": "P0",
+      "severity": "CRITICAL",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "b383655"
+    },
+    "L-24": {
+      "title": "Restaurant profile mass assignment and /staff role escalation",
+      "priority": "P0",
+      "severity": "CRITICAL",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "94f04b7"
+    },
+    "L-25": {
+      "title": "Order/payment lifecycle (cancel/revive, tips after payment, webhook matching, POS card/cash/discount)",
+      "priority": "P0",
+      "severity": "HIGH",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "c5347da"
+    },
+    "L-26": {
+      "title": "Refresh tokens stored in browser localStorage",
+      "priority": "P1",
+      "severity": "HIGH (hardening)",
+      "status": "DEFERRED",
+      "justification": "Requires httpOnly cookie session redesign across web, POS and driver apps; audits found no XSS sink (no dangerouslySetInnerHTML, JSON-LD via textContent). Revisit before general availability."
+    },
+    "L-27": {
+      "title": "POS card checkout not implemented end to end (no card-present terminal)",
+      "priority": "P0 if in pilot scope",
+      "status": "BLOCKED",
+      "blocker": "Owner decision: Stripe Terminal hardware integration or exclude card-present from pilot"
+    },
+    "L-28": {
+      "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
+      "priority": "P2",
+      "status": "OPEN"
     }
   },
   "tests": {
-    "candidateSha": "48c27e9",
+    "candidateSha": "c5347da",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
-    "build": "PASS (staging VITE_API_URL/VITE_REALTIME_URL)",
+    "build": "PASS",
     "securityScan": "PASS",
     "npmAuditHighCritical": "0 high, 0 critical (5 moderate)",
     "prismaValidate": "PASS",
     "dbSuites": {
+      "test:mfa-auth-db": "PASS (12)",
+      "test:authz-money-hardening-db": "PASS (7)",
       "test:checkout-idempotency-db": "PASS (9)",
       "test:stripe-webhook-hardening-db": "PASS (11)",
-      "test:pos-cash-drawer-setup-db": "PASS (6)",
       "test:refund-idempotency-db": "PASS (10)",
+      "test:pos-cash-drawer-setup-db": "PASS (6)",
       "test:driver-claim-race-db": "PASS (5)",
-      "test:platform-billing-webhook-ledger-db": "PASS (3)"
+      "test:platform-billing-webhook-ledger-db": "PASS (3)",
+      "test:schema-migration-drift-db": "PASS"
     },
-    "securityReview": "Two adversarial reviews (4c48815..1d30522 and 1d30522..a8fdeff); all CONFIRMED findings fixed in 1d30522 and 48c27e9; remaining low/plausible items tracked",
-    "schemaDrift": "PRE-EXISTING (L-10); refund idempotencyKey now modelled"
+    "securityReviews": "Three adversarial audits (auth, authz/tenancy/realtime, money/input) plus three change reviews; all CONFIRMED critical/high/medium fixed except L-26 (deferred with justification) and blocked items",
+    "stagingCertification": "NONE"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -291,16 +361,16 @@
     ]
   },
   "humanActionsRequired": [
-    "Deploy branch fix/launch-pilot-review-fixes-v01 (48c27e9) to the staging API and staging web, or grant a Render API key / Vercel team access usable by automation",
-    "Confirm STRIPE_WEBHOOK_SECRET is configured on staging (and later production) or that the legacy /api/payments/webhook endpoint is not registered in Stripe",
-    "Append the exact staging web origin to CORS_ORIGINS on loohar-api-staging only (not first entry)",
-    "Report the staging web /version.json commitSha (Vercel-protected)",
-    "Decide whether the Starter plan should include employee seats (currently 0) for the pilot restaurant's plan",
-    "Choose a geocoding/maps provider (or confirm pickup-only / manual delivery radius for the pilot) to unblock delivery zone enforcement (L-08)"
+    "Deploy fix/launch-review3-fixes-v01 (c5347da) to the staging API and staging web, or grant staging-only Render API access and Vercel team (subashsunar-8870s-projects) access for automation",
+    "On loohar-api-staging only: append the exact staging preview origin to CORS_ORIGINS (not first); set MFA_ENCRYPTION_KEY (new, random) and confirm STRIPE_WEBHOOK_SECRET / STRIPE_CONNECT_WEBHOOK_SECRET (TEST mode)",
+    "Decide POS card scope for the pilot: integrate a card-present terminal (Stripe Terminal) or exclude POS card checkout from the pilot",
+    "Choose a geocoding provider or restrict pilot delivery (L-08)",
+    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
+    "Decide Starter plan employee seats (currently 0)"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "L-10 schema drift reconciliation; delivery minimum-order enforcement (L-08 partial); resume L-01C when staging access exists"
+  "nextAutonomousTask": "Resume L-01C staging certification (real Stripe TEST checkout) as soon as the candidate is staged; meanwhile L-28 low findings and L-20/L-21"
 }
