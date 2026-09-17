@@ -38,6 +38,7 @@ import {
 } from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { isActiveTaxProfile } from "../services/taxDomain.js";
+import { buildBasicSalesSummary } from "../services/basicReportingService.js";
 import { POS_PERMISSION } from "../services/posService.js";
 import { assertOrderTransition, closeOnlinePaymentForCancellation, isUnpaidOnlineCheckout } from "../services/orderLifecycleService.js";
 
@@ -184,6 +185,8 @@ router.use("/:restaurantId/loyalty", featureGuard(FEATURE.LOYALTY));
 router.use("/:restaurantId/notification-settings", featureGuard(FEATURE.NOTIFICATIONS));
 router.use("/:restaurantId/delivery-zones", featureGuard(FEATURE.DELIVERY_ZONES));
 router.use("/:restaurantId/inventory", featureGuard(FEATURE.INVENTORY));
+// The daily summary is basic reporting and is included with every plan; /reports stays advanced.
+router.use("/:restaurantId/reporting", featureGuard(FEATURE.BASIC_REPORTS));
 router.use("/:restaurantId/reports", featureGuard(FEATURE.REPORTS));
 router.use("/:restaurantId/analytics", featureGuard(FEATURE.ANALYTICS));
 router.use("/:restaurantId/locations", featureGuard(FEATURE.BASIC_SETTINGS));
@@ -2649,6 +2652,18 @@ router.delete("/:restaurantId/inventory/:itemId", async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: "Inventory item not found" });
     const item = await prisma.inventoryItem.update({ where: { id: existing.id }, data: { active: false } });
     res.json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/:restaurantId/reporting/daily", async (req, res, next) => {
+  try {
+    res.json(await buildBasicSalesSummary({
+      restaurantId: restaurantIdFor(req),
+      day: req.query.day?.toString() || "",
+      locationId: req.query.locationId?.toString() || ""
+    }));
   } catch (error) {
     next(error);
   }
