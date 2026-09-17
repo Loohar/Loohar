@@ -150,7 +150,7 @@ router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENAN
 
 router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), validate(refundSchema), async (req, res, next) => {
   try {
-    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user });
+    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user, idempotencyKey: req.get(CHECKOUT_IDEMPOTENCY_HEADER) });
     res.status(201).json({ refund });
   } catch (error) {
     next(error);

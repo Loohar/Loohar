@@ -18,7 +18,10 @@ import {
   isStripeIdempotencyInProgress,
   isUniqueConflictOn,
   normalizeCheckoutIdempotencyKey,
-  orderPaymentIntentIdempotencyKey
+  normalizeRefundIdempotencyKey,
+  orderPaymentIntentIdempotencyKey,
+  orderRefundIdempotencyKey,
+  refundIdempotencyKeyHash
 } from "./checkoutIdempotency.js";
 
 const STRIPE_CONNECT_ACCOUNT_CONFIGURATION = "merchant";
@@ -778,7 +781,55 @@ export async function markOrderPaymentFailed({ payment, failureReason }) {
   return updatedPayment;
 }
 
-export async function refundOrderPayment({ orderId, amountCents, reason, user }) {
+const REFUNDABLE_PAYMENT_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED"]);
+
+function refundError(message, status, code) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
+async function submitRefundToStripe({ refund, payment, merchant, reason }) {
+  const stripeRefundReasons = new Set(["duplicate", "fraudulent", "requested_by_customer"]);
+  const providerReason = stripeRefundReasons.has(reason) ? reason : "requested_by_customer";
+  const body = stripeForm({
+    payment_intent: payment.providerPaymentIntentId,
+    amount: refund.amountCents,
+    reason: providerReason,
+    "metadata[domain]": "RESTAURANT_ORDER_PAYMENT",
+    "metadata[orderPaymentId]": payment.id,
+    "metadata[orderId]": payment.orderId,
+    "metadata[restaurantRefundId]": refund.id,
+    "metadata[refundNote]": reason || providerReason
+  });
+  let providerRefund;
+  try {
+    // Direct charges live on the restaurant's connected account, so the refund must too.
+    providerRefund = await stripeRequest({
+      secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+      path: "/refunds",
+      body,
+      stripeAccount: merchant.stripeAccountId,
+      idempotencyKey: orderRefundIdempotencyKey(refund.id)
+    });
+  } catch (error) {
+    if (isStripeIdempotencyInProgress(error)) throw refundError("This refund is still being processed. Retry the same request shortly.", 409, "REFUND_IN_PROGRESS");
+    await prisma.restaurantRefund.updateMany({ where: { id: refund.id, providerRefundId: null }, data: { status: "FAILED" } });
+    throw error;
+  }
+  return prisma.restaurantRefund.update({
+    where: { id: refund.id },
+    data: {
+      providerRefundId: providerRefund.id,
+      status: providerRefund.status === "succeeded" ? "SUCCEEDED" : providerRefund.status === "failed" ? "FAILED" : "PENDING",
+      processedAt: providerRefund.status === "succeeded" ? new Date() : null
+    }
+  });
+}
+
+export async function refundOrderPayment({ orderId, amountCents, reason, user, idempotencyKey }) {
+  const normalizedKey = normalizeRefundIdempotencyKey(idempotencyKey);
   const payment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId }, include: { order: true, restaurant: true } });
   if (!payment) {
     const error = new Error("Order payment not found");
@@ -790,39 +841,71 @@ export async function refundOrderPayment({ orderId, amountCents, reason, user })
     error.status = 403;
     throw error;
   }
-  const safeAmount = Math.min(Math.max(0, Number(amountCents || payment.totalCents)), payment.totalCents);
-  if (!safeAmount) {
-    const error = new Error("Refund amount must be greater than zero");
-    error.status = 400;
-    throw error;
+  const requestedCents = amountCents === undefined || amountCents === null ? null : Math.floor(Number(amountCents));
+  if (requestedCents !== null && !(requestedCents > 0)) {
+    throw refundError("Refund amount must be greater than zero", 400, "REFUND_AMOUNT_INVALID");
   }
-  assertStripeConnectConfigured();
-  const stripeRefundReasons = new Set(["duplicate", "fraudulent", "requested_by_customer"]);
-  const providerReason = stripeRefundReasons.has(reason) ? reason : "requested_by_customer";
-  const body = stripeForm({
-    payment_intent: payment.providerPaymentIntentId,
-    amount: safeAmount,
-    reason: providerReason,
-    "metadata[domain]": "RESTAURANT_ORDER_PAYMENT",
-    "metadata[orderPaymentId]": payment.id,
-    "metadata[orderId]": payment.orderId,
-    "metadata[refundNote]": reason || providerReason
+  const keyHash = refundIdempotencyKeyHash({ orderPaymentId: payment.id, idempotencyKey: normalizedKey });
+  const merchant = await prisma.restaurantMerchantAccount.findUnique({
+    where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } }
   });
-  const refund = await stripeRequest({ secretKey: process.env.STRIPE_CONNECT_SECRET_KEY, path: "/refunds", body });
-  const restaurantRefund = await prisma.restaurantRefund.create({
-    data: {
-      restaurantId: payment.restaurantId,
-      orderPaymentId: payment.id,
-      provider: "STRIPE_CONNECT",
-      providerRefundId: refund.id,
-      status: refund.status === "succeeded" ? "SUCCEEDED" : "PENDING",
-      amountCents: safeAmount,
-      reason,
-      requestedByUserId: user?.id,
-      processedAt: refund.status === "succeeded" ? new Date() : null
+
+  const replay = async (existing) => {
+    if (requestedCents !== null && requestedCents !== existing.amountCents) {
+      throw refundError("This Idempotency-Key was already used for a different refund.", 409, "REFUND_IDEMPOTENCY_KEY_REUSED");
     }
-  });
-  await recordAudit({ actorUserId: user?.id, restaurantId: payment.restaurantId, action: "order_payment.refund.requested", entityType: "RestaurantRefund", entityId: restaurantRefund.id, metadata: { amountCents: safeAmount } });
+    if (existing.status === "FAILED" || existing.providerRefundId) return existing;
+    if (!merchant?.stripeAccountId) throw refundError("Restaurant payment account is unavailable for refunds.", 409, "REFUND_MERCHANT_UNAVAILABLE");
+    assertStripeConnectConfigured();
+    return submitRefundToStripe({ refund: existing, payment, merchant, reason: existing.reason });
+  };
+
+  const existing = await prisma.restaurantRefund.findUnique({ where: { idempotencyKey: keyHash } });
+  if (existing) return replay(existing);
+
+  if (!REFUNDABLE_PAYMENT_STATUSES.has(payment.status) || !payment.providerPaymentIntentId) {
+    throw refundError("Only paid orders can be refunded.", 409, "REFUND_PAYMENT_NOT_REFUNDABLE");
+  }
+  if (!merchant?.stripeAccountId) throw refundError("Restaurant payment account is unavailable for refunds.", 409, "REFUND_MERCHANT_UNAVAILABLE");
+  assertStripeConnectConfigured();
+
+  let reservation;
+  try {
+    // Lock the payment row so concurrent refunds see each other's reservations and can never
+    // exceed the captured amount.
+    reservation = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "RestaurantOrderPayment" WHERE id = ${payment.id} FOR UPDATE`;
+      // A concurrent request with the same key may have reserved while this one waited on the lock.
+      const alreadyReserved = await tx.restaurantRefund.findUnique({ where: { idempotencyKey: keyHash } });
+      if (alreadyReserved) return { replayOf: alreadyReserved };
+      const reserved = await tx.restaurantRefund.aggregate({
+        where: { orderPaymentId: payment.id, status: { in: ["PENDING", "SUCCEEDED"] } },
+        _sum: { amountCents: true }
+      });
+      const remainingCents = payment.totalCents - (reserved._sum.amountCents || 0);
+      const refundCents = Math.min(requestedCents ?? remainingCents, remainingCents);
+      if (refundCents <= 0) throw refundError("This payment has no refundable balance remaining.", 409, "REFUND_EXCEEDS_REMAINING");
+      return tx.restaurantRefund.create({
+        data: {
+          restaurantId: payment.restaurantId,
+          orderPaymentId: payment.id,
+          provider: "STRIPE_CONNECT",
+          idempotencyKey: keyHash,
+          status: "PENDING",
+          amountCents: refundCents,
+          reason,
+          requestedByUserId: user?.id
+        }
+      });
+    });
+  } catch (error) {
+    if (!isUniqueConflictOn(error, "idempotencyKey")) throw error;
+    return replay(await prisma.restaurantRefund.findUnique({ where: { idempotencyKey: keyHash } }));
+  }
+
+  if (reservation.replayOf) return replay(reservation.replayOf);
+  const restaurantRefund = await submitRefundToStripe({ refund: reservation, payment, merchant, reason });
+  await recordAudit({ actorUserId: user?.id, restaurantId: payment.restaurantId, action: "order_payment.refund.requested", entityType: "RestaurantRefund", entityId: restaurantRefund.id, metadata: { amountCents: restaurantRefund.amountCents } });
   return restaurantRefund;
 }
 

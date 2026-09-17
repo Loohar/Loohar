@@ -14,15 +14,31 @@ function checkoutError(message, status, code) {
   return error;
 }
 
-export function normalizeCheckoutIdempotencyKey(value) {
+function normalizeIdempotencyKey(value, { label, codePrefix }) {
   const candidate = String(Array.isArray(value) ? value[0] : value || "").trim();
   if (!candidate) {
-    throw checkoutError("Checkout requests require an Idempotency-Key header.", 400, "CHECKOUT_IDEMPOTENCY_KEY_REQUIRED");
+    throw checkoutError(`${label} requests require an Idempotency-Key header.`, 400, `${codePrefix}_IDEMPOTENCY_KEY_REQUIRED`);
   }
   if (!CHECKOUT_IDEMPOTENCY_KEY_PATTERN.test(candidate)) {
-    throw checkoutError("Checkout Idempotency-Key must be 16-128 letters, digits, colons, underscores, or hyphens.", 400, "CHECKOUT_IDEMPOTENCY_KEY_INVALID");
+    throw checkoutError(`${label} Idempotency-Key must be 16-128 letters, digits, colons, underscores, or hyphens.`, 400, `${codePrefix}_IDEMPOTENCY_KEY_INVALID`);
   }
   return candidate;
+}
+
+export function normalizeCheckoutIdempotencyKey(value) {
+  return normalizeIdempotencyKey(value, { label: "Checkout", codePrefix: "CHECKOUT" });
+}
+
+export function normalizeRefundIdempotencyKey(value) {
+  return normalizeIdempotencyKey(value, { label: "Refund", codePrefix: "REFUND" });
+}
+
+export function refundIdempotencyKeyHash({ orderPaymentId, idempotencyKey }) {
+  return crypto.createHash("sha256").update(`loohar:refund-idempotency:v1|${orderPaymentId}|${idempotencyKey}`).digest("hex");
+}
+
+export function orderRefundIdempotencyKey(refundId = "") {
+  return `loohar:order-refund:v1:${refundId}`;
 }
 
 export function checkoutIdempotencyKeyHash({ restaurantId, idempotencyKey }) {
