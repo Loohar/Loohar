@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T12:00:00Z",
+  "updatedAt": "2026-09-17T18:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,25 +15,27 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "4c48815283adce470b9130f4bf49aa50f57119a7",
-      "apiVerifiedAt": "2026-09-17T10:00:00Z",
-      "webUrl": "https://loohar-kds-staging-git-fix-la-14814b-subashsunar-8870s-projects.vercel.app",
+      "apiSha": "c5347da30944a94dd42fd9fcd1d21231df5b4150",
+      "apiVerifiedAt": "2026-09-17T15:00:00Z",
+      "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
-      "webShaBlocker": "Vercel Deployment Protection; available CLI login cannot access the subashsunar-8870s-projects team",
-      "webToApiCors": "DENIED (403 CORS_ORIGIN_DENIED) as of 2026-09-17"
+      "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
+      "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
+      "autoDeploy": "NO \u2014 Render staging did not deploy f8614e7 within 10 minutes of push; owner redeploy required",
+      "databaseSeparateFromProduction": true
     }
   },
   "git": {
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
-      "branch": "fix/launch-online-modifier-validation-v01",
-      "sha": "4c48815283adce470b9130f4bf49aa50f57119a7"
+      "branch": "fix/launch-review3-fixes-v01",
+      "sha": "c5347da30944a94dd42fd9fcd1d21231df5b4150"
     },
     "candidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "c5347da30944a94dd42fd9fcd1d21231df5b4150",
+      "sha": "97d4d0202330995831cea7682b43450fe8587337",
       "pushed": true,
-      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-review3-fixes-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-delivery-safety-v01",
       "chain": [
         {
           "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
@@ -124,8 +126,39 @@
           "sha": "c5347da",
           "item": "REVIEW-3",
           "summary": "enroll password, impersonation limits, MFA key, lockout race, login loop, PIN change UI, declined checkout cancel, duplicate settlement flag"
+        },
+        {
+          "sha": "c5347da",
+          "item": "review3",
+          "summary": "third review fixes (already staged)"
+        },
+        {
+          "sha": "8d427c5",
+          "item": "L-29/L-30/L-31",
+          "summary": "Stripe.js stripeAccount for direct charges; storefront modifier groups + field allowlist; basil/dahlia item-level subscription periods"
+        },
+        {
+          "sha": "f8614e7",
+          "item": "L-30",
+          "summary": "public site/order-config/checkout payload allowlists; replay without connected account fails 503"
+        },
+        {
+          "sha": "aba7638",
+          "item": "L-33",
+          "summary": "Starter plan entitlements from apps/shared/planEntitlements.js (5 seats, 1 register, 1 KDS)"
+        },
+        {
+          "sha": "849ab08",
+          "item": "L-08/L-32",
+          "summary": "online fulfilment enforcement; storefront defaults to pickup; no demo customer prefill"
+        },
+        {
+          "sha": "97d4d02",
+          "item": "L-33",
+          "summary": "entitlement review fixes: manager/KDS session bypass, pool-safe locks, driver/reactivation rules"
         }
-      ]
+      ],
+      "deployedToStaging": false
     },
     "frozenBranches": [
       {
@@ -195,9 +228,10 @@
     "L-08": {
       "title": "Delivery zone enforcement at quote",
       "priority": "P1",
-      "status": "BLOCKED",
+      "status": "PARTIAL",
       "blocker": "Zones are radius-based; enforcement needs a geocoding provider (vendor/business decision). Minimum-order enforcement for delivery fee rules can be done without geocoding.",
-      "verified": true
+      "verified": true,
+      "note": "Online orders now enforce restaurant pickup/delivery switches and require a delivery address (849ab08). Zone verification still needs a geocoding provider; delivery is restaurant-managed."
     },
     "L-09": {
       "title": "Platform billing webhook event ledger",
@@ -326,51 +360,91 @@
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
       "priority": "P2",
       "status": "OPEN"
+    },
+    "L-29": {
+      "title": "Web checkout cannot confirm direct-charge PaymentIntents (Stripe.js missing stripeAccount)",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "evidence": "Reproduced on staging: PaymentIntent retrieve with pk + client secret without Stripe-Account returns 404 resource_missing (order cmu5tqkr60001105q8iqvmfv2)"
+    },
+    "L-30": {
+      "title": "Storefront lacked modifier groups; public endpoints leaked internal tenant/billing fields",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY"
+    },
+    "L-31": {
+      "title": "Subscription webhooks ignore item-level billing periods (Stripe basil/dahlia)",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY"
+    },
+    "L-32": {
+      "title": "Storefront defaulted to delivery and prefilled a demo customer",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY"
+    },
+    "L-33": {
+      "title": "Starter plan usable for pilot: 5 employee seats, 1 register, 1 KDS, centralized entitlements",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "limitations": [
+        "KDS limit meters registered KITCHEN_DISPLAY devices; /kitchen browser sessions are not device-bound",
+        "Delivery and driver management remain Professional; Starter pilot is pickup-only"
+      ]
     }
   },
   "tests": {
-    "candidateSha": "c5347da",
+    "candidateSha": "97d4d02",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
-    "build": "PASS",
+    "build": "PASS (staging VITE_API_URL)",
     "securityScan": "PASS",
-    "npmAuditHighCritical": "0 high, 0 critical (5 moderate)",
     "prismaValidate": "PASS",
     "dbSuites": {
+      "test:checkout-idempotency-db": "PASS (10)",
+      "test:stripe-webhook-hardening-db": "PASS (12)",
+      "test:refund-idempotency-db": "PASS (10)",
+      "test:driver-claim-race-db": "PASS (5)",
+      "test:platform-billing-webhook-ledger-db": "PASS (4)",
       "test:mfa-auth-db": "PASS (12)",
       "test:authz-money-hardening-db": "PASS (7)",
-      "test:checkout-idempotency-db": "PASS (9)",
-      "test:stripe-webhook-hardening-db": "PASS (11)",
-      "test:refund-idempotency-db": "PASS (10)",
-      "test:pos-cash-drawer-setup-db": "PASS (6)",
-      "test:driver-claim-race-db": "PASS (5)",
-      "test:platform-billing-webhook-ledger-db": "PASS (3)",
-      "test:schema-migration-drift-db": "PASS"
+      "test:schema-migration-drift-db": "PASS",
+      "test:online-fulfillment-db": "PASS (4)",
+      "test:starter-entitlements-db": "PASS (6)",
+      "test:storefront-checkout-db": "PASS (10)",
+      "test:pos-cash-drawer-setup-db": "PASS (6)"
     },
-    "securityReviews": "Three adversarial audits (auth, authz/tenancy/realtime, money/input) plus three change reviews; all CONFIRMED critical/high/medium fixed except L-26 (deferred with justification) and blocked items",
-    "stagingCertification": "NONE"
+    "newSuitesProvenFailingBeforeFix": true,
+    "adversarialReviews": [
+      "8d427c5 (1 medium fixed in f8614e7, 3 low fixed)",
+      "aba7638 (2 medium + 3 low fixed in 97d4d02; KDS device binding recorded as limitation)"
+    ]
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
     "status": "NOT_READY",
     "reasons": [
-      "No end-to-end staging checkout certification yet",
-      "Candidate 1d30522 not deployed to staging",
-      "Operational readiness (monitoring, backups, runbooks) unproven"
+      "Online card checkout fix (L-29) not yet deployed to staging; no end-to-end staging payment yet",
+      "Operational readiness (monitoring, backups, runbooks) unproven",
+      "POS card-present (Terminal) not implemented"
     ]
   },
   "humanActionsRequired": [
-    "Deploy fix/launch-review3-fixes-v01 (c5347da) to the staging API and staging web, or grant staging-only Render API access and Vercel team (subashsunar-8870s-projects) access for automation",
-    "On loohar-api-staging only: append the exact staging preview origin to CORS_ORIGINS (not first); set MFA_ENCRYPTION_KEY (new, random) and confirm STRIPE_WEBHOOK_SECRET / STRIPE_CONNECT_WEBHOOK_SECRET (TEST mode)",
-    "Decide POS card scope for the pilot: integrate a card-present terminal (Stripe Terminal) or exclude POS card checkout from the pilot",
-    "Choose a geocoding provider or restrict pilot delivery (L-08)",
-    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
-    "Decide Starter plan employee seats (currently 0)"
+    "Redeploy loohar-api-staging from branch fix/launch-review3-fixes-v01 at 97d4d0202330995831cea7682b43450fe8587337 (Render staging does not auto-deploy). No new env vars or migrations are needed. Confirm the Vercel preview for the same branch rebuilt.",
+    "Staging web identity: open https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app/version.json while signed in to Vercel and confirm commitSha 97d4d02 and that the API target is the staging API (or grant Vercel loohar team read access)",
+    "Staging privileged test accounts for MFA/refund/KDS/POS evidence: create them yourself; never share passwords in chat",
+    "Physical Stripe Terminal acceptance (hardware purchase and on-site steps) \u2014 see STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when published",
+    "Geocoding provider decision for automatic delivery-zone verification (pilot is pickup-only on Starter)",
+    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Resume L-01C staging certification (real Stripe TEST checkout) as soon as the candidate is staged; meanwhile L-28 low findings and L-20/L-21"
+  "nextAutonomousTask": "After staging redeploy: complete the real Stripe TEST card payment for staging order cmu5tqkr60001105q8iqvmfv2 (idempotent replay to obtain stripeAccountId), verify webhook settlement, tracking, reconciliation and legacy subscription webhook periods. Meanwhile: Stripe Terminal simulated workstream."
 }
