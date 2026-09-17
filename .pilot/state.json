@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T21:30:00Z",
+  "updatedAt": "2026-09-17T22:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,25 +15,26 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "c5347da30944a94dd42fd9fcd1d21231df5b4150",
-      "apiVerifiedAt": "2026-09-17T15:00:00Z",
+      "apiSha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
+      "apiVerifiedAt": "2026-09-17T20:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
-      "autoDeploy": "NO \u2014 Render staging did not deploy pushed commits; owner redeploy required (still on c5347da as of 2026-09-17 21:30Z)",
-      "databaseSeparateFromProduction": true
+      "autoDeploy": "NO \u2014 owner redeploys manually; bf7430a deployed by owner 2026-09-17",
+      "databaseSeparateFromProduction": true,
+      "onlineCardCheckout": "CERTIFIED with a real Stripe TEST payment at bf7430a (order cmu5tqkr60001105q8iqvmfv2, 4782 reconciled)"
     }
   },
   "git": {
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "c5347da30944a94dd42fd9fcd1d21231df5b4150"
+      "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704"
     },
     "candidate": {
       "branch": "fix/launch-review3-fixes-v01",
-      "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
+      "sha": "cebe5e33d3f8483e62248d84649e658225a85557",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -171,6 +172,16 @@
           "sha": "bf7430a",
           "item": "L-27",
           "summary": "Terminal review fixes (stale/captured PaymentIntent, tipping, cash-vs-card, locked payment row) + register card UI"
+        },
+        {
+          "sha": "12a30cb",
+          "item": "L-35",
+          "summary": "customer order status returns payment state (found during staging certification)"
+        },
+        {
+          "sha": "cebe5e3",
+          "item": "L-11",
+          "summary": "owner-run staging privileged evidence script"
         }
       ],
       "deployedToStaging": false
@@ -206,7 +217,7 @@
       "priority": "P0",
       "status": "IMPLEMENTED_LOCAL_PUSHED",
       "sha": "7e0833a",
-      "certification": "NOT_STAGED"
+      "certification": "PASS (staging, bf7430a)"
     },
     "L-04": {
       "title": "Legacy Stripe webhook hardening",
@@ -222,7 +233,8 @@
       "status": "IMPLEMENTED_LOCAL_PUSHED",
       "sha": "0e69db3",
       "discovered": "2026-09-17",
-      "productionAffected": "LIKELY (identical code on origin/main; not exercised in production to avoid mutation)"
+      "productionAffected": "LIKELY (identical code on origin/main; not exercised in production to avoid mutation)",
+      "certification": "PASS (staging, bf7430a)"
     },
     "L-06": {
       "title": "Driver delivery claim race",
@@ -382,7 +394,7 @@
       "title": "Web checkout cannot confirm direct-charge PaymentIntents (Stripe.js missing stripeAccount)",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY",
+      "certification": "PASS (staging, bf7430a)",
       "evidence": "Reproduced on staging: PaymentIntent retrieve with pk + client secret without Stripe-Account returns 404 resource_missing (order cmu5tqkr60001105q8iqvmfv2)"
     },
     "L-30": {
@@ -418,10 +430,32 @@
       "priority": "P1",
       "status": "TESTED (local), PUSHED",
       "certification": "PENDING_STAGING_DEPLOY"
+    },
+    "L-01C": {
+      "title": "Real Stripe TEST staging checkout certification",
+      "priority": "P0",
+      "status": "PASS",
+      "certifiedAt": "2026-09-17T20:26:50Z",
+      "certifiedSha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
+      "evidence": "Loohar/Evidence/payments/STAGING_ONLINE_CARD_CERTIFICATION-bf7430a.md",
+      "result": "Client prices ignored (sent 1c, charged 4782); PaymentIntent 404 without connected account and 200 with it; test card confirmed; webhook settled PAID and moved the order to ACCEPTED; Stripe 4782 = payment 4782 = order 4782; idempotent replay returns the same order and PaymentIntent"
+    },
+    "L-35": {
+      "title": "Customer order status omitted payment state",
+      "priority": "P1",
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Found while certifying online card checkout on staging"
+    },
+    "L-36": {
+      "title": "Platform (SaaS) billing webhook has no secret on staging",
+      "priority": "P2",
+      "status": "BLOCKED (owner)",
+      "note": "/api/webhooks/stripe-platform returns 503 fail-closed on staging. Restaurant order payments are unaffected. Set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks."
     }
   },
   "tests": {
-    "candidateSha": "bf7430a",
+    "candidateSha": "cebe5e3",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -439,7 +473,7 @@
       "test:schema-migration-drift-db": "PASS",
       "test:online-fulfillment-db": "PASS (4)",
       "test:starter-entitlements-db": "PASS (6)",
-      "test:storefront-checkout-db": "PASS (10)",
+      "test:storefront-checkout-db": "PASS (11)",
       "test:basic-reporting-db": "PASS (5)",
       "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)"
@@ -455,16 +489,17 @@
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
     "status": "NOT_READY",
     "reasons": [
-      "Online card checkout fix (L-29) not yet deployed to staging; no end-to-end staging payment yet",
       "Operational readiness (monitoring, backups, runbooks) unproven",
-      "POS card-present (Terminal) not implemented"
+      "POS card-present certified only with simulated readers; physical acceptance pending",
+      "Privileged staging evidence (MFA, KDS, POS, refunds) pending owner-run capture"
     ]
   },
   "humanActionsRequired": [
-    "Redeploy loohar-api-staging from branch fix/launch-review3-fixes-v01 at bf7430a0ccb847ad45ffff55071f1a236fc76704. The Render preDeployCommand runs the additive migration 20260918090000_pos_terminal_readers automatically; no new environment variables are needed. Confirm the Vercel preview for the same branch rebuilt.",
-    "Staging web identity: open https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app/version.json while signed in to Vercel and confirm commitSha 97d4d02 and that the API target is the staging API (or grant Vercel loohar team read access)",
-    "Staging privileged test accounts for MFA/refund/KDS/POS evidence: create them yourself; never share passwords in chat",
-    "Physical Stripe Terminal acceptance (hardware purchase and on-site steps) \u2014 see STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when published",
+    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at cebe5e33d3f8483e62248d84649e658225a85557 (adds the customer payment-state fix and the evidence script; no new environment variables, no new migrations)",
+    "Vercel: invite subashsunar00@gmail.com (username subashsunar, account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer, or paste the staging preview /version.json contents",
+    "Run `node scripts/staging-privileged-evidence.mjs` against staging with a privileged staging account and share the generated evidence file (it contains no secrets). This unblocks MFA, KDS, POS and reporting staging evidence.",
+    "Optional for platform billing certification: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging (currently fails closed with 503)",
+    "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when convenient",
     "Geocoding provider decision for automatic delivery-zone verification (pilot is pickup-only on Starter)",
     "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
   ],
@@ -472,5 +507,5 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "After staging redeploy: real Stripe TEST card checkout certification for staging order cmu5tqkr60001105q8iqvmfv2, webhook settlement, tracking, reconciliation, subscription period verification, then simulated Terminal rehearsal on staging."
+  "nextAutonomousTask": "Rehearse a simulated Stripe Terminal sale on staging once a POS session is available; meanwhile refund/void/tip workstream, KDS device binding, offline POS and performance evidence."
 }

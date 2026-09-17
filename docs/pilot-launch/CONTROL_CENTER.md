@@ -1,6 +1,6 @@
 # Loohar Pilot Control Center
 
-Last updated: 2026-09-17 21:30 UTC · Machine-readable twin: `.pilot/state.json`
+Last updated: 2026-09-17 22:30 UTC · Machine-readable twin: `.pilot/state.json`
 
 Status vocabulary: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED · TESTED (local) ·
 STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness percentages are used.
@@ -11,10 +11,10 @@ STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness p
 | --- | --- | --- |
 | Production API / web | `0526862` | `/version`, `/version.json` → production |
 | origin/main | `0526862` | `git fetch origin` |
-| Staging API | `c5347da` (schema ok, separate DB from production) | `/version`, `/health` |
+| Staging API | `bf7430a` (schema ok, separate DB from production) | `/version`, `/health` |
 | Staging web | UNKNOWN — `loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app` behind Vercel SSO | `/version.json` 302 |
 | Staging preview → staging API CORS | ALLOWED for exact origin; other origins 403 | live probe |
-| Pilot candidate | `bf7430a` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
+| Pilot candidate | `cebe5e3` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
 | Frozen | `feature/loohar-national-tax-provider-v01` @ `1e0562b` | do not modify/merge |
 
 Candidate chain on production `0526862`: L-01 (`2d85007`,`b291ddd`,`cfec6a4`,`a3262dc`) →
@@ -48,8 +48,9 @@ MFA/auth `b383655` → authz/money `94f04b7` → L-10 `2f0f73c` → review 3 `c5
 | L-24 | Profile mass assignment and /staff escalation (critical) | TESTED (local) |
 | L-25 | Order/payment lifecycle, webhook matching, POS card/cash/discount guards | TESTED (local) |
 | L-01 / L-02 | Public order access / modifier authority | STAGED (API @ 4c48815), certification BLOCKED |
-| L-01C | Real Stripe TEST staging checkout certification | BLOCKED (owner redeploy of `97d4d02`) |
-| L-29 | Web checkout Stripe.js connected account | TESTED (local), PUSHED |
+| L-01C | Real Stripe TEST staging checkout certification | **PASS** — real test payment on staging at `bf7430a`, 4782 reconciled end to end |
+| L-29 | Web checkout Stripe.js connected account | **PASS** (staging: 404 without the account, 200 with it) |
+| L-35 | Customer order status omitted payment state | TESTED (local), PUSHED |
 | L-30 | Storefront modifiers + public payload allowlists | TESTED (local), PUSHED |
 | L-33 | Starter plan: 5 seats, 1 register, 1 KDS (shared config) | TESTED (local), PUSHED — KDS browser sessions not device-bound |
 | L-27 | POS card checkout (card-present, Stripe Terminal) | TESTED (local), PUSHED — physical acceptance is an owner step |
@@ -117,8 +118,9 @@ fixed in `bf7430a` with tests that fail on the previous commit.
 
 ## 8. Restaurant #1 readiness
 
-NOT READY — online card checkout fix awaiting staging redeploy, no end-to-end staging payment yet, POS
-card-present not implemented, operations unproven.
+NOT READY — online card checkout is now certified on staging with a real Stripe TEST payment, but
+privileged staging evidence (MFA, KDS, POS, refunds) is still to be captured, POS card-present is
+certified only with simulated readers, and operations (monitoring, backups, runbooks) are unproven.
 
 ## 9. Next autonomous task
 
