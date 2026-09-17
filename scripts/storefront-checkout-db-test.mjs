@@ -25,6 +25,7 @@ const { prisma } = await import("../apps/api/src/config/prisma.js");
 const customerRoutes = (await import("../apps/api/src/routes/customer.js")).default;
 const publicRoutes = (await import("../apps/api/src/routes/public.js")).default;
 const { stripeSubscriptionPeriod } = await import("../apps/api/src/utils/stripeSubscriptionPeriod.js");
+const { hashToken } = await import("../apps/api/src/services/orderWorkflowService.js");
 const { errorHandler } = await import("../apps/api/src/middleware/errorHandler.js");
 const app = express();
 app.use(express.json());
@@ -78,6 +79,46 @@ for (const path of [`restaurants/${"SLUG"}`, `sites/${"SLUG"}`, `restaurants/${"
     }
   });
 }
+
+test("a customer tracking an order sees whether it is paid", async () => {
+  const restaurant = await prisma.restaurant.findUnique({ where: { slug: runId } });
+  const customer = await prisma.customer.create({ data: { restaurantId: restaurant.id, name: "Tracker", email: `tracker-${runId}@example.test` } });
+  const trackingToken = `track-${runId}`;
+  const order = await prisma.order.create({
+    data: {
+      restaurant: { connect: { id: restaurant.id } },
+      customer: { connect: { id: customer.id } },
+      orderNumber: `${runId}-track`,
+      type: "PICKUP",
+      subtotalCents: 4140,
+      taxCents: 342,
+      restaurantTipCents: 300,
+      totalCents: 4782,
+      trackingTokenHash: hashToken(trackingToken),
+      trackingTokenExpiresAt: new Date(Date.now() + 86_400_000)
+    }
+  });
+  const payment = await prisma.restaurantOrderPayment.create({
+    data: {
+      restaurantId: restaurant.id, orderId: order.id, provider: "STRIPE_CONNECT", status: "REQUIRES_PAYMENT_METHOD",
+      subtotalCents: 4140, taxCents: 342, restaurantTipCents: 300, totalCents: 4782, restaurantGrossCents: 4782, restaurantNetCents: 4782,
+      checkoutIdempotencyKeyHash: `hash-${runId}-track`
+    }
+  });
+  const statusUrl = `${baseUrl}/api/customer/orders/${order.id}/status?token=${encodeURIComponent(trackingToken)}`;
+  const unpaid = await (await fetch(statusUrl)).json();
+  assert.equal(unpaid.payment.status, "REQUIRES_PAYMENT_METHOD");
+  assert.equal(unpaid.payment.totalCents, 4782);
+  assert.equal("checkoutIdempotencyKeyHash" in unpaid.payment, false, "internal payment fields stay private");
+
+  await prisma.restaurantOrderPayment.update({ where: { id: payment.id }, data: { status: "PAID", paidAt: new Date() } });
+  const paid = await (await fetch(statusUrl)).json();
+  assert.equal(paid.payment.status, "PAID");
+  assert.ok(paid.payment.paidAt);
+
+  const wrongToken = await fetch(`${baseUrl}/api/customer/orders/${order.id}/status?token=not-the-token`);
+  assert.equal(wrongToken.status, 403, "payment state needs the order's own tracking token");
+});
 
 test("subscription periods pair start and end from the item that renews first", () => {
   assert.deepEqual(stripeSubscriptionPeriod({ current_period_start: 10, current_period_end: 20 }), { currentPeriodStart: 10, currentPeriodEnd: 20 });

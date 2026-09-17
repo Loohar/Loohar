@@ -6,7 +6,7 @@ import { authenticateAccessToken, requireAuth, requireRole } from "../middleware
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
 import { findOrderForTracking, limitedTrackingOrder } from "../services/orderWorkflowService.js";
-import { createOrderPayment } from "../modules/orderPayments/orderPaymentService.js";
+import { createOrderPayment, publicOrderPaymentStatus } from "../modules/orderPayments/orderPaymentService.js";
 import { publicRestaurantProfile } from "../utils/publicRestaurant.js";
 
 const router = Router();
@@ -133,19 +133,20 @@ export async function getOrderStatus(req, res, next) {
       const tracked = await findOrderForTracking(req.params.orderId, token);
       if (!tracked) return res.status(403).json({ error: "Invalid or expired tracking token" });
       if (req.params.slug && tracked.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
-      return res.json({ order: limitedTrackingOrder(tracked) });
+      // Customers tracking an order need to see whether it is paid, not just where it is.
+      return res.json({ order: limitedTrackingOrder(tracked), payment: publicOrderPaymentStatus(tracked.restaurantOrderPayment || tracked.payment) });
     }
     const bearerToken = bearerTokenFor(req);
     if (!bearerToken) return res.status(403).json({ error: "Valid order access token is required", code: "ORDER_ACCESS_TOKEN_REQUIRED" });
     const user = await authenticateAccessToken(bearerToken);
     const order = await prisma.order.findUnique({
       where: { id: req.params.orderId },
-      include: { restaurant: true, customer: true, items: true, statusHistory: true, delivery: { include: { statusHistory: true, driver: { include: { user: true } } } } }
+      include: { restaurant: true, customer: true, items: true, statusHistory: true, delivery: { include: { statusHistory: true, driver: { include: { user: true } } } }, payment: true, restaurantOrderPayment: { include: { refunds: true } } }
     });
     if (!order) return res.status(404).json({ error: "Order not found" });
     if (req.params.slug && order.restaurant.slug !== req.params.slug) return res.status(404).json({ error: "Order not found" });
     if (!canReadCustomerOrderStatus(user, order)) return res.status(403).json({ error: "Order access denied", code: "ORDER_ACCESS_DENIED" });
-    res.json({ order: limitedTrackingOrder(order) });
+    res.json({ order: limitedTrackingOrder(order), payment: publicOrderPaymentStatus(order.restaurantOrderPayment || order.payment) });
   } catch (error) {
     next(error);
   }
