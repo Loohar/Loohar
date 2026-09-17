@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git branch --show-current)",
+      "Bash(git rev-parse:*)",
+      "Bash(npm test)",
+      "Bash(npm run lint)",
+      "Bash(npm run build)",
+      "Bash(npm run security:scan)",
+      "Bash(npm run test:*)",
+      "Bash(npm audit:*)"
+    ],
+    "deny": [
+      "Bash(git push origin main:*)",
+      "Bash(git push origin HEAD:main:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git checkout main:*)",
+      "Bash(git merge feature/loohar-national-tax-provider-v01:*)",
+      "Bash(npm run prisma:deploy:*)",
+      "Bash(npm run prisma:migrate:*)",
+      "Bash(npx prisma migrate deploy:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(vercel --prod:*)",
+      "Bash(vercel deploy --prod:*)",
+      "Bash(vercel promote:*)",
+      "Bash(vercel env rm:*)",
+      "Bash(npm run smoke:production:*)",
+      "Read(./apps/api/.env)",
+      "Read(./apps/api/.env.*)",
+      "Read(./apps/web/.env)",
+      "Read(./apps/web/.env.local)",
+      "Read(./apps/web/.env.production*)"
+    ]
+  }
+}

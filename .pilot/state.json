@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-17T06:31:00Z",
+  "updatedBy": "claude-code autonomous program",
+  "repository": "Loohar/Loohar",
+  "environments": {
+    "production": {
+      "apiUrl": "https://loohar-api.onrender.com",
+      "webUrl": "https://loohar.com",
+      "apiSha": "0526862bceb2dc3a483de96561755052076df060",
+      "webSha": "0526862bceb2dc3a483de96561755052076df060",
+      "verifiedAt": "2026-09-17T06:31:00Z",
+      "frozen": true,
+      "changeRequiresOwnerApproval": true
+    },
+    "staging": {
+      "apiUrl": "https://loohar-api-staging.onrender.com",
+      "apiSha": "4c48815283adce470b9130f4bf49aa50f57119a7",
+      "apiVerifiedAt": "2026-09-17T06:31:00Z",
+      "webUrl": "https://loohar-kds-staging-git-fix-la-14814b-subashsunar-8870s-projects.vercel.app",
+      "webSha": "UNKNOWN",
+      "webShaBlocker": "Vercel Deployment Protection; available CLI login cannot access the subashsunar-8870s-projects team",
+      "webToApiCors": "DENIED (403 CORS_ORIGIN_DENIED) as of 2026-09-17"
+    }
+  },
+  "git": {
+    "originMain": "0526862bceb2dc3a483de96561755052076df060",
+    "previousCandidate": {
+      "branch": "fix/launch-online-modifier-validation-v01",
+      "sha": "4c48815283adce470b9130f4bf49aa50f57119a7"
+    },
+    "candidate": {
+      "branch": "fix/launch-legacy-stripe-webhook-v01",
+      "sha": "1d30522c07926a519affe5e99782bdd5f989b96a",
+      "pushed": true,
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-l04-legacy-webhook-v01",
+      "chain": [
+        {
+          "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
+          "item": "L-01",
+          "summary": "protect public order payment access"
+        },
+        {
+          "sha": "b291ddd5d35c60b49755c244d0e7f6960a79eb0f",
+          "item": "L-01",
+          "summary": "public order mobile overflow"
+        },
+        {
+          "sha": "cfec6a45ae0bdd7de32059de90dd17ba26b9e8a1",
+          "item": "L-01",
+          "summary": "Stripe Connect Accounts v2 onboarding"
+        },
+        {
+          "sha": "a3262dcdf99ffe0c7d92b424de9705630cf78a04",
+          "item": "L-01",
+          "summary": "payment readiness consistency"
+        },
+        {
+          "sha": "4c48815283adce470b9130f4bf49aa50f57119a7",
+          "item": "L-02",
+          "summary": "server-authoritative modifier validation"
+        },
+        {
+          "sha": "0e69db3",
+          "item": "L-05",
+          "summary": "online checkout order creation Prisma relation fix"
+        },
+        {
+          "sha": "7e0833a",
+          "item": "L-03",
+          "summary": "checkout idempotency"
+        },
+        {
+          "sha": "47fa9cc",
+          "item": "L-04",
+          "summary": "Stripe webhook fail-closed, replay tolerance, event ledger"
+        },
+        {
+          "sha": "1d30522c07926a519affe5e99782bdd5f989b96a",
+          "item": "L-03/L-04",
+          "summary": "atomic settlement and replay safety from security review"
+        }
+      ]
+    },
+    "frozenBranches": [
+      {
+        "branch": "feature/loohar-national-tax-provider-v01",
+        "sha": "1e0562b64ad613d80c16dba3a20955b0b7408973",
+        "rule": "do not modify or merge without owner approval"
+      }
+    ],
+    "controlBranch": {
+      "branch": "chore/loohar-pilot-control-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-control-v01"
+    }
+  },
+  "items": {
+    "L-01": {
+      "title": "Public order/payment access security",
+      "priority": "P0",
+      "status": "STAGED",
+      "certification": "BLOCKED",
+      "note": "Code on staging API at 4c48815; browser checkout certification blocked by staging web identity + CORS; certification must now use candidate 1d30522 because L-05 blocks every online checkout at 4c48815"
+    },
+    "L-02": {
+      "title": "Server-authoritative online modifier validation",
+      "priority": "P0",
+      "status": "STAGED",
+      "certification": "PENDING_L01C"
+    },
+    "L-03": {
+      "title": "Checkout idempotency",
+      "priority": "P0",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "7e0833a",
+      "certification": "NOT_STAGED"
+    },
+    "L-04": {
+      "title": "Legacy Stripe webhook hardening",
+      "priority": "P0",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "47fa9cc",
+      "certification": "NOT_STAGED",
+      "deployPrerequisite": "STRIPE_WEBHOOK_SECRET configured wherever the legacy endpoint is registered"
+    },
+    "L-05": {
+      "title": "Online checkout order creation fails Prisma validation",
+      "priority": "P0",
+      "status": "IMPLEMENTED_LOCAL_PUSHED",
+      "sha": "0e69db3",
+      "discovered": "2026-09-17",
+      "productionAffected": "LIKELY (identical code on origin/main; not exercised in production to avoid mutation)"
+    },
+    "L-06": {
+      "title": "Driver delivery claim race",
+      "priority": "P1",
+      "status": "NOT_STARTED"
+    },
+    "L-07": {
+      "title": "Refund idempotency",
+      "priority": "P1",
+      "status": "NOT_STARTED"
+    },
+    "L-08": {
+      "title": "Delivery zone enforcement at quote",
+      "priority": "P1",
+      "status": "NOT_STARTED"
+    },
+    "L-09": {
+      "title": "Platform billing webhook event ledger",
+      "priority": "P1",
+      "status": "NOT_STARTED"
+    },
+    "L-10": {
+      "title": "Prisma schema vs migration drift",
+      "priority": "P1",
+      "status": "NOT_STARTED"
+    },
+    "L-11": {
+      "title": "Monitoring, alerting, backup/restore proof, runbooks",
+      "priority": "P0",
+      "status": "BLOCKED",
+      "blocker": "Needs owner access to Render/Supabase/alerting accounts"
+    },
+    "L-12": {
+      "title": "API CORS allowlist always merges production origins (staging API accepts loohar.com)",
+      "priority": "P2",
+      "status": "NOT_STARTED"
+    },
+    "L-15": {
+      "title": "Cash drawers can only be created by the development setup script",
+      "priority": "P0",
+      "status": "NOT_STARTED",
+      "evidence": "only cashDrawer.upsert is apps/api/prisma/setup-development-pos.js; no API route or UI",
+      "verified": true
+    },
+    "L-16": {
+      "title": "Refunds have no restaurant UI (API only)",
+      "priority": "P1",
+      "status": "NOT_STARTED",
+      "verified": true,
+      "dependsOn": [
+        "L-07"
+      ]
+    },
+    "L-17": {
+      "title": "POS cashier workflow gaps: PIN self-setup, cashier receipt printing, pay after send-to-kitchen",
+      "priority": "P1",
+      "status": "NOT_STARTED",
+      "verified": false,
+      "source": "manual drafting code review 2026-09-17"
+    },
+    "L-18": {
+      "title": "Driver app shows sample deliveries while offline",
+      "priority": "P1",
+      "status": "NOT_STARTED",
+      "verified": false
+    },
+    "L-13": {
+      "title": "Checkout replay may return a cancelled/expired PaymentIntent client secret",
+      "priority": "P2",
+      "status": "NOT_STARTED"
+    },
+    "L-14": {
+      "title": "Client-supplied service fee and tips accepted (non-negative)",
+      "priority": "P2",
+      "status": "NEEDS_OWNER_DECISION"
+    }
+  },
+  "tests": {
+    "candidateSha": "1d30522c07926a519affe5e99782bdd5f989b96a",
+    "ranAt": "2026-09-17",
+    "npmTest": "PASS (66 suites)",
+    "lint": "PASS",
+    "build": "PASS (with staging VITE_API_URL/VITE_REALTIME_URL)",
+    "securityScan": "PASS",
+    "npmAuditHighCritical": "0 high, 0 critical (5 moderate)",
+    "prismaValidate": "PASS",
+    "migrationsFreshDatabase": "PASS (32 migrations on disposable Postgres 16)",
+    "dbSuites": {
+      "test:checkout-idempotency-db": "PASS (9)",
+      "test:stripe-webhook-hardening-db": "PASS (10)"
+    },
+    "schemaDrift": "PRE-EXISTING (see L-10); unrelated to candidate changes"
+  },
+  "restaurant1Readiness": {
+    "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
+    "status": "NOT_READY",
+    "reasons": [
+      "No end-to-end staging checkout certification yet",
+      "Candidate 1d30522 not deployed to staging",
+      "Operational readiness (monitoring, backups, runbooks) unproven"
+    ]
+  },
+  "humanActionsRequired": [
+    "Deploy branch fix/launch-legacy-stripe-webhook-v01 (1d30522) to the staging API and staging web, or grant a Render API key / Vercel team access usable by automation",
+    "Confirm STRIPE_WEBHOOK_SECRET is configured on staging (and later production) or that the legacy /api/payments/webhook endpoint is not registered in Stripe",
+    "Append the exact staging web origin to CORS_ORIGINS on loohar-api-staging only (not first entry)",
+    "Report the staging web /version.json commitSha (Vercel-protected)",
+    "Decide whether the Starter plan should include employee seats (currently 0) for the pilot restaurant's plan"
+  ],
+  "approvals": {
+    "productionRelease": "NOT_REQUESTED",
+    "mainMerge": "NOT_REQUESTED"
+  },
+  "nextAutonomousTask": "L-15 restaurant-managed cash drawer setup (P0 for cash POS pilot) \u2014 verify register/drawer model and add owner/manager API + UI; then L-06 driver claim race, L-07 refund idempotency"
+}
