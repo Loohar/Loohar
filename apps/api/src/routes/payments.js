@@ -1,67 +1,13 @@
-import crypto from "crypto";
 import { Router } from "express";
 import { prisma } from "../config/prisma.js";
+import { parseRawWebhook, verifyStripeWebhook } from "../modules/paymentProviders/stripeRest.js";
+import { processStripeWebhookEventOnce } from "../modules/paymentProviders/stripeWebhookEvents.js";
 import { recordAudit } from "../services/auditService.js";
 import { normalizeStripeEvent } from "../services/paymentService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../services/notificationService.js";
 import { emitOrderUpdate } from "../services/realtimeService.js";
 
 const router = Router();
-
-function timingSafeEqualHex(left = "", right = "") {
-  const leftBuffer = Buffer.from(left, "hex");
-  const rightBuffer = Buffer.from(right, "hex");
-  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function parseStripeSignature(signatureHeader = "") {
-  return signatureHeader.split(",").reduce((parts, pair) => {
-    const [key, value] = pair.split("=");
-    if (!key || !value) return parts;
-    if (key === "t") parts.timestamp = value;
-    if (key === "v1") parts.signatures.push(value);
-    return parts;
-  }, { timestamp: "", signatures: [] });
-}
-
-function parseWebhookBody(req) {
-  if (Buffer.isBuffer(req.body)) {
-    const rawBody = req.body.toString("utf8");
-    try {
-      return { rawBody, payload: JSON.parse(rawBody) };
-    } catch {
-      const error = new Error("Invalid webhook JSON payload");
-      error.status = 400;
-      throw error;
-    }
-  }
-  const rawBody = JSON.stringify(req.body || {});
-  return { rawBody, payload: req.body || {} };
-}
-
-function verifyStripeWebhookSignature({ rawBody, signatureHeader }) {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) return;
-  if (!signatureHeader) {
-    const error = new Error("Missing Stripe signature");
-    error.status = 400;
-    throw error;
-  }
-  const { timestamp, signatures } = parseStripeSignature(signatureHeader);
-  if (!timestamp || signatures.length === 0) {
-    const error = new Error("Invalid Stripe signature header");
-    error.status = 400;
-    throw error;
-  }
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const expectedSignature = crypto.createHmac("sha256", webhookSecret).update(signedPayload, "utf8").digest("hex");
-  const valid = signatures.some((signature) => timingSafeEqualHex(signature, expectedSignature));
-  if (!valid) {
-    const error = new Error("Invalid Stripe signature");
-    error.status = 400;
-    throw error;
-  }
-}
 
 async function issueLoyaltyPoints({ order }) {
   const existing = await prisma.loyaltyPoint.findFirst({ where: { orderId: order.id, reason: "Order reward" } });
@@ -176,39 +122,65 @@ async function updateTenantSubscriptionFromStripe({ event }) {
   return { subscription: updatedSubscription };
 }
 
+const LEGACY_PAID_STATUSES = new Set(["PAID", "REFUNDED"]);
+
+async function applyLegacyStripeEvent(event) {
+  if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.eventType)) {
+    return { received: true, ...(await updateTenantSubscriptionFromStripe({ event })) };
+  }
+  let payment = event.providerPaymentId
+    ? await prisma.payment.findFirst({ where: { providerPaymentId: event.providerPaymentId } })
+    : null;
+  if (!payment && event.stripePaymentIntentId) {
+    payment = await prisma.payment.findFirst({ where: { stripePaymentIntentId: event.stripePaymentIntentId } });
+  }
+  if (!payment && event.orderId) {
+    payment = await prisma.payment.findUnique({ where: { orderId: event.orderId } });
+  }
+  if (!payment) return { received: true, ignored: true, reason: "payment_not_found" };
+
+  // Guards keep late or repeated deliveries from re-running paid side effects (order status reset,
+  // coupon redemption, notifications) or downgrading a settled payment.
+  if (["payment_intent.succeeded", "checkout.session.completed", "payment.succeeded"].includes(event.eventType)) {
+    if (LEGACY_PAID_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    return { received: true, ...(await markPaymentPaid({ payment, providerPaymentId: event.providerPaymentId, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId })) };
+  }
+  if (["payment_intent.payment_failed", "payment.failed"].includes(event.eventType)) {
+    if (LEGACY_PAID_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    return { received: true, payment: await markPaymentFailed({ payment, failureReason: event.failureReason, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId }) };
+  }
+  if (["charge.refunded", "payment.refunded"].includes(event.eventType)) {
+    if (payment.status === "REFUNDED") return { received: true, ignored: true, reason: "payment_already_refunded" };
+    return { received: true, payment: await markPaymentRefunded({ payment }) };
+  }
+  return { received: true, ignored: true };
+}
+
 router.post("/webhook", async (req, res, next) => {
   try {
-    const { rawBody, payload } = parseWebhookBody(req);
-    verifyStripeWebhookSignature({ rawBody, signatureHeader: req.get("stripe-signature") || "" });
+    const { rawBody, payload } = parseRawWebhook(req);
+    // Fails closed: a missing STRIPE_WEBHOOK_SECRET rejects every event instead of skipping verification.
+    verifyStripeWebhook({
+      rawBody,
+      signatureHeader: req.get("stripe-signature") || "",
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET
+    });
+    if (!payload.id || !payload.type) {
+      const error = new Error("Stripe event id and type are required");
+      error.status = 400;
+      throw error;
+    }
     const event = normalizeStripeEvent(payload);
-    if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.eventType)) {
-      const result = await updateTenantSubscriptionFromStripe({ event });
-      return res.json({ received: true, ...result });
-    }
-    let payment = event.providerPaymentId
-      ? await prisma.payment.findFirst({ where: { providerPaymentId: event.providerPaymentId } })
-      : null;
-    if (!payment && event.stripePaymentIntentId) {
-      payment = await prisma.payment.findFirst({ where: { stripePaymentIntentId: event.stripePaymentIntentId } });
-    }
-    if (!payment && event.orderId) {
-      payment = await prisma.payment.findUnique({ where: { orderId: event.orderId } });
-    }
-    if (!payment) return res.status(404).json({ error: "Payment not found" });
-
-    if (["payment_intent.succeeded", "checkout.session.completed", "payment.succeeded"].includes(event.eventType)) {
-      const result = await markPaymentPaid({ payment, providerPaymentId: event.providerPaymentId, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId });
-      return res.json({ received: true, ...result });
-    }
-    if (["payment_intent.payment_failed", "payment.failed"].includes(event.eventType)) {
-      const failedPayment = await markPaymentFailed({ payment, failureReason: event.failureReason, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId });
-      return res.json({ received: true, payment: failedPayment });
-    }
-    if (["charge.refunded", "payment.refunded"].includes(event.eventType)) {
-      const refundedPayment = await markPaymentRefunded({ payment });
-      return res.json({ received: true, payment: refundedPayment });
-    }
-    res.json({ received: true, ignored: true });
+    const result = await processStripeWebhookEventOnce({
+      restaurantId: null,
+      paymentId: null,
+      eventDomain: event.eventType.startsWith("customer.subscription.") ? "PLATFORM_BILLING" : "RESTAURANT_ORDER_PAYMENT",
+      provider: "stripe_legacy",
+      providerEventId: `stripe_legacy:${payload.id}`,
+      eventType: event.eventType,
+      payloadJson: { id: payload.id, type: payload.type }
+    }, () => applyLegacyStripeEvent(event));
+    res.json(result);
   } catch (error) {
     next(error);
   }

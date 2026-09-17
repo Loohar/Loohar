@@ -5,6 +5,7 @@ import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/not
 import { buildReceiptPayload, createTrackingToken, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
+import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
 import { isMerchantAccountPaymentReady } from "./merchantReadiness.js";
 import { calculateOrderQuote } from "./quoteService.js";
 import {
@@ -875,21 +876,22 @@ export async function handleStripeConnectWebhook(payload = {}) {
   if (!payment && paymentIntentId) payment = await prisma.restaurantOrderPayment.findFirst({ where: { providerPaymentIntentId: paymentIntentId } });
   if (!payment && orderId) payment = await prisma.restaurantOrderPayment.findUnique({ where: { orderId } });
 
-  await prisma.restaurantPaymentEvent.upsert({
-    where: { providerEventId },
-    create: {
-      restaurantId: payment?.restaurantId || accountObject?.metadata?.restaurantId || object.metadata?.restaurantId || null,
-      paymentId: payment?.id || null,
-      eventDomain: accountLifecycleEvent ? "MERCHANT_ACCOUNT" : eventType?.startsWith("payout.") ? "PAYOUT" : eventType?.startsWith("charge.dispute") ? "DISPUTE" : "RESTAURANT_ORDER_PAYMENT",
-      provider: "stripe_connect",
-      providerEventId,
-      eventType: eventType || "unknown",
-      payloadJson: payload,
-      processedAt: new Date()
-    },
-    update: { processedAt: new Date() }
-  });
+  const eventRecord = {
+    restaurantId: payment?.restaurantId || accountObject?.metadata?.restaurantId || object.metadata?.restaurantId || null,
+    paymentId: payment?.id || null,
+    eventDomain: accountLifecycleEvent ? "MERCHANT_ACCOUNT" : eventType?.startsWith("payout.") ? "PAYOUT" : eventType?.startsWith("charge.dispute") ? "DISPUTE" : "RESTAURANT_ORDER_PAYMENT",
+    provider: "stripe_connect",
+    providerEventId,
+    eventType: eventType || "unknown",
+    payloadJson: payload
+  };
+  return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }));
+}
 
+// Late or repeated payment events must not re-run paid side effects or downgrade a settled payment.
+const ORDER_PAYMENT_SETTLED_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED", "REFUNDED"]);
+
+async function applyStripeConnectEvent({ eventType, object, accountObject, accountLifecycleEvent, payment }) {
   if (accountLifecycleEvent) {
     const readiness = normalizeStripeConnectAccountReadiness(accountObject || object);
     if (!readiness.providerAccountId) return { received: true, ignored: true, reason: "account_id_missing" };
@@ -901,9 +903,11 @@ export async function handleStripeConnectWebhook(payload = {}) {
   }
   if (!payment) return { received: true, ignored: true, reason: "payment_not_found" };
   if (["payment_intent.succeeded", "payment.succeeded"].includes(eventType)) {
+    if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
     return { received: true, ...(await markOrderPaymentPaid({ payment, providerChargeId: object.latest_charge })) };
   }
   if (["payment_intent.payment_failed", "payment.failed"].includes(eventType)) {
+    if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
     return { received: true, payment: await markOrderPaymentFailed({ payment, failureReason: object.last_payment_error?.message }) };
   }
   if (eventType === "charge.refunded") {

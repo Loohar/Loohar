@@ -154,7 +154,9 @@ export function parseRawWebhook(req) {
   }
 }
 
-export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret }) {
+export const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret, toleranceSeconds = STRIPE_WEBHOOK_TOLERANCE_SECONDS, nowSeconds = Math.floor(Date.now() / 1000) }) {
   if (!webhookSecret) {
     const error = new Error("Stripe webhook secret is not configured");
     error.status = 503;
@@ -175,6 +177,11 @@ export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret })
   const valid = signatures.some((signature) => timingSafeEqualHex(signature, expectedSignature));
   if (!valid) {
     const error = new Error("Invalid Stripe signature");
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isFinite(Number(timestamp)) || Math.abs(nowSeconds - Number(timestamp)) > toleranceSeconds) {
+    const error = new Error("Stripe signature timestamp is outside the replay tolerance");
     error.status = 400;
     throw error;
   }
