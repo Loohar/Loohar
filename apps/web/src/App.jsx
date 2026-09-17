@@ -6900,6 +6900,11 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [session, setSession] = useState(null);
+  const [mfaToken, setMfaToken] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const [mfaEnrollment, setMfaEnrollment] = useState(null);
+  const [recoveryCodes, setRecoveryCodes] = useState([]);
   const [step, setStep] = useState("login");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -6978,12 +6983,91 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       setStep("password");
       return;
     }
-    if (normalizedUser?.mfaEnabled) {
-      setStep("mfa");
+    if (normalizedUser?.mfaEnrollmentRequired) {
+      setStep("mfa-enroll");
       return;
     }
     onLogin(sessionPayload);
     continueAfterAuth(normalizedUser);
+  }
+
+  // Accounts with MFA get a short-lived challenge instead of a session.
+  function handleLoginPayload(payload) {
+    if (payload?.mfaRequired && payload.mfaToken) {
+      setMfaToken(payload.mfaToken);
+      setMfaCode("");
+      setUseRecoveryCode(false);
+      setStep("mfa");
+      return null;
+    }
+    return verifyAuthenticatedSession(payload).then(handleAuthenticated);
+  }
+
+  async function submitMfaVerification(event) {
+    event.preventDefault();
+    setError("");
+    const value = mfaCode.trim();
+    if (!value) return setError(useRecoveryCode ? "Enter a recovery code." : "Enter the 6-digit code from your authenticator app.");
+    setLoading(true);
+    try {
+      const payload = await api("/api/auth/mfa/verify", {
+        method: "POST",
+        body: useRecoveryCode ? { mfaToken, recoveryCode: value } : { mfaToken, code: value },
+        skipAuth: true,
+        authRetry: false,
+        clearOnUnauthorized: false
+      });
+      setMfaCode("");
+      handleAuthenticated(await verifyAuthenticatedSession(payload));
+    } catch (mfaError) {
+      if (mfaError.code === "AUTH_MFA_CHALLENGE_INVALID") {
+        setStep("login");
+        setMfaToken("");
+      }
+      setError(mfaError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startMfaEnrollment() {
+    setError("");
+    setLoading(true);
+    try {
+      const payload = await api("/api/auth/mfa/enroll/start", { method: "POST", token: session?.accessToken, authRetry: false, clearOnUnauthorized: false });
+      setMfaEnrollment(payload.enrollment);
+      setMfaCode("");
+    } catch (enrollError) {
+      setError(enrollError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmMfaEnrollment(event) {
+    event.preventDefault();
+    setError("");
+    if (!/^\d{6}$/.test(mfaCode.trim())) return setError("Enter the 6-digit code from your authenticator app.");
+    setLoading(true);
+    try {
+      const payload = await api("/api/auth/mfa/enroll/confirm", { method: "POST", token: session?.accessToken, body: { code: mfaCode.trim() }, authRetry: false, clearOnUnauthorized: false });
+      const verifiedSession = await verifyAuthenticatedSession(payload);
+      setSession(verifiedSession);
+      setRecoveryCodes(payload.recoveryCodes || []);
+      setMfaEnrollment(null);
+      setMfaCode("");
+      setStep("mfa-recovery");
+    } catch (enrollError) {
+      setError(enrollError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function finishMfaEnrollment() {
+    setRecoveryCodes([]);
+    onLogin(session);
+    continueAfterAuth(session.user);
   }
 
   async function submitLogin(event) {
@@ -7002,7 +7086,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
         authRetry: false,
         clearOnUnauthorized: false
       });
-      handleAuthenticated(await verifyAuthenticatedSession(payload));
+      await handleLoginPayload(payload);
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -7024,7 +7108,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
         authRetry: false,
         clearOnUnauthorized: false
       });
-      handleAuthenticated(await verifyAuthenticatedSession(payload));
+      await handleLoginPayload(payload);
     } catch (loginError) {
       setError(loginError.message);
     } finally {
@@ -7043,16 +7127,16 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
       const reloadedSession = await api("/api/auth/me", { token: payload.accessToken, authRetry: false, clearOnUnauthorized: false })
         .then((current) => ({ ...payload, memberships: current.memberships || payload.memberships || [], user: normalizeSessionUser(current.user || payload.user, current.memberships || payload.memberships || []) }))
         .catch(() => ({ ...payload, user: normalizeSessionUser(payload.user, payload.memberships || []) }));
-      onLogin(reloadedSession);
       setSession(reloadedSession);
+      if (!reloadedSession.user.mfaEnrollmentRequired) onLogin(reloadedSession);
       setNewPassword("");
       setConfirmPassword("");
       if (requiresPasswordChange(reloadedSession.user)) {
         setError("Password changed, but your account is still marked for reset. Please contact the platform owner.");
         return;
       }
-      if (reloadedSession.user.mfaEnabled) {
-        setStep("mfa");
+      if (reloadedSession.user.mfaEnrollmentRequired) {
+        setStep("mfa-enroll");
         return;
       }
       continueAfterAuth(reloadedSession.user);
@@ -7073,7 +7157,7 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
           <div className="mt-5 grid gap-2 text-sm text-slate-600">
             <div className="summary-line"><span>Live API</span><strong>{apiOnline ? "Connected" : "Unavailable"}</strong></div>
             <div className="summary-line"><span>Password policy</span><strong>12+ characters</strong></div>
-            <div className="summary-line"><span>MFA</span><strong>Foundation ready</strong></div>
+            <div className="summary-line"><span>MFA</span><strong>Authenticator app</strong></div>
           </div>
         </section>
 
@@ -7154,10 +7238,64 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
         ) : null}
 
         {step === "mfa" ? (
-          <section className="panel">
-            <h2 className="panel-title">MFA verification</h2>
-            <p className="mt-3 text-sm text-slate-500">MFA is enabled for this account. This screen is ready for future TOTP, SMS, or email verification.</p>
-            <button className="button-primary mt-5" onClick={() => continueAfterAuth(session.user)}>Continue securely</button>
+          <form className="panel grid gap-4" noValidate onSubmit={submitMfaVerification}>
+            <h2 className="panel-title">Verify it's you</h2>
+            <p className="text-sm text-slate-500">
+              {useRecoveryCode ? "Enter one of your saved recovery codes. Each code works once." : "Enter the 6-digit code from your authenticator app."}
+            </p>
+            <InlineError message={error} />
+            <label className="text-sm font-semibold text-slate-600">
+              {useRecoveryCode ? "Recovery code" : "Authentication code"}
+              <input
+                className="input mt-1"
+                name="one-time-code"
+                autoComplete="one-time-code"
+                inputMode={useRecoveryCode ? "text" : "numeric"}
+                maxLength={useRecoveryCode ? 32 : 6}
+                value={mfaCode}
+                onChange={(event) => setMfaCode(event.target.value)}
+              />
+            </label>
+            <button className="button-primary justify-center" type="submit" disabled={loading}>{loading ? "Verifying" : "Verify and continue"}</button>
+            <button className="button-muted justify-center" type="button" onClick={() => { setUseRecoveryCode((current) => !current); setMfaCode(""); setError(""); }}>
+              {useRecoveryCode ? "Use authenticator app code" : "Use a recovery code"}
+            </button>
+          </form>
+        ) : null}
+
+        {step === "mfa-enroll" ? (
+          <section className="panel grid gap-4">
+            <h2 className="panel-title">Set up two-step verification</h2>
+            <p className="text-sm text-slate-500">Your role manages restaurant or platform operations, so Loohar requires an authenticator app (such as Google Authenticator, Microsoft Authenticator or 1Password) at sign-in.</p>
+            <InlineError message={error} />
+            {!mfaEnrollment ? (
+              <button className="button-primary justify-center" type="button" disabled={loading} onClick={startMfaEnrollment}>{loading ? "Preparing" : "Start setup"}</button>
+            ) : (
+              <form className="grid gap-4" noValidate onSubmit={confirmMfaEnrollment}>
+                <ol className="grid gap-2 text-sm text-slate-600">
+                  <li>1. In your authenticator app, add an account and choose to enter a setup key.</li>
+                  <li>2. Enter this key (time-based):</li>
+                </ol>
+                <code className="rounded-md bg-slate-100 px-3 py-2 text-sm font-bold tracking-wider break-all">{mfaEnrollment.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+                <a className="text-sm font-bold text-mint" href={mfaEnrollment.otpauthUrl}>Open in an authenticator app on this device</a>
+                <label className="text-sm font-semibold text-slate-600">
+                  3. Enter the 6-digit code it shows
+                  <input className="input mt-1" name="one-time-code" autoComplete="one-time-code" inputMode="numeric" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value)} />
+                </label>
+                <button className="button-primary justify-center" type="submit" disabled={loading}>{loading ? "Verifying" : "Turn on two-step verification"}</button>
+              </form>
+            )}
+          </section>
+        ) : null}
+
+        {step === "mfa-recovery" ? (
+          <section className="panel grid gap-4">
+            <h2 className="panel-title">Save your recovery codes</h2>
+            <p className="text-sm text-slate-500">If you lose your phone, each code lets you sign in once. Store them somewhere safe; they will not be shown again.</p>
+            <ul className="grid grid-cols-2 gap-2 rounded-md bg-slate-50 p-3 font-mono text-sm font-bold">
+              {recoveryCodes.map((code) => <li key={code}>{code}</li>)}
+            </ul>
+            <button className="button-primary justify-center" type="button" onClick={finishMfaEnrollment}>I saved these codes — continue</button>
           </section>
         ) : null}
       </div>

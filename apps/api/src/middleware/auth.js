@@ -1,4 +1,5 @@
 import { isSessionExpired, loadSessionForAccessToken, revokeAuthSession, touchAuthSession } from "../services/authSessionService.js";
+import { mfaEnforcementEnabled, roleRequiresMfa } from "../services/mfaService.js";
 import { verifyAccessToken } from "../utils/tokens.js";
 
 export function authError(res, status, code, error) {
@@ -12,7 +13,9 @@ function accessError(message, status, code) {
   return error;
 }
 
-export async function authenticateAccessToken(token) {
+// `restricted` lets a session that still owes MFA enrollment or a forced password change reach
+// only the routes needed to complete that step (auth status, MFA setup, password change, logout).
+export async function authenticateAccessToken(token, { restricted = false } = {}) {
   if (!token) throw accessError("Missing bearer token", 401, "AUTH_ACCESS_TOKEN_MISSING");
 
   const payload = verifyAccessToken(token);
@@ -56,6 +59,18 @@ export async function authenticateAccessToken(token) {
     throw accessError("Tenant access denied", 403, "AUTH_TENANT_FORBIDDEN");
   }
 
+  if (user.mfaEnabled && !session.mfaVerifiedAt) {
+    throw accessError("Multi-factor verification is required", 401, "AUTH_MFA_REQUIRED");
+  }
+  const mfaEnrollmentRequired = mfaEnforcementEnabled() && roleRequiresMfa(user.role) && !user.mfaEnabled;
+  const passwordChangeRequired = Boolean(user.forcePasswordChange) || user.status === "PASSWORD_RESET_REQUIRED";
+  if (!restricted && mfaEnrollmentRequired) {
+    throw accessError("Set up multi-factor authentication to continue", 403, "AUTH_MFA_ENROLLMENT_REQUIRED");
+  }
+  if (!restricted && passwordChangeRequired) {
+    throw accessError("Change your password to continue", 403, "AUTH_PASSWORD_CHANGE_REQUIRED");
+  }
+
   await touchAuthSession(session);
 
   return {
@@ -75,16 +90,20 @@ export async function authenticateAccessToken(token) {
     mfaEnabled: user.mfaEnabled,
     mfaSetupStatus: user.mfaSetupStatus,
     mfaVerifiedAt: user.mfaVerifiedAt,
+    mfaEnrollmentRequired,
+    passwordChangeRequired,
+    sessionMfaVerifiedAt: session.mfaVerifiedAt || null,
     sessionId: session.id,
     sessionExpiresAt: session.expiresAt
   };
 }
 
-export async function requireAuth(req, res, next) {
+function authMiddleware({ restricted }) {
+  return async (req, res, next) => {
   try {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-    req.user = await authenticateAccessToken(token);
+    req.user = await authenticateAccessToken(token, { restricted });
     req.tenantId = req.user.restaurantId;
     next();
   } catch (error) {
@@ -97,7 +116,11 @@ export async function requireAuth(req, res, next) {
     if (error.status && error.code) return authError(res, error.status, error.code, error.message);
     next(error);
   }
+  };
 }
+
+export const requireAuth = authMiddleware({ restricted: false });
+export const requireAuthForAccountSetup = authMiddleware({ restricted: true });
 
 export function requireRole(...roles) {
   return (req, res, next) => {

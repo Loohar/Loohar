@@ -16,6 +16,8 @@ export async function requirePosSession(req, res, next) {
     if (
       payload.purpose !== "POS_SESSION" ||
       payload.sub !== req.user?.id ||
+      !payload.authSessionId ||
+      payload.authSessionId !== req.user?.sessionId ||
       payload.restaurantId !== restaurantId ||
       !deviceId ||
       payload.deviceId !== deviceId

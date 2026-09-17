@@ -10,6 +10,8 @@ const responseSensitiveKeys = new Set([
   "checkoutIdempotencyKeyHash",
   "checkoutRequestHash",
   "mfaSecret",
+  "mfaPendingSecret",
+  "codeHash",
   "authorization",
   "serviceRoleKey",
   "supabaseServiceRoleKey",

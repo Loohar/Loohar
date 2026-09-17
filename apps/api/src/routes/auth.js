@@ -3,9 +3,21 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
-import { authError, requireAuth } from "../middleware/auth.js";
+import { authError, requireAuth, requireAuthForAccountSetup } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { recordAudit } from "../services/auditService.js";
+import {
+  clearMfa,
+  confirmMfaEnrollment,
+  mfaEnforcementEnabled,
+  mfaStatusForUser,
+  regenerateRecoveryCodes,
+  roleRequiresMfa,
+  signMfaChallengeToken,
+  startMfaEnrollment,
+  verifyMfaChallengeToken,
+  verifyMfaForUser
+} from "../services/mfaService.js";
 import {
   createAuthSession,
   isSessionExpired,
@@ -25,6 +37,19 @@ const router = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
 const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false });
 const refreshLimiter = rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: true, legacyHeaders: false });
+const registerLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false });
+const mfaLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
+// Second login limiter keyed by account so distributed guessing against one email is throttled too.
+const accountLoginLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `login:${normalizeEmail(req.body?.email || "")}`,
+  skipSuccessfulRequests: true
+});
+// Compared against when the email is unknown so response time does not reveal which accounts exist.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync("loohar-dummy-password-for-timing", 12);
 
 function authUserSelect() {
   return {
@@ -47,7 +72,14 @@ function authUserSelect() {
 }
 
 function publicUser(user) {
-  return sanitizeUser(user);
+  const safeUser = sanitizeUser(user);
+  if (!safeUser) return safeUser;
+  return {
+    ...safeUser,
+    mfaRequired: mfaEnforcementEnabled() && roleRequiresMfa(user.role),
+    mfaEnrollmentRequired: mfaEnforcementEnabled() && roleRequiresMfa(user.role) && !user.mfaEnabled,
+    passwordChangeRequired: Boolean(user.forcePasswordChange) || user.status === "PASSWORD_RESET_REQUIRED"
+  };
 }
 
 function membershipFromRestaurant({ restaurant, role, status = "ACTIVE" }) {
@@ -110,16 +142,23 @@ async function membershipsForUser(user) {
   return [...memberships.values()];
 }
 
-async function authResponse(user, req, sessionContext = null) {
+async function authResponse(user, req, sessionContext = null, { mfaVerifiedAt = null } = {}) {
   const safeUser = publicUser(user);
   const memberships = await membershipsForUser(user);
-  const issuedSession = sessionContext || await createAuthSession({ user, req });
+  const issuedSession = sessionContext || await createAuthSession({ user, req, mfaVerifiedAt });
   return {
     user: safeUser,
     memberships,
     accessToken: signAccessToken(user, issuedSession.session),
     refreshToken: issuedSession.refreshToken
   };
+}
+
+// Users with MFA enabled receive a short-lived challenge instead of a session; the session is
+// issued only by POST /mfa/verify.
+async function mfaChallengeResponse(user, auditAction) {
+  await recordAudit({ action: auditAction, entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null }).catch(() => {});
+  return { mfaRequired: true, mfaToken: signMfaChallengeToken(user) };
 }
 
 const credentialsSchema = z.object({
@@ -257,15 +296,22 @@ async function findDemoUser({ email, role }) {
   });
 }
 
-router.post("/register", validate(credentialsSchema), async (req, res, next) => {
+router.post("/register", registerLimiter, validate(credentialsSchema), async (req, res, next) => {
   try {
-    const { email, password, name, role = "CUSTOMER", restaurantId } = req.body;
+    const { email, password, name } = req.body;
+    // Public sign-up only creates customer accounts. Role and tenant are never taken from the
+    // request: restaurant staff and owners are provisioned by owners, onboarding or Super Admin.
+    if ((req.body.role && req.body.role !== "CUSTOMER") || req.body.restaurantId) {
+      return authError(res, 403, "AUTH_REGISTRATION_ROLE_FORBIDDEN", "Public registration can only create customer accounts");
+    }
+    const passwordCheck = strongPasswordSchema.safeParse(password);
+    if (!passwordCheck.success) return res.status(400).json({ error: passwordCheck.error.issues[0]?.message || "Password does not meet requirements" });
     const normalizedEmail = normalizeEmail(email);
     const existingUser = await findUserByEmail(normalizedEmail, { id: true });
     if (existingUser) return res.status(409).json({ error: "Email already exists" });
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await prisma.user.create({
-      data: { email: normalizedEmail, passwordHash, name: name || normalizedEmail, role, restaurantId, temporaryPassword: false, forcePasswordChange: false, passwordChangedAt: new Date() },
+      data: { email: normalizedEmail, passwordHash, name: name || normalizedEmail, role: "CUSTOMER", restaurantId: null, temporaryPassword: false, forcePasswordChange: false, passwordChangedAt: new Date() },
       select: authUserSelect()
     });
     res.status(201).json(await authResponse(user, req));
@@ -274,12 +320,13 @@ router.post("/register", validate(credentialsSchema), async (req, res, next) => 
   }
 });
 
-router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true })), async (req, res, next) => {
+router.post("/login", loginLimiter, accountLoginLimiter, validate(credentialsSchema.pick({ body: true })), async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body.email);
     authDiagnostic("auth.login.attempt", { email });
     const user = await findUserByEmail(email, { ...authUserSelect(), passwordHash: true });
     if (!user) {
+      await bcrypt.compare(String(req.body.password || ""), DUMMY_PASSWORD_HASH);
       authDiagnostic("auth.login.user_not_found", { email });
       await recordAudit({ action: "login.failed", entityType: "User", entityId: null, actorUserId: null, restaurantId: null, metadata: { email: maskEmail(email), reason: "user_not_found" } }).catch(() => {});
       return authError(res, 401, "AUTH_INVALID_CREDENTIALS", "Invalid email or password");
@@ -293,6 +340,10 @@ router.post("/login", loginLimiter, validate(credentialsSchema.pick({ body: true
       authDiagnostic("auth.login.account_inactive", { email: user.email, userId: user.id, status: user.status });
       await recordAudit({ action: "login.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId, metadata: { email: maskEmail(user.email), reason: "inactive_status", status: user.status } }).catch(() => {});
       return authError(res, 403, "AUTH_USER_INACTIVE", "Account is not active");
+    }
+    if (user.mfaEnabled) {
+      authDiagnostic("auth.login.mfa_challenge", { email: user.email, userId: user.id });
+      return res.json(await mfaChallengeResponse(user, "login.mfa_challenge"));
     }
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
@@ -314,6 +365,12 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
     const email = demoLoginEmailForRequest(req.body);
     const user = await findDemoUser({ email, role: req.body.role });
     if (!demoUserAvailable(user)) return res.status(404).json({ error: "Seeded development account is unavailable." });
+    // Demo login never hands out a password-less session for an MFA-protected role outside local
+    // development: such a session could otherwise enroll an attacker's authenticator.
+    if (process.env.NODE_ENV === "production" && roleRequiresMfa(user.role)) {
+      return res.status(403).json({ error: "Demo login is not available for privileged roles.", code: "AUTH_DEMO_ROLE_FORBIDDEN" });
+    }
+    if (user.mfaEnabled) return res.json(await mfaChallengeResponse(user, "login.demo.mfa_challenge"));
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -326,8 +383,17 @@ router.post("/demo-login", loginLimiter, validate(demoLoginSchema), async (req, 
   }
 });
 
-router.post("/change-password", requireAuth, async (req, res, next) => {
+router.post("/change-password", passwordLimiter, requireAuthForAccountSetup, async (req, res, next) => {
   try {
+    // Outside a required change of a temporary password, prove knowledge of the current password
+    // so a stolen access token cannot be turned into a permanent account takeover.
+    if (!req.user.passwordChangeRequired) {
+      const current = await prisma.user.findUnique({ where: { id: req.user.id }, select: { passwordHash: true } });
+      if (!current?.passwordHash || !(await bcrypt.compare(String(req.body.currentPassword || ""), current.passwordHash))) {
+        await recordAudit({ action: "password.change.failed", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null, metadata: { reason: "current_password_mismatch" } }).catch(() => {});
+        return authError(res, 401, "AUTH_CURRENT_PASSWORD_INVALID", "Current password is incorrect");
+      }
+    }
     const parsed = strongPasswordSchema.safeParse(req.body.newPassword);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Password does not meet requirements" });
     const passwordHash = await bcrypt.hash(req.body.newPassword, 12);
@@ -346,7 +412,7 @@ router.post("/change-password", requireAuth, async (req, res, next) => {
     });
     await revokeAllUserSessions({ userId: user.id, reason: "password_changed" });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.changed", entityType: "User", entityId: user.id });
-    res.json({ ...(await authResponse(user, req)), passwordSync });
+    res.json({ ...(await authResponse(user, req, null, { mfaVerifiedAt: user.mfaEnabled ? req.user.sessionMfaVerifiedAt : null })), passwordSync });
   } catch (error) {
     next(error);
   }
@@ -363,6 +429,10 @@ async function refreshToken(req, res, next) {
     if (!user || isProductionDefaultAdmin(user.email)) {
       await recordAudit({ action: "token.refresh.failed", entityType: "User", entityId: user?.id || null, actorUserId: user?.id || null, restaurantId: user?.restaurantId || null, metadata: { reason: "invalid_user" } }).catch(() => {});
       return authError(res, 401, "AUTH_REFRESH_TOKEN_INVALID", "Invalid refresh token");
+    }
+    if (user.mfaEnabled && !session.mfaVerifiedAt) {
+      await revokeAuthSession({ sessionId: session.id, reason: "mfa_not_verified" }).catch(() => {});
+      return authError(res, 401, "AUTH_MFA_REQUIRED", "Multi-factor verification is required");
     }
     if (!canLoginWithStatus(user.status)) {
       await revokeAuthSession({ sessionId: session.id, reason: "inactive_user" }).catch(() => {});
@@ -453,7 +523,13 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
     const passwordHash = await bcrypt.hash(req.body.newPassword, 12);
     const passwordSync = await updateSupabaseAuthPassword({ email: resetToken.user.email, password: req.body.newPassword });
     const user = await prisma.$transaction(async (tx) => {
-      await tx.passwordResetToken.update({ where: { id: resetToken.id }, data: { usedAt: new Date() } });
+      const consumed = await tx.passwordResetToken.updateMany({ where: { id: resetToken.id, usedAt: null }, data: { usedAt: new Date() } });
+      if (consumed.count !== 1) {
+        const error = new Error("Reset link is invalid or expired.");
+        error.status = 400;
+        error.code = "AUTH_RESET_TOKEN_USED";
+        throw error;
+      }
       return tx.user.update({
         where: { id: resetToken.userId },
         data: {
@@ -469,6 +545,8 @@ router.post("/reset-password", passwordLimiter, validate(resetPasswordSchema), a
     });
     await revokeAllUserSessions({ userId: user.id, reason: "password_reset_completed" });
     await recordAudit({ actorUserId: user.id, restaurantId: user.restaurantId, action: "password.reset.completed", entityType: "User", entityId: user.id });
+    // A password reset proves email access only; MFA-protected accounts must still pass MFA.
+    if (user.mfaEnabled) return res.json({ ...(await mfaChallengeResponse(user, "password.reset.mfa_challenge")), passwordSync });
     res.json({ ...(await authResponse(user, req)), passwordSync });
   } catch (error) {
     next(error);
@@ -497,7 +575,7 @@ router.post("/logout", async (req, res, next) => {
   }
 });
 
-router.post("/logout-all-devices", requireAuth, async (req, res, next) => {
+router.post("/logout-all-devices", requireAuthForAccountSetup, async (req, res, next) => {
   try {
     const user = await prisma.user.update({
       where: { id: req.user.id },
@@ -519,12 +597,106 @@ router.post("/logout-all-devices", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/me", requireAuth, async (req, res, next) => {
+router.get("/me", requireAuthForAccountSetup, async (req, res, next) => {
   try {
     authDiagnostic("auth.me.success", { userId: req.user.id, role: req.user.role });
     res.json({ user: publicUser(req.user), memberships: await membershipsForUser(req.user) });
   } catch (error) {
     authDiagnostic("auth.me.failed", { userId: req.user?.id, reason: error.name || "unknown" });
+    next(error);
+  }
+});
+
+const mfaVerifySchema = z.object({
+  body: z.object({
+    mfaToken: z.string().min(10),
+    code: z.string().max(12).optional(),
+    recoveryCode: z.string().max(32).optional()
+  }).refine((body) => Boolean(body.code) !== Boolean(body.recoveryCode), { message: "Provide either an authenticator code or a recovery code" })
+});
+
+router.post("/mfa/verify", mfaLimiter, validate(mfaVerifySchema), async (req, res, next) => {
+  try {
+    const challenge = verifyMfaChallengeToken(req.body.mfaToken);
+    const user = await prisma.user.findUnique({ where: { id: challenge.sub }, select: authUserSelect() });
+    if (!user || !canLoginWithStatus(user.status) || isProductionDefaultAdmin(user.email) || (user.sessionVersion || 0) !== (challenge.sessionVersion || 0)) {
+      return authError(res, 401, "AUTH_MFA_CHALLENGE_INVALID", "The sign-in verification has expired. Sign in again.");
+    }
+    if (user.role !== "SUPER_ADMIN" && ["SUSPENDED", "DELETED"].includes(user.restaurant?.status || "")) {
+      return authError(res, 403, "AUTH_TENANT_FORBIDDEN", "Tenant access denied");
+    }
+    let result;
+    try {
+      result = await verifyMfaForUser({ userId: user.id, code: req.body.code, recoveryCode: req.body.recoveryCode });
+    } catch (error) {
+      await recordAudit({ action: "mfa.challenge.failed", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { reason: error.code } }).catch(() => {});
+      throw error;
+    }
+    const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() }, select: authUserSelect() });
+    await recordAudit({ action: result.method === "recovery_code" ? "mfa.recovery_code.used" : "login.success", entityType: "User", entityId: user.id, actorUserId: user.id, restaurantId: user.restaurantId || null, metadata: { role: user.role, mfa: result.method, ...(result.remainingRecoveryCodes !== undefined ? { remainingRecoveryCodes: result.remainingRecoveryCodes } : {}) } }).catch(() => {});
+    res.json({ ...(await authResponse(updatedUser, req, null, { mfaVerifiedAt: new Date() })), mfa: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/mfa/status", requireAuthForAccountSetup, async (req, res, next) => {
+  try {
+    res.json({ mfa: await mfaStatusForUser(req.user.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/mfa/enroll/start", mfaLimiter, requireAuthForAccountSetup, async (req, res, next) => {
+  try {
+    const enrollment = await startMfaEnrollment({ userId: req.user.id });
+    await recordAudit({ action: "mfa.enrollment.started", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+    res.json({ enrollment });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/mfa/enroll/confirm", mfaLimiter, requireAuthForAccountSetup, async (req, res, next) => {
+  try {
+    const { recoveryCodes } = await confirmMfaEnrollment({ userId: req.user.id, code: req.body?.code });
+    await recordAudit({ action: "mfa.enabled", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+    const user = await prisma.user.findUnique({ where: { id: req.user.id }, select: authUserSelect() });
+    // Every earlier session was revoked; this device continues with a fresh MFA-verified session.
+    res.json({ ...(await authResponse(user, req, null, { mfaVerifiedAt: new Date() })), recoveryCodes });
+  } catch (error) {
+    if (error.code === "AUTH_MFA_CODE_INVALID") {
+      await recordAudit({ action: "mfa.enrollment.failed", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+    }
+    next(error);
+  }
+});
+
+router.post("/mfa/recovery-codes/regenerate", mfaLimiter, requireAuth, async (req, res, next) => {
+  try {
+    const { recoveryCodes } = await regenerateRecoveryCodes({ userId: req.user.id, code: req.body?.code });
+    await recordAudit({ action: "mfa.recovery_codes.regenerated", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+    res.json({ recoveryCodes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/mfa/disable", mfaLimiter, requireAuth, async (req, res, next) => {
+  try {
+    if (mfaEnforcementEnabled() && roleRequiresMfa(req.user.role)) {
+      return authError(res, 403, "AUTH_MFA_REQUIRED_FOR_ROLE", "MFA is required for this role and cannot be turned off. Contact the platform owner to reset it.");
+    }
+    const current = await prisma.user.findUnique({ where: { id: req.user.id }, select: { passwordHash: true } });
+    if (!current?.passwordHash || !(await bcrypt.compare(String(req.body?.currentPassword || ""), current.passwordHash))) {
+      return authError(res, 401, "AUTH_CURRENT_PASSWORD_INVALID", "Current password is incorrect");
+    }
+    await verifyMfaForUser({ userId: req.user.id, code: req.body?.code });
+    await clearMfa({ userId: req.user.id, reason: "mfa_disabled" });
+    await recordAudit({ action: "mfa.disabled", entityType: "User", entityId: req.user.id, actorUserId: req.user.id, restaurantId: req.user.restaurantId || null }).catch(() => {});
+    res.status(204).send();
+  } catch (error) {
     next(error);
   }
 });

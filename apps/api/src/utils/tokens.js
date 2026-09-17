@@ -1,10 +1,16 @@
 import jwt from "jsonwebtoken";
 
+// Built-in fallback secrets are publicly known, so they are only usable for local development
+// and tests; any other environment (including a misconfigured NODE_ENV) must configure secrets.
+function allowsDevelopmentSecrets() {
+  return ["development", "test"].includes(process.env.NODE_ENV || "") || process.env.LOOHAR_ALLOW_DEV_SECRETS === "true";
+}
+
 function requiredSecret(name, fallback) {
   const value = process.env[name];
   if (value) return value;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(`${name} must be set in production`);
+  if (!allowsDevelopmentSecrets()) {
+    throw new Error(`${name} must be set`);
   }
   return fallback;
 }
@@ -13,8 +19,8 @@ const accessSecret = () => requiredSecret("JWT_SECRET", "dev-access-secret");
 const refreshSecret = () => {
   const value = process.env.REFRESH_TOKEN_SECRET || process.env.JWT_REFRESH_SECRET;
   if (value) return value;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("REFRESH_TOKEN_SECRET must be set in production");
+  if (!allowsDevelopmentSecrets()) {
+    throw new Error("REFRESH_TOKEN_SECRET must be set");
   }
   return "dev-refresh-secret";
 };
@@ -38,17 +44,19 @@ export function signRefreshToken(user) {
 }
 
 export function verifyAccessToken(token) {
-  return jwt.verify(token, accessSecret());
+  return jwt.verify(token, accessSecret(), { algorithms: ["HS256"] });
 }
 
 export function verifyRefreshToken(token) {
-  return jwt.verify(token, refreshSecret());
+  return jwt.verify(token, refreshSecret(), { algorithms: ["HS256"] });
 }
 
-export function signPosSessionToken({ userId, restaurantId, staffId, deviceId, locationId }) {
+export function signPosSessionToken({ userId, restaurantId, staffId, deviceId, locationId, sessionId = null }) {
   return jwt.sign(
     {
       sub: userId,
+      // Bound to the signed-in session so logout, password change or MFA changes end register access.
+      authSessionId: sessionId,
       purpose: "POS_SESSION",
       restaurantId,
       staffId,
@@ -61,7 +69,7 @@ export function signPosSessionToken({ userId, restaurantId, staffId, deviceId, l
 }
 
 export function verifyPosSessionToken(token) {
-  return jwt.verify(token, accessSecret());
+  return jwt.verify(token, accessSecret(), { algorithms: ["HS256"] });
 }
 
 export function signPosOfflineConfigurationProof(payload, { expiresIn = "72h" } = {}) {

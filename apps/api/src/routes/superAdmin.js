@@ -8,6 +8,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { provisionRestaurantTenant } from "../modules/platformBilling/platformBillingService.js";
 import { recordAudit } from "../services/auditService.js";
+import { clearMfa } from "../services/mfaService.js";
 import { sendAccountSetupEmail } from "../services/accountAccessService.js";
 import { createAuthSession, revokeAllUserSessions, revokeRestaurantSessions } from "../services/authSessionService.js";
 import { DNS_TARGET, ensureDomain, ensureWebsiteSettings } from "../services/websiteService.js";
@@ -392,13 +393,37 @@ router.post("/restaurants/:restaurantId/impersonate", async (req, res, next) => 
       include: { restaurant: { select: { slug: true, name: true, businessName: true } } }
     });
     if (!user) return res.status(404).json({ error: "No restaurant admin found" });
-    const { session, refreshToken } = await createAuthSession({ user, req });
-    await recordAudit({ actorUserId: req.user.id, restaurantId: req.params.restaurantId, action: "impersonation.started", entityType: "User", entityId: user.id });
+    if (!["ACTIVE", "PASSWORD_RESET_REQUIRED"].includes(user.status || "ACTIVE")) return res.status(409).json({ error: "The restaurant admin account is not active", code: "IMPERSONATION_TARGET_INACTIVE" });
+    // Impersonation is a short support session: no refresh token, 30-minute lifetime, and marked
+    // with the acting Super Admin. It inherits MFA assurance from the Super Admin's own session.
+    const { session } = await createAuthSession({
+      user,
+      req,
+      expiresAt: new Date(Date.now() + 30 * 60_000),
+      mfaVerifiedAt: req.user.sessionMfaVerifiedAt || null,
+      sessionMetadata: { impersonatedByUserId: req.user.id, impersonation: true }
+    });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: req.params.restaurantId, action: "impersonation.started", entityType: "User", entityId: user.id, metadata: { sessionId: session.id, expiresAt: session.expiresAt } });
     res.json({
       accessToken: signAccessToken(user, session),
-      refreshToken,
+      refreshToken: null,
+      expiresAt: session.expiresAt,
       impersonatedUser: sanitizeUser(user)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/users/:userId/mfa/reset", async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.userId }, select: { id: true, role: true, restaurantId: true, mfaEnabled: true } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.id === req.user.id) return res.status(403).json({ error: "Super Admins cannot reset their own MFA.", code: "MFA_SELF_RESET_FORBIDDEN" });
+    if (user.role === "SUPER_ADMIN") return res.status(403).json({ error: "Use a dedicated super-admin recovery flow for platform owner accounts.", code: "MFA_SUPER_ADMIN_RESET_FORBIDDEN" });
+    await clearMfa({ userId: user.id, reason: "mfa_reset_by_super_admin" });
+    await recordAudit({ actorUserId: req.user.id, restaurantId: user.restaurantId || null, action: "mfa.reset_by_super_admin", entityType: "User", entityId: user.id, metadata: { reason: String(req.body?.reason || "").slice(0, 300) || null } });
+    res.json({ ok: true, userId: user.id, mfaEnabled: false });
   } catch (error) {
     next(error);
   }

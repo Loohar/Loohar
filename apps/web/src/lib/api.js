@@ -160,6 +160,10 @@ async function performApiRequest(path, options = {}) {
     }
     const payload = await parseApiError(response);
     if (response.status === 401 && options.clearOnUnauthorized !== false) clearStoredSessionForToken(token, payload.code || "unauthorized");
+    // Sessions that still owe MFA setup or a password change go back through sign-in, which runs those steps.
+    if (response.status === 403 && ["AUTH_MFA_ENROLLMENT_REQUIRED", "AUTH_PASSWORD_CHANGE_REQUIRED"].includes(payload.code) && options.clearOnUnauthorized !== false) {
+      clearStoredSessionForToken(token, payload.code);
+    }
     throw createApiError(response, payload);
   }
 

@@ -372,10 +372,50 @@ export async function cashierPinStatus({ restaurantId, user }) {
   return pinStatusForStaff(staff);
 }
 
-export async function setCashierPin({ restaurantId, user, pin }) {
+async function recordPinFailure({ staff, user, restaurantId, deviceId = null, ipAddress = null, userAgent = null, action }) {
+  // Atomic increment: parallel wrong guesses cannot all read the same counter and skip the lockout.
+  const counted = await prisma.restaurantStaff.update({
+    where: { id: staff.id },
+    data: { posPinFailedAttempts: { increment: 1 } },
+    select: { posPinFailedAttempts: true }
+  });
+  const failedAttempts = counted.posPinFailedAttempts;
+  const lockedUntil = failedAttempts >= POS_PIN_MAX_ATTEMPTS ? new Date(Date.now() + POS_PIN_LOCKOUT_MS) : null;
+  if (lockedUntil) {
+    await prisma.restaurantStaff.update({ where: { id: staff.id }, data: { posPinFailedAttempts: 0, posPinLockedUntil: lockedUntil } });
+  }
+  await recordAudit({
+    actorUserId: user.id,
+    restaurantId,
+    action,
+    entityType: "RestaurantStaff",
+    entityId: staff.id,
+    metadata: { deviceId, failedAttempts, locked: Boolean(lockedUntil), ipAddress, userAgent }
+  });
+  throw httpError(lockedUntil ? "Too many incorrect PIN attempts. Try again later." : "Incorrect POS PIN.", lockedUntil ? 423 : 401, {
+    code: lockedUntil ? "POS_PIN_LOCKED" : "POS_PIN_INCORRECT",
+    lockedUntil,
+    attemptsRemaining: Math.max(0, POS_PIN_MAX_ATTEMPTS - failedAttempts)
+  });
+}
+
+function assertPinNotLocked(staff) {
+  if (staff?.posPinLockedUntil && staff.posPinLockedUntil > new Date()) {
+    throw httpError("Too many incorrect PIN attempts. Try again later.", 423, { code: "POS_PIN_LOCKED", lockedUntil: staff.posPinLockedUntil });
+  }
+}
+
+export async function setCashierPin({ restaurantId, user, pin, currentPin }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.ACCESS);
   if (!POS_PIN_PATTERN.test(String(pin || ""))) {
     throw httpError("POS PIN must contain 4 to 8 digits.", 400, { code: "POS_PIN_INVALID" });
+  }
+  const existingStaff = await activeStaffProfile(restaurantId, user.id);
+  if (existingStaff?.posPinHash) {
+    // Changing an existing PIN requires the current one, so an access token alone cannot reset it.
+    assertPinNotLocked(existingStaff);
+    const matches = POS_PIN_PATTERN.test(String(currentPin || "")) && await bcrypt.compare(String(currentPin), existingStaff.posPinHash);
+    if (!matches) await recordPinFailure({ staff: existingStaff, user, restaurantId, action: "pos.pin.change_failed" });
   }
   const staff = await ensurePinStaffProfile(restaurantId, user);
   const posPinHash = await bcrypt.hash(String(pin), 12);
@@ -411,38 +451,10 @@ export async function unlockPosDevice({ restaurantId, user, pin, deviceId, finge
   const locationId = await resolvePosLocationId(restaurantId, device.locationId);
   assertStaffLocationAccess(staff, locationId);
   const now = new Date();
-  if (staff.posPinLockedUntil && staff.posPinLockedUntil > now) {
-    throw httpError("Too many incorrect PIN attempts. Try again later.", 423, {
-      code: "POS_PIN_LOCKED",
-      lockedUntil: staff.posPinLockedUntil
-    });
-  }
+  assertPinNotLocked(staff);
   const valid = POS_PIN_PATTERN.test(String(pin || "")) && await bcrypt.compare(String(pin), staff.posPinHash);
   if (!valid) {
-    const failedAttempts = (staff.posPinFailedAttempts || 0) + 1;
-    const lockedUntil = failedAttempts >= POS_PIN_MAX_ATTEMPTS
-      ? new Date(Date.now() + POS_PIN_LOCKOUT_MS)
-      : null;
-    await prisma.restaurantStaff.update({
-      where: { id: staff.id },
-      data: {
-        posPinFailedAttempts: lockedUntil ? 0 : failedAttempts,
-        posPinLockedUntil: lockedUntil
-      }
-    });
-    await recordAudit({
-      actorUserId: user.id,
-      restaurantId,
-      action: "pos.pin.failed",
-      entityType: "RestaurantStaff",
-      entityId: staff.id,
-      metadata: { deviceId: device.id, failedAttempts, locked: Boolean(lockedUntil), ipAddress, userAgent }
-    });
-    throw httpError(lockedUntil ? "Too many incorrect PIN attempts. Try again later." : "Incorrect POS PIN.", lockedUntil ? 423 : 401, {
-      code: lockedUntil ? "POS_PIN_LOCKED" : "POS_PIN_INCORRECT",
-      lockedUntil,
-      attemptsRemaining: Math.max(0, POS_PIN_MAX_ATTEMPTS - failedAttempts)
-    });
+    await recordPinFailure({ staff, user, restaurantId, deviceId: device.id, ipAddress, userAgent, action: "pos.pin.failed" });
   }
   await prisma.restaurantStaff.update({
     where: { id: staff.id },
@@ -460,6 +472,7 @@ export async function unlockPosDevice({ restaurantId, user, pin, deviceId, finge
     unlocked: true,
     unlockedAt: now,
     posSessionToken: signPosSessionToken({
+      sessionId: user.sessionId || null,
       userId: user.id,
       restaurantId,
       staffId: staff.id,

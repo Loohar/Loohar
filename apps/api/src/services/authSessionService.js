@@ -25,9 +25,8 @@ function requestUserAgent(req) {
 }
 
 function requestIp(req) {
-  const forwardedFor = boundedString(req?.headers?.["x-forwarded-for"], 128);
-  const firstForwardedIp = forwardedFor?.split(",")[0]?.trim();
-  return boundedString(firstForwardedIp || req?.ip || req?.socket?.remoteAddress, 64);
+  // req.ip honours the configured trust proxy; a raw X-Forwarded-For header is client-controlled.
+  return boundedString(req?.ip || req?.socket?.remoteAddress, 64);
 }
 
 function hashString(value) {
@@ -75,7 +74,7 @@ export function isSessionExpired(session, at = new Date()) {
   return !session?.expiresAt || new Date(session.expiresAt).getTime() <= at.getTime();
 }
 
-export async function createAuthSession({ user, req, tx = prisma, expiresAt = nowPlus(REFRESH_TOKEN_TTL_MS) }) {
+export async function createAuthSession({ user, req, tx = prisma, expiresAt = nowPlus(REFRESH_TOKEN_TTL_MS), mfaVerifiedAt = null, sessionMetadata = null }) {
   const refreshToken = generateRefreshToken();
   const metadata = requestSessionMetadata(req);
   const session = await tx.authSession.create({
@@ -90,6 +89,8 @@ export async function createAuthSession({ user, req, tx = prisma, expiresAt = no
       userAgentHash: metadata.userAgentHash,
       ipAddress: metadata.ipAddress,
       sessionVersion: user.sessionVersion || 0,
+      mfaVerifiedAt,
+      ...(sessionMetadata ? { metadata: sessionMetadata } : {}),
       expiresAt
     }
   });
@@ -181,8 +182,9 @@ export async function rotateAuthSessionRefreshToken({ refreshToken, req, userSel
   const nextRefreshToken = generateRefreshToken();
   const nextHash = hashRefreshToken(nextRefreshToken);
   const metadata = requestSessionMetadata(req);
-  const updatedSession = await prisma.authSession.update({
-    where: { id: session.id },
+  // Conditional on the presented hash so two concurrent refreshes cannot both rotate one token.
+  const rotated = await prisma.authSession.updateMany({
+    where: { id: session.id, refreshTokenHash: currentHash, revokedAt: null },
     data: {
       refreshTokenHash: nextHash,
       previousRefreshTokenHash: currentHash,
@@ -193,9 +195,13 @@ export async function rotateAuthSessionRefreshToken({ refreshToken, req, userSel
       deviceType: metadata.deviceType || session.deviceType,
       userAgentHash: metadata.userAgentHash || session.userAgentHash,
       ipAddress: metadata.ipAddress || session.ipAddress
-    },
-    include: { user: { select: userSelect } }
+    }
   });
+  if (rotated.count !== 1) {
+    await revokeTokenFamily(session.sessionFamilyId, "refresh_token_replay");
+    throw sessionError("Refresh token replay detected", "AUTH_REFRESH_TOKEN_REPLAY");
+  }
+  const updatedSession = await prisma.authSession.findUnique({ where: { id: session.id }, include: { user: { select: userSelect } } });
 
   return {
     user: updatedSession.user,

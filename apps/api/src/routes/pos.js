@@ -273,7 +273,8 @@ router.patch("/:restaurantId/pos/pin", posPinLimiter, async (req, res, next) => 
     const pinStatus = await setCashierPin({
       restaurantId: req.resolvedRestaurantId,
       user: req.user,
-      pin: req.body?.pin
+      pin: req.body?.pin,
+      currentPin: req.body?.currentPin
     });
     res.json({ pinStatus });
   } catch (error) {
