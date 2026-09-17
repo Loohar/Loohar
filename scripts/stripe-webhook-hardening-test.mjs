@@ -36,6 +36,7 @@ assertCheck(verificationError({ rawBody, signatureHeader: sign(now - 299), webho
 const legacyRoutes = readFileSync("apps/api/src/routes/payments.js", "utf8");
 const orderService = readFileSync("apps/api/src/modules/orderPayments/orderPaymentService.js", "utf8");
 const ledger = readFileSync("apps/api/src/modules/paymentProviders/stripeWebhookEvents.js", "utf8");
+const platformBilling = readFileSync("apps/api/src/modules/platformBilling/platformBillingService.js", "utf8");
 
 assertCheck(!legacyRoutes.includes("if (!webhookSecret) return;"), "Legacy webhook no longer skips verification when the secret is missing");
 assertCheck(legacyRoutes.includes("verifyStripeWebhook({") && legacyRoutes.includes("webhookSecret: process.env.STRIPE_WEBHOOK_SECRET"), "Legacy webhook uses the shared fail-closed Stripe verifier");
@@ -44,7 +45,9 @@ assertCheck(legacyRoutes.includes("processStripeWebhookEventOnce(") && legacyRou
 assertCheck(legacyRoutes.includes('reason: "payment_already_settled"') && legacyRoutes.includes('reason: "payment_already_refunded"'), "Legacy webhook guards settled payments against repeated side effects");
 assertCheck(orderService.includes("return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent(") && !orderService.includes("restaurantPaymentEvent.upsert({\n    where: { providerEventId },"), "Stripe Connect webhook records events before processing and skips processed redeliveries");
 assertCheck(orderService.includes('if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };'), "Stripe Connect webhook guards settled payments");
-assertCheck(ledger.includes("processedAt: null") && ledger.includes("await completeStripeWebhookEvent(event);") && ledger.includes("duplicate: Boolean(event?.processedAt)"), "Events are marked processed only after side effects succeed");
+assertCheck(ledger.includes("processedAt: null") && ledger.includes("await completeStripeWebhookEvent(event, ledger, completionData(result));") && ledger.includes("duplicate: Boolean(event?.processedAt)"), "Events are marked processed only after side effects succeed");
+
+assertCheck(platformBilling.includes("{ ledger: prisma.platformBillingEvent, completionData:") && !platformBilling.includes("platformBillingEvent.upsert("), "Platform billing webhook uses the event ledger and skips processed redeliveries");
 
 if (failures.length) {
   console.error(`\n${failures.length} Stripe webhook hardening check(s) failed.`);

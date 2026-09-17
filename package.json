@@ -212,6 +212,7 @@
     "test:refund-idempotency-db": "node scripts/refund-idempotency-db-test.mjs",
     "test:driver-claim-safety": "node scripts/driver-claim-safety-test.mjs",
     "test:driver-claim-race-db": "node --experimental-test-module-mocks scripts/driver-claim-race-db-test.mjs",
+    "test:platform-billing-webhook-ledger-db": "node scripts/platform-billing-webhook-ledger-db-test.mjs",
     "test:pos-cash-drawer-setup-db": "node --experimental-test-module-mocks scripts/pos-cash-drawer-setup-db-test.mjs",
     "test:stripe-connect-accounts-v2": "node scripts/stripe-connect-accounts-v2-test.mjs",
     "test:stripe-billing": "node scripts/financial-separation-test.mjs stripe-billing",
