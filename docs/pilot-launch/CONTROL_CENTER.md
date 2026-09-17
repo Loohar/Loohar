@@ -1,6 +1,6 @@
 # Loohar Pilot Control Center
 
-Last updated: 2026-09-18 01:00 UTC · Machine-readable twin: `.pilot/state.json`
+Last updated: 2026-09-18 03:30 UTC · Machine-readable twin: `.pilot/state.json`
 
 Status vocabulary: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED · TESTED (local) ·
 STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness percentages are used.
@@ -14,7 +14,7 @@ STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness p
 | Staging API | `cebe5e3` (schema ok, separate DB from production) | `/version`, `/health` |
 | Staging web | UNKNOWN — `loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app` behind Vercel SSO | `/version.json` 302 |
 | Staging preview → staging API CORS | ALLOWED for exact origin; other origins 403 | live probe |
-| Pilot candidate | `c79f071` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
+| Pilot candidate | `77cb7b0` on `release/loohar-pilot-rc-v01` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
 | Frozen | `feature/loohar-national-tax-provider-v01` @ `1e0562b` | do not modify/merge |
 
 Candidate chain on production `0526862`: L-01 (`2d85007`,`b291ddd`,`cfec6a4`,`a3262dc`) →
@@ -72,7 +72,9 @@ MFA/auth `b383655` → authz/money `94f04b7` → L-10 `2f0f73c` → review 3 `c5
 | L-37 | POS register tips | TESTED (local), PUSHED |
 | L-38 | Itemized customer receipt email | TESTED (local), PUSHED — needs an email provider to actually send |
 | L-39 | KDS polling fallback | TESTED (local), PUSHED |
-| L-40 | Offline POS review queue has no operator screen | OPEN (next) |
+| L-40 | Offline POS review queue | TESTED (local), PUSHED |
+| L-41 | Browser render gate for authenticated surfaces | TESTED (local), PUSHED — found and fixed a POS register crash |
+| L-42 | Pilot onboarding certification (signup to first sale) | TESTED (local), PUSHED |
 | L-17 | POS cashier workflow gaps | NEEDS RUNTIME VERIFICATION (staging POS acceptance) |
 | L-18 | Driver app offline sample data | NOT STARTED |
 | L-26 | Refresh tokens in localStorage | DEFERRED — cookie session redesign; no XSS sink found in audits |
@@ -105,7 +107,7 @@ fixed in `bf7430a` with tests that fail on the previous commit.
 
 | Blocker | Minimum owner action |
 | --- | --- |
-| Staging redeploy | Redeploy `loohar-api-staging` from `fix/launch-review3-fixes-v01` at `bf7430a` (no new env vars; the pre-deploy step applies the additive migration `20260918090000_pos_terminal_readers`); confirm the Vercel preview for that branch rebuilt |
+| Staging deploy access | This machine holds no Render credentials, so the authorised staging redeploy cannot be performed. Provide a staging-only deploy hook or API key in a file (never in chat) — see `.pilot/state.json` for the exact command |
 | Staging web identity | Signed in to Vercel, open the preview `/version.json` and confirm `97d4d02` + staging API target, or grant the loohar team read access |
 | Staging evidence accounts | Create staging-only privileged accounts yourself (never share passwords in chat) for MFA/refund/KDS/POS evidence |
 | POS card-present | Buy a Stripe Terminal reader and run the on-site acceptance in `docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md` (the simulated workstream is done) |

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T01:00:00Z",
+  "updatedAt": "2026-09-18T03:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -33,8 +33,8 @@
       "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704"
     },
     "candidate": {
-      "branch": "fix/launch-review3-fixes-v01",
-      "sha": "c79f071",
+      "branch": "release/loohar-pilot-rc-v01 (also fix/launch-review3-fixes-v01)",
+      "sha": "77cb7b0",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -207,6 +207,21 @@
           "sha": "c79f071",
           "item": "review",
           "summary": "review fixes: dashboard render crash, refund status/idempotency, tracking token rotation, tip carry-over, cash refundability, receipt totals, log redaction"
+        },
+        {
+          "sha": "6e3f3a5",
+          "item": "L-41",
+          "summary": "browser surface smoke test; fixed POS register crash it found"
+        },
+        {
+          "sha": "a8ccb9c",
+          "item": "L-40",
+          "summary": "offline POS review queue for sales the server refused"
+        },
+        {
+          "sha": "77cb7b0",
+          "item": "L-42",
+          "summary": "end-to-end pilot onboarding certification (signup to taking money)"
         }
       ],
       "deployedToStaging": false
@@ -221,7 +236,8 @@
     "controlBranch": {
       "branch": "chore/loohar-pilot-control-v01",
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-control-v01"
-    }
+    },
+    "releaseCandidateBranch": "release/loohar-pilot-rc-v01"
   },
   "items": {
     "L-01": {
@@ -497,14 +513,27 @@
       "certification": "PENDING_STAGING_DEPLOY"
     },
     "L-40": {
-      "title": "Offline POS NEEDS_REVIEW queue has no operator screen",
+      "title": "Offline POS review queue",
       "priority": "P2",
-      "status": "OPEN",
-      "note": "Reconciliation failures are terminal and invisible to staff; next autonomous task."
+      "status": "TESTED (local), PUSHED",
+      "certification": "PENDING_STAGING_DEPLOY",
+      "note": "Register home shows refused offline sales; a manager retries or records how it was handled. Records are kept (RESOLVED_MANUALLY), never deleted."
+    },
+    "L-41": {
+      "title": "Browser-level render gate for authenticated surfaces",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "note": "scripts/web-surface-smoke-test.mjs renders dashboard, payments, orders, reports, POS, KDS, storefront and super admin against fixtures and fails on any runtime error. It found and fixed a POS register crash (activeDevice read before initialisation) introduced by the Terminal UI work. Runs inside npm test and rebuilds a stale bundle."
+    },
+    "L-42": {
+      "title": "Pilot onboarding certification (signup to first sale)",
+      "priority": "P0",
+      "status": "TESTED (local), PUSHED",
+      "note": "Public signup provisions a Starter restaurant with owner and location; selling is refused until the tenant's own tax profile is verified; online checkout is refused until Stripe onboarding, then charges menu price + that restaurant's tax on its connected account."
     }
   },
   "tests": {
-    "candidateSha": "c79f071",
+    "candidateSha": "77cb7b0",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -526,7 +555,8 @@
       "test:basic-reporting-db": "PASS (8)",
       "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)",
-      "test:pos-tips-db": "PASS (4)"
+      "test:pos-tips-db": "PASS (4)",
+      "test:pilot-onboarding-db": "PASS (4)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
@@ -534,7 +564,8 @@
       "aba7638 \u2192 fixed in 97d4d02",
       "d6a3fc3 \u2192 fixed in bf7430a",
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
-    ]
+    ],
+    "browserSurfaceSmoke": "PASS (8 surfaces, no runtime errors)"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -546,18 +577,17 @@
     ]
   },
   "humanActionsRequired": [
-    "Redeploy loohar-api-staging from fix/launch-review3-fixes-v01 at c79f071 (tips, receipts, payments page, KDS fallback; no new environment variables, no new migrations)",
-    "Vercel: invite subashsunar00@gmail.com (username subashsunar, account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer, or paste the staging preview /version.json contents",
-    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account and leave the generated file in that folder; it contains no secrets and unblocks MFA, KDS, POS and reporting staging evidence",
-    "Optional for platform billing certification: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging (currently fails closed with 503)",
-    "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md when convenient",
-    "Geocoding provider decision for automatic delivery-zone verification (pilot is pickup-only on Starter)",
-    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
-    "Optional: set RESEND_API_KEY (or another email provider) on staging so customer receipt emails actually send; EMAIL_PROVIDER defaults to console"
+    "STAGING DEPLOY ACCESS (now the main blocker): this machine has no Render credentials, so Claude cannot redeploy loohar-api-staging itself as authorised. Create a staging-only Render deploy hook (Render > loohar-api-staging > Settings > Deploy Hook) or a read/deploy API key, and save it to a file only Claude reads, e.g. `mkdir -p ~/.loohar && printf 'RENDER_STAGING_DEPLOY_HOOK=<url>\\n' > ~/.loohar/staging.env && chmod 600 ~/.loohar/staging.env`. Never paste it into chat.",
+    "Vercel: invite subashsunar00@gmail.com (account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer so staging web SHA can be verified",
+    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account (unblocks MFA, KDS, POS and reporting staging evidence)",
+    "Optional: set RESEND_API_KEY on staging so customer receipt emails actually send (EMAIL_PROVIDER defaults to console)",
+    "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
+    "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
+    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Offline POS NEEDS_REVIEW resolution screen (L-40), then Super Admin and operations evidence."
+  "nextAutonomousTask": "Stripe Connect onboarding link certification and Super Admin surface hardening; staging certification resumes as soon as deploy access exists."
 }
