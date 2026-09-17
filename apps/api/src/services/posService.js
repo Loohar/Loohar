@@ -534,6 +534,44 @@ export async function requireActiveDevice({ restaurantId, deviceId, fingerprint 
   return device;
 }
 
+// Cash drawers, locations and registers referenced by device or shift requests must belong to
+// the restaurant in context; ids from the request body are never trusted on their own.
+async function assertRestaurantLocation(client, restaurantId, locationId) {
+  if (!locationId) return null;
+  const location = await client.restaurantLocation.findFirst({ where: { id: locationId, restaurantId }, select: { id: true } });
+  if (!location) throw httpError("Location not found for this restaurant.", 404, { code: "POS_LOCATION_NOT_FOUND" });
+  return location.id;
+}
+
+async function assertRestaurantRegister(client, restaurantId, registerId) {
+  if (!registerId) return null;
+  const register = await client.posRegister.findFirst({ where: { id: registerId, restaurantId, active: true }, select: { id: true } });
+  if (!register) throw httpError("Register not found for this restaurant.", 404, { code: "POS_REGISTER_NOT_FOUND" });
+  return register.id;
+}
+
+async function resolveRestaurantCashDrawer(client, { restaurantId, cashDrawerId, locationId = null }) {
+  const drawer = await client.cashDrawer.findFirst({ where: { id: cashDrawerId, restaurantId, active: true } });
+  if (!drawer) throw httpError("Cash drawer not found for this restaurant.", 404, { code: "POS_CASH_DRAWER_NOT_FOUND" });
+  if (locationId && drawer.locationId && drawer.locationId !== locationId) {
+    throw httpError("Cash drawer belongs to a different location.", 409, { code: "POS_CASH_DRAWER_LOCATION_MISMATCH" });
+  }
+  return drawer;
+}
+
+// Restaurants set up cash handling by registering a main terminal; the first terminal at a
+// location gets a closed drawer that opens with the first shift.
+async function ensureLocationCashDrawer(client, { restaurantId, locationId = null }) {
+  const existing = await client.cashDrawer.findFirst({
+    where: { restaurantId, active: true, locationId: locationId || null },
+    orderBy: { createdAt: "asc" }
+  });
+  if (existing) return existing;
+  return client.cashDrawer.create({
+    data: { restaurantId, locationId: locationId || null, name: "Main Cash Drawer", status: "CLOSED", currentBalanceCents: 0 }
+  });
+}
+
 export async function currentShift({ restaurantId, userId, deviceId = null }) {
   return prisma.employeeShift.findFirst({
     where: {
@@ -2458,15 +2496,22 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_DEVICES);
   const fingerprintHash = hashDeviceFingerprint(restaurantId, fingerprint || body?.fingerprint);
   if (!fingerprintHash) throw httpError("Device fingerprint is required.", 400);
+  const deviceType = body?.deviceType || "POS_KIOSK";
+  const locationId = await assertRestaurantLocation(prisma, restaurantId, body?.locationId || null);
+  const cashDrawer = deviceType !== "MAIN_TERMINAL"
+    ? null
+    : body?.cashDrawerId
+      ? await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })
+      : await ensureLocationCashDrawer(prisma, { restaurantId, locationId });
   const data = {
     restaurantId,
-    locationId: body?.locationId || null,
+    locationId,
     name: String(body?.name || "POS device").slice(0, 120),
-    deviceType: body?.deviceType || "POS_KIOSK",
+    deviceType,
     deviceFingerprintHash: fingerprintHash,
     status: body?.status || "ACTIVE",
     cardPaymentsEnabled: Boolean(body?.cardPaymentsEnabled),
-    cashDrawerId: body?.cashDrawerId || null,
+    cashDrawerId: cashDrawer?.id || null,
     registeredByUserId: user.id,
     lastSeenAt: new Date(),
     settingsJson: safeJson(body?.settings, {})
@@ -2491,14 +2536,26 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_DEVICES);
   const device = await prisma.posDevice.findFirst({ where: { id: deviceId, restaurantId } });
   if (!device) throw httpError("POS device not found.", 404);
+  const locationId = body?.locationId === undefined
+    ? device.locationId
+    : await assertRestaurantLocation(prisma, restaurantId, body.locationId || null);
+  const deviceType = body?.deviceType || device.deviceType;
+  let cashDrawerId = body?.cashDrawerId === undefined ? device.cashDrawerId : body.cashDrawerId || null;
+  if (deviceType !== "MAIN_TERMINAL") {
+    cashDrawerId = body?.cashDrawerId === undefined ? device.cashDrawerId : null;
+  } else if (cashDrawerId) {
+    cashDrawerId = (await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId, locationId })).id;
+  } else {
+    cashDrawerId = (await ensureLocationCashDrawer(prisma, { restaurantId, locationId })).id;
+  }
   const updated = await prisma.posDevice.update({
     where: { id: device.id },
     data: {
       name: body?.name ? String(body.name).slice(0, 120) : undefined,
       deviceType: body?.deviceType || undefined,
       status: body?.status || undefined,
-      locationId: body?.locationId === undefined ? undefined : body.locationId || null,
-      cashDrawerId: body?.cashDrawerId === undefined ? undefined : body.cashDrawerId || null,
+      locationId: body?.locationId === undefined ? undefined : locationId,
+      cashDrawerId,
       cardPaymentsEnabled: body?.cardPaymentsEnabled === undefined ? undefined : Boolean(body.cardPaymentsEnabled),
       revokedAt: body?.status === "REVOKED" ? new Date() : undefined
     }
@@ -2580,28 +2637,39 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_SHIFTS);
   const existing = await currentShift({ restaurantId, userId: user.id, deviceId });
   if (existing) return existing;
+  const device = deviceId ? await prisma.posDevice.findFirst({ where: { id: deviceId, restaurantId } }) : null;
+  const locationId = await assertRestaurantLocation(prisma, restaurantId, body?.locationId || device?.locationId || null);
+  const registerId = await assertRestaurantRegister(prisma, restaurantId, body?.registerId || null);
+  const requestedDrawerId = body?.cashDrawerId || device?.cashDrawerId || null;
   const shift = await prisma.$transaction(async (tx) => {
+    const drawer = requestedDrawerId
+      ? await resolveRestaurantCashDrawer(tx, { restaurantId, cashDrawerId: requestedDrawerId, locationId })
+      : null;
+    if (drawer) {
+      const openSession = await tx.cashDrawerSession.findFirst({ where: { cashDrawerId: drawer.id, closedAt: null }, select: { id: true } });
+      if (openSession) throw httpError("Cash drawer is already open on another shift.", 409, { code: "POS_CASH_DRAWER_IN_USE" });
+    }
     const created = await tx.employeeShift.create({
       data: {
         restaurantId,
-        locationId: body?.locationId || null,
+        locationId,
         employeeUserId: user.id,
         deviceId,
-        registerId: body?.registerId || null,
-        cashDrawerId: body?.cashDrawerId || null,
+        registerId,
+        cashDrawerId: drawer?.id || null,
         openingCashCents: cents(body?.openingCashCents)
       }
     });
-    if (body?.cashDrawerId) {
+    if (drawer) {
       await tx.cashDrawer.update({
-        where: { id: body.cashDrawerId },
+        where: { id: drawer.id },
         data: { status: "OPEN", currentBalanceCents: cents(body?.openingCashCents) }
       });
       await tx.cashDrawerSession.create({
         data: {
           restaurantId,
-          locationId: body?.locationId || null,
-          cashDrawerId: body.cashDrawerId,
+          locationId,
+          cashDrawerId: drawer.id,
           shiftId: created.id,
           openedByUserId: user.id,
           openingCashCents: cents(body?.openingCashCents)
@@ -2616,7 +2684,7 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
     action: "pos.shift.opened",
     entityType: "EmployeeShift",
     entityId: shift.id,
-    metadata: { deviceId, cashDrawerId: body?.cashDrawerId || null }
+    metadata: { deviceId, cashDrawerId: shift.cashDrawerId || null }
   });
   return shift;
 }
