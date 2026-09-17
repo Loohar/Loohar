@@ -565,6 +565,7 @@ model Restaurant {
   driverEarningLedger DriverEarningLedger[]
   posDevices          PosDevice[]
   posRegisters        PosRegister[]
+  posTerminalReaders  PosTerminalReader[]
   cashDrawers         CashDrawer[]
   employeeShifts      EmployeeShift[]
   cashDrawerSessions  CashDrawerSession[]
@@ -928,6 +929,7 @@ model RestaurantLocation {
   restaurant              Restaurant                 @relation(fields: [restaurantId], references: [id])
   posDevices   PosDevice[]
   posRegisters PosRegister[]
+  posTerminalReaders PosTerminalReader[]
   cashDrawers  CashDrawer[]
   employeeShifts EmployeeShift[]
   cashDrawerSessions CashDrawerSession[]
@@ -1359,6 +1361,7 @@ model RestaurantMerchantAccount {
   country                    String?
   onboardingCompletedAt      DateTime?
   lastSyncedAt               DateTime?
+  stripeTerminalLocationId   String?
   @@unique([restaurantId, provider])
   @@index([stripeAccountId])
 }
@@ -1647,6 +1650,34 @@ model PosDevice {
   @@unique([restaurantId, deviceFingerprintHash])
   @@index([restaurantId, status])
   @@index([restaurantId, deviceType])
+  @@index([locationId])
+}
+
+enum PosTerminalReaderStatus {
+  ACTIVE
+  REMOVED
+}
+
+model PosTerminalReader {
+  id                 String                  @id @default(cuid())
+  restaurantId       String
+  locationId         String?
+  stripeReaderId     String                  @unique
+  stripeLocationId   String
+  label              String
+  deviceTypeLabel    String?
+  serialNumber       String?
+  status             PosTerminalReaderStatus @default(ACTIVE)
+  simulated          Boolean                 @default(false)
+  registeredByUserId String?
+  lastSeenAt         DateTime?
+  removedAt          DateTime?
+  restaurant         Restaurant              @relation(fields: [restaurantId], references: [id])
+  location           RestaurantLocation?     @relation(fields: [locationId], references: [id])
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  @@index([restaurantId, status])
   @@index([locationId])
 }
 

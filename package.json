@@ -221,6 +221,7 @@
     "test:online-fulfillment-db": "node --experimental-test-module-mocks scripts/online-fulfillment-db-test.mjs",
     "test:starter-entitlements-db": "node scripts/starter-entitlements-db-test.mjs",
     "test:storefront-checkout-db": "node --experimental-test-module-mocks scripts/storefront-checkout-db-test.mjs",
+    "test:pos-terminal-db": "node scripts/pos-terminal-db-test.mjs",
     "test:pos-cash-drawer-setup-db": "node --experimental-test-module-mocks scripts/pos-cash-drawer-setup-db-test.mjs",
     "test:stripe-connect-accounts-v2": "node scripts/stripe-connect-accounts-v2-test.mjs",
     "test:stripe-billing": "node scripts/financial-separation-test.mjs stripe-billing",

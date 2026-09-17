@@ -6,6 +6,14 @@ import { requireAuth } from "../middleware/auth.js";
 import { featureGuard } from "../middleware/entitlements.js";
 import { requirePosSession } from "../middleware/posSession.js";
 import {
+  cancelTerminalPayment,
+  collectTerminalPayment,
+  createTerminalConnectionToken,
+  listTerminalReaders,
+  registerTerminalReader,
+  removeTerminalReader
+} from "../modules/posTerminal/posTerminalService.js";
+import {
   cardPaymentIntent,
   cashierPinStatus,
   cashPayment,
@@ -519,6 +527,61 @@ router.post("/:restaurantId/pos/payments/card", requirePosSession, async (req, r
       ...deviceContext(req)
     });
     res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Stripe Terminal (card-present). Card data goes from the reader to Stripe; Loohar only sees status.
+router.get("/:restaurantId/pos/terminal/readers", posReadLimiter, requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await listTerminalReaders({ restaurantId: req.resolvedRestaurantId, user: req.user }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/terminal/readers", requirePosSession, async (req, res, next) => {
+  try {
+    res.status(201).json(await registerTerminalReader({ restaurantId: req.resolvedRestaurantId, user: req.user, body: req.body }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/:restaurantId/pos/terminal/readers/:readerId", requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await removeTerminalReader({ restaurantId: req.resolvedRestaurantId, user: req.user, readerId: req.params.readerId }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/terminal/connection-token", requirePosSession, async (req, res, next) => {
+  try {
+    res.status(201).json(await createTerminalConnectionToken({ restaurantId: req.resolvedRestaurantId, user: req.user, ...deviceContext(req) }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/payments/terminal", requirePosSession, async (req, res, next) => {
+  try {
+    res.status(201).json(await collectTerminalPayment({
+      restaurantId: req.resolvedRestaurantId,
+      user: req.user,
+      orderId: req.body?.orderId,
+      readerId: req.body?.readerId,
+      ...deviceContext(req)
+    }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:restaurantId/pos/payments/terminal/cancel", requirePosSession, async (req, res, next) => {
+  try {
+    res.json(await cancelTerminalPayment({ restaurantId: req.resolvedRestaurantId, user: req.user, readerId: req.body?.readerId, ...deviceContext(req) }));
   } catch (error) {
     next(error);
   }

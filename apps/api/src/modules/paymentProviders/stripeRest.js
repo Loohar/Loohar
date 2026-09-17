@@ -90,16 +90,16 @@ function stripeRequestError({ payload, response }) {
   return error;
 }
 
-export async function stripeRequest({ secretKey, path, body, stripeAccount, idempotencyKey }) {
+export async function stripeRequest({ secretKey, path, body, stripeAccount, idempotencyKey, method = "POST" }) {
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
-    method: "POST",
+    method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
       ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {}),
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
-    body
+    ...(method === "DELETE" ? {} : { body })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
