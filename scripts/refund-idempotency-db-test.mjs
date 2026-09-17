@@ -26,7 +26,7 @@ Object.assign(process.env, {
   STRIPE_CONNECT_SECRET_KEY: "sk_test_local_fake_refunds"
 });
 
-const stripe = { refunds: new Map(), inFlight: new Set(), creates: 0, calls: [], failAccounts: new Set() };
+const stripe = { refunds: new Map(), inFlight: new Set(), creates: 0, calls: [], failAccounts: new Set(), dropResponseOnce: false };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, options = {}) => {
   if (!String(url).startsWith("https://api.stripe.com/v1/refunds")) return realFetch(url, options);
@@ -45,6 +45,11 @@ globalThis.fetch = async (url, options = {}) => {
   const refund = { id: `re_test_${process.pid}_${Date.now()}_${stripe.creates}`, status: "succeeded", amount: Number(params.get("amount")) };
   stripe.refunds.set(key, refund);
   stripe.inFlight.delete(key);
+  if (stripe.dropResponseOnce) {
+    // Stripe created the refund but the response never arrived.
+    stripe.dropResponseOnce = false;
+    throw new TypeError("fetch failed");
+  }
   return json(200, refund);
 };
 
@@ -117,8 +122,11 @@ test("partial refunds are capped at the remaining balance", async () => {
   const order = await paidOrder({ totalCents: 1000 });
   await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 400, idempotencyKey: key("p1") });
   await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 400, idempotencyKey: key("p2") });
-  const capped = await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 500, idempotencyKey: key("p3") });
-  assert.equal(capped.amountCents, 200);
+  const overBalance = await outcome(refundOrderPayment({ orderId: order.id, user: owner, amountCents: 500, idempotencyKey: key("p3") }));
+  assert.equal(overBalance.code, "REFUND_EXCEEDS_REMAINING", "over-balance requests are rejected, not silently reduced");
+  const remainder = await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 200, idempotencyKey: key("p3b") });
+  assert.equal(remainder.amountCents, 200);
+  assert.equal((await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 200, idempotencyKey: key("p3b") })).id, remainder.id, "retrying the same request replays");
   const exhausted = await outcome(refundOrderPayment({ orderId: order.id, user: owner, amountCents: 1, idempotencyKey: key("p4") }));
   assert.equal(exhausted.code, "REFUND_EXCEEDS_REMAINING");
   const total = (await refundsFor(order.id)).reduce((sum, refund) => sum + refund.amountCents, 0);
@@ -170,4 +178,27 @@ test("a failed provider refund releases the reserved balance", async () => {
   const retry = await refundOrderPayment({ orderId: order.id, user: owner, idempotencyKey: key("fail-retry") });
   assert.equal(retry.amountCents, 1000);
   assert.equal(retry.status, "SUCCEEDED");
+});
+
+test("an unconfirmed provider outcome keeps the balance reserved and a same-key retry confirms it", async () => {
+  const order = await paidOrder({ totalCents: 1000 });
+  const createsBefore = stripe.creates;
+  stripe.dropResponseOnce = true;
+  const first = await outcome(refundOrderPayment({ orderId: order.id, user: owner, amountCents: 600, idempotencyKey: key("timeout") }));
+  assert.equal(first.code, "REFUND_OUTCOME_UNKNOWN");
+  const [pending] = await refundsFor(order.id);
+  assert.equal(pending.status, "PENDING");
+  const other = await outcome(refundOrderPayment({ orderId: order.id, user: owner, amountCents: 600, idempotencyKey: key("timeout-other-key") }));
+  assert.equal(other.code, "REFUND_EXCEEDS_REMAINING", "unconfirmed refund still holds its balance");
+  const confirmed = await refundOrderPayment({ orderId: order.id, user: owner, amountCents: 600, idempotencyKey: key("timeout") });
+  assert.equal(confirmed.id, pending.id);
+  assert.equal(confirmed.status, "SUCCEEDED");
+  assert.equal(stripe.creates - createsBefore, 1, "Stripe refund created exactly once");
+});
+
+test("payments not collected through Stripe Connect cannot be refunded here", async () => {
+  const order = await paidOrder();
+  await prisma.restaurantOrderPayment.update({ where: { orderId: order.id }, data: { provider: "MANUAL" } });
+  const result = await outcome(refundOrderPayment({ orderId: order.id, user: owner, idempotencyKey: key("manual") }));
+  assert.equal(result.code, "REFUND_PAYMENT_NOT_REFUNDABLE");
 });

@@ -559,16 +559,20 @@ async function resolveRestaurantCashDrawer(client, { restaurantId, cashDrawerId,
   return drawer;
 }
 
-// Restaurants set up cash handling by registering a main terminal; the first terminal at a
-// location gets a closed drawer that opens with the first shift.
-async function ensureLocationCashDrawer(client, { restaurantId, locationId = null }) {
-  const existing = await client.cashDrawer.findFirst({
-    where: { restaurantId, active: true, locationId: locationId || null },
-    orderBy: { createdAt: "asc" }
-  });
-  if (existing) return existing;
+// Each main terminal gets its own drawer unless a manager explicitly assigns a shared one.
+async function ensureDeviceCashDrawer(client, { restaurantId, locationId = null, existingDrawerId = null, deviceName = "Main terminal" }) {
+  if (existingDrawerId) {
+    const existing = await client.cashDrawer.findFirst({ where: { id: existingDrawerId, restaurantId, active: true } });
+    if (existing && (!existing.locationId || !locationId || existing.locationId === locationId)) return existing;
+  }
   return client.cashDrawer.create({
-    data: { restaurantId, locationId: locationId || null, name: "Main Cash Drawer", status: "CLOSED", currentBalanceCents: 0 }
+    data: {
+      restaurantId,
+      locationId: locationId || null,
+      name: `${String(deviceName || "Main terminal").slice(0, 100)} cash drawer`,
+      status: "CLOSED",
+      currentBalanceCents: 0
+    }
   });
 }
 
@@ -2498,11 +2502,12 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
   if (!fingerprintHash) throw httpError("Device fingerprint is required.", 400);
   const deviceType = body?.deviceType || "POS_KIOSK";
   const locationId = await assertRestaurantLocation(prisma, restaurantId, body?.locationId || null);
+  const existingDevice = await prisma.posDevice.findFirst({ where: { restaurantId, deviceFingerprintHash: fingerprintHash }, select: { cashDrawerId: true } });
   const cashDrawer = deviceType !== "MAIN_TERMINAL"
     ? null
     : body?.cashDrawerId
       ? await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })
-      : await ensureLocationCashDrawer(prisma, { restaurantId, locationId });
+      : await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId: existingDevice?.cashDrawerId, deviceName: body?.name });
   const data = {
     restaurantId,
     locationId,
@@ -2540,13 +2545,17 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
     ? device.locationId
     : await assertRestaurantLocation(prisma, restaurantId, body.locationId || null);
   const deviceType = body?.deviceType || device.deviceType;
-  let cashDrawerId = body?.cashDrawerId === undefined ? device.cashDrawerId : body.cashDrawerId || null;
+  const locationChanged = locationId !== device.locationId;
+  const typeChanged = deviceType !== device.deviceType;
+  let cashDrawerId = device.cashDrawerId;
   if (deviceType !== "MAIN_TERMINAL") {
-    cashDrawerId = body?.cashDrawerId === undefined ? device.cashDrawerId : null;
-  } else if (cashDrawerId) {
-    cashDrawerId = (await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId, locationId })).id;
-  } else {
-    cashDrawerId = (await ensureLocationCashDrawer(prisma, { restaurantId, locationId })).id;
+    cashDrawerId = null;
+  } else if (body?.cashDrawerId) {
+    cashDrawerId = (await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })).id;
+  } else if (body?.status !== "REVOKED" && (!device.cashDrawerId || locationChanged || typeChanged || body?.cashDrawerId === null)) {
+    // Status or name changes leave the drawer alone, so a lost terminal can always be revoked.
+    const existingDrawerId = locationChanged || body?.cashDrawerId === null ? null : device.cashDrawerId;
+    cashDrawerId = (await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId, deviceName: body?.name || device.name })).id;
   }
   const updated = await prisma.posDevice.update({
     where: { id: device.id },
@@ -2645,9 +2654,14 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
     const drawer = requestedDrawerId
       ? await resolveRestaurantCashDrawer(tx, { restaurantId, cashDrawerId: requestedDrawerId, locationId })
       : null;
+    let joinsOpenDrawer = false;
     if (drawer) {
+      // Serialize clock-ins on the same drawer so only one can open its session.
+      await tx.$queryRaw`SELECT id FROM "CashDrawer" WHERE id = ${drawer.id} FOR UPDATE`;
       const openSession = await tx.cashDrawerSession.findFirst({ where: { cashDrawerId: drawer.id, closedAt: null }, select: { id: true } });
-      if (openSession) throw httpError("Cash drawer is already open on another shift.", 409, { code: "POS_CASH_DRAWER_IN_USE" });
+      // A drawer already open on another shift is shared: the new shift joins it without
+      // resetting the counted balance or starting a second session.
+      joinsOpenDrawer = Boolean(openSession);
     }
     const created = await tx.employeeShift.create({
       data: {
@@ -2660,7 +2674,7 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
         openingCashCents: cents(body?.openingCashCents)
       }
     });
-    if (drawer) {
+    if (drawer && !joinsOpenDrawer) {
       await tx.cashDrawer.update({
         where: { id: drawer.id },
         data: { status: "OPEN", currentBalanceCents: cents(body?.openingCashCents) }
@@ -2696,27 +2710,40 @@ export async function closeShift({ restaurantId, user, shiftId, body }) {
   if (shift.employeeUserId !== user.id) await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_SHIFTS);
   const closingCashCents = cents(body?.closingCashCents);
   const updated = await prisma.$transaction(async (tx) => {
-    const closed = await tx.employeeShift.update({
-      where: { id: shift.id },
+    if (shift.cashDrawerId) await tx.$queryRaw`SELECT id FROM "CashDrawer" WHERE id = ${shift.cashDrawerId} FOR UPDATE`;
+    const heldSession = shift.cashDrawerId
+      ? await tx.cashDrawerSession.findFirst({ where: { cashDrawerId: shift.cashDrawerId, shiftId: shift.id, closedAt: null } })
+      : null;
+    const otherOpenShift = shift.cashDrawerId
+      ? await tx.employeeShift.findFirst({ where: { cashDrawerId: shift.cashDrawerId, status: "OPEN", NOT: { id: shift.id } }, orderBy: { openedAt: "asc" } })
+      : null;
+    const closesDrawer = Boolean(heldSession && !otherOpenShift);
+    // Only an OPEN shift can be closed; a stale clock-out must not touch a drawer in use.
+    const closing = await tx.employeeShift.updateMany({
+      where: { id: shift.id, status: "OPEN" },
       data: {
         status: "CLOSED",
         closedAt: new Date(),
         closingCashCents,
-        discrepancyCents: shift.cashDrawerId ? closingCashCents - shift.openingCashCents : null,
+        discrepancyCents: closesDrawer ? closingCashCents - heldSession.openingCashCents : null,
         notes: body?.notes ? String(body.notes).slice(0, 500) : null
       }
     });
-    if (shift.cashDrawerId) {
+    if (closing.count === 0) throw httpError("POS shift is already closed.", 409, { code: "POS_SHIFT_ALREADY_CLOSED" });
+    if (closesDrawer) {
       await tx.cashDrawer.update({
         where: { id: shift.cashDrawerId },
         data: { status: "CLOSED", currentBalanceCents: closingCashCents }
       });
-      await tx.cashDrawerSession.updateMany({
-        where: { shiftId: shift.id, closedAt: null },
+      await tx.cashDrawerSession.update({
+        where: { id: heldSession.id },
         data: { closedAt: new Date(), closingCashCents, closedByUserId: user.id }
       });
+    } else if (heldSession && otherOpenShift) {
+      // Hand the open drawer session to a shift still using the drawer.
+      await tx.cashDrawerSession.update({ where: { id: heldSession.id }, data: { shiftId: otherOpenShift.id } });
     }
-    return closed;
+    return tx.employeeShift.findUnique({ where: { id: shift.id } });
   });
   await recordAudit({
     actorUserId: user.id,

@@ -45,7 +45,7 @@ assertCheck(legacyRoutes.includes("processStripeWebhookEventOnce(") && legacyRou
 assertCheck(legacyRoutes.includes('reason: "payment_already_settled"') && legacyRoutes.includes('reason: "payment_already_refunded"'), "Legacy webhook guards settled payments against repeated side effects");
 assertCheck(orderService.includes("return processStripeWebhookEventOnce(eventRecord, () => applyStripeConnectEvent(") && !orderService.includes("restaurantPaymentEvent.upsert({\n    where: { providerEventId },"), "Stripe Connect webhook records events before processing and skips processed redeliveries");
 assertCheck(orderService.includes('if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };'), "Stripe Connect webhook guards settled payments");
-assertCheck(ledger.includes("processedAt: null") && ledger.includes("await completeStripeWebhookEvent(event, ledger, completionData(result));") && ledger.includes("duplicate: Boolean(event?.processedAt)"), "Events are marked processed only after side effects succeed");
+assertCheck(ledger.includes("processedAt: null") && ledger.includes("await completeStripeWebhookEvent(event, ledger, completionData(result));") && ledger.includes("if (event?.processedAt) return { event, duplicate: true };") && ledger.includes("STRIPE_EVENT_IN_PROGRESS"), "Events are marked processed only after side effects succeed");
 
 assertCheck(platformBilling.includes("{ ledger: prisma.platformBillingEvent, completionData:") && !platformBilling.includes("platformBillingEvent.upsert("), "Platform billing webhook uses the event ledger and skips processed redeliveries");
 

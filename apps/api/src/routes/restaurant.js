@@ -1909,6 +1909,15 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
     if (!order) return res.status(404).json({ error: "Order not found" });
     const assignedDriver = await prisma.driver.findFirst({ where: { id: String(req.body.driverId || ""), restaurantId }, select: { id: true } });
     if (!assignedDriver) return res.status(404).json({ error: "Driver not found for this restaurant", code: "DRIVER_NOT_FOUND" });
+    if (["CANCELLED", "REJECTED", "DELIVERED"].includes(order.status)) {
+      return res.status(409).json({ error: "This order can no longer be assigned", code: "DELIVERY_ORDER_NOT_ASSIGNABLE" });
+    }
+    const currentDelivery = await prisma.delivery.findUnique({ where: { orderId: order.id }, select: { status: true, driverId: true } });
+    if (currentDelivery && !["ASSIGNED", "ACCEPTED"].includes(currentDelivery.status) && currentDelivery.driverId !== assignedDriver.id) {
+      return res.status(409).json({ error: "Delivery is already in progress with another driver", code: "DELIVERY_IN_PROGRESS" });
+    }
+    const requestedBaseEarnings = Number(req.body.baseEarningsCents);
+    const baseEarningsCents = Number.isInteger(requestedBaseEarnings) && requestedBaseEarnings >= 0 && requestedBaseEarnings <= 100_000 ? requestedBaseEarnings : 500;
     const delivery = await prisma.delivery.upsert({
       where: { orderId: order.id },
       create: {
@@ -1916,7 +1925,7 @@ router.post("/:restaurantId/orders/:orderId/assign-driver", async (req, res, nex
         orderId: order.id,
         driverId: assignedDriver.id,
         tipCents: order.driverTipCents ?? order.tipCents,
-        baseEarningsCents: req.body.baseEarningsCents || 500,
+        baseEarningsCents,
         pickupAddress: req.body.pickupAddress || order.restaurant.address || "Restaurant pickup",
         dropoffAddress: order.deliveryAddress || req.body.dropoffAddress || "Customer dropoff",
         statusHistory: { create: { status: "ASSIGNED", changedBy: req.user.id } }

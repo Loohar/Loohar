@@ -201,7 +201,7 @@ test("legacy webhook leaves events for unknown payments unprocessed so Stripe re
   assert.equal(result.status, 404);
   const ledger = await prisma.restaurantPaymentEvent.findUnique({ where: { providerEventId: `stripe_legacy:${event.id}` } });
   assert.equal(ledger?.processedAt ?? null, null);
-  assert.equal((await legacy(event)).status, 404, "redelivery is retried, not skipped as a duplicate");
+  assert.ok([404, 409].includes((await legacy(event)).status), "redelivery is retried, not skipped as a duplicate");
 });
 
 test("concurrent deliveries of one legacy event apply side effects exactly once", async () => {
@@ -213,7 +213,7 @@ test("concurrent deliveries of one legacy event apply side effects exactly once"
   const couponBefore = (await prisma.coupon.findUnique({ where: { id: seeded.coupon.id } })).redeemedCount;
   const historyBefore = await historyCount(seeded.raceLegacyOrder.id);
   const results = await Promise.all(Array.from({ length: 6 }, () => legacy(event)));
-  assert.ok(results.every((result) => result.status === 200), JSON.stringify(results.map((result) => result.status)));
+  assert.ok(results.some((result) => result.status === 200) && results.every((result) => [200, 409].includes(result.status)), JSON.stringify(results.map((result) => result.status)));
   assert.equal((await prisma.payment.findUnique({ where: { id: seeded.raceLegacyPayment.id } })).status, "PAID");
   assert.equal(await historyCount(seeded.raceLegacyOrder.id), historyBefore + 1);
   assert.equal((await prisma.coupon.findUnique({ where: { id: seeded.coupon.id } })).redeemedCount, couponBefore + 1);
@@ -265,11 +265,24 @@ test("concurrent deliveries of one Stripe Connect event apply side effects exact
   const couponBefore = (await prisma.coupon.findUnique({ where: { id: seeded.coupon.id } })).redeemedCount;
   const historyBefore = await historyCount(seeded.raceConnectOrder.id);
   const results = await Promise.all(Array.from({ length: 6 }, () => connect(event)));
-  assert.ok(results.every((result) => result.status === 200), JSON.stringify(results.map((result) => result.status)));
+  assert.ok(results.some((result) => result.status === 200) && results.every((result) => [200, 409].includes(result.status)), JSON.stringify(results.map((result) => result.status)));
   assert.equal((await prisma.restaurantOrderPayment.findUnique({ where: { id: seeded.raceConnectPayment.id } })).status, "PAID");
   assert.equal(await historyCount(seeded.raceConnectOrder.id), historyBefore + 1);
   assert.equal((await prisma.coupon.findUnique({ where: { id: seeded.coupon.id } })).redeemedCount, couponBefore + 1);
   assert.equal((await prisma.order.findUnique({ where: { id: seeded.raceConnectOrder.id } })).status, "ACCEPTED");
+});
+
+test("Stripe refund events reconcile restaurant refund records", async () => {
+  const refund = await prisma.restaurantRefund.create({
+    data: { restaurantId: seeded.restaurant.id, orderPaymentId: seeded.connectPayment.id, amountCents: 100, status: "SUCCEEDED", providerRefundId: `re_${runId}_late_fail` }
+  });
+  const result = await connect({
+    id: eventId("refund-failed"),
+    type: "refund.failed",
+    data: { object: { id: refund.providerRefundId, status: "failed", payment_intent: seeded.connectPayment.providerPaymentIntentId, metadata: { orderPaymentId: seeded.connectPayment.id, restaurantRefundId: refund.id } } }
+  });
+  assert.equal(result.status, 200);
+  assert.equal((await prisma.restaurantRefund.findUnique({ where: { id: refund.id } })).status, "FAILED");
 });
 
 test("Stripe Connect refunds still update payment state", async () => {

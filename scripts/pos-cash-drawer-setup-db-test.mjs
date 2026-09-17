@@ -66,7 +66,7 @@ test("registering the first main terminal creates a closed drawer for its locati
   assert.equal(drawer.status, "CLOSED");
 });
 
-test("a second main terminal at the same location reuses the drawer; kiosks get none", async () => {
+test("each main terminal gets its own drawer; re-registering keeps it; kiosks get none", async () => {
   const second = await registerPosDevice({
     restaurantId: a.restaurant.id,
     user: a.manager,
@@ -79,9 +79,14 @@ test("a second main terminal at the same location reuses the drawer; kiosks get 
     fingerprint: `${runId}-a-kiosk`,
     body: { name: "Kiosk", deviceType: "POS_KIOSK", locationId: a.main.id }
   });
-  assert.equal(await prisma.cashDrawer.count({ where: { restaurantId: a.restaurant.id, locationId: a.main.id } }), 1);
+  assert.equal(await prisma.cashDrawer.count({ where: { restaurantId: a.restaurant.id, locationId: a.main.id } }), 2);
   assert.equal(kiosk.cashDrawerId, null);
   assert.ok(second.cashDrawerId);
+  const again = await registerPosDevice({
+    restaurantId: a.restaurant.id, user: a.manager, fingerprint: `${runId}-a-terminal-2`,
+    body: { name: "Bar", deviceType: "MAIN_TERMINAL", locationId: a.main.id }
+  });
+  assert.equal(again.cashDrawerId, second.cashDrawerId);
 });
 
 test("another restaurant's drawer, location, or register cannot be referenced", async () => {
@@ -131,26 +136,50 @@ test("a drawer from another location of the same restaurant is rejected", async 
   assert.equal(mismatch.code, "POS_CASH_DRAWER_LOCATION_MISMATCH");
 });
 
-test("clock-in on a main terminal opens its drawer and enables cash; the drawer cannot be opened twice", async () => {
+test("clock-in opens the terminal drawer; a second cashier joins it without resetting the balance", async () => {
   const device = await prisma.posDevice.findFirst({ where: { restaurantId: a.restaurant.id, deviceType: "MAIN_TERMINAL", locationId: a.main.id }, orderBy: { createdAt: "asc" } });
   const shift = await openShift({ restaurantId: a.restaurant.id, user: a.manager, deviceId: device.id, body: { openingCashCents: 15000 } });
   assert.equal(shift.cashDrawerId, device.cashDrawerId);
-  const drawer = await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } });
+  let drawer = await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } });
   assert.equal(drawer.status, "OPEN");
   assert.equal(drawer.currentBalanceCents, 15000);
-
   const access = await requireCashRegisterAccess({ restaurantId: a.restaurant.id, user: a.manager, deviceId: device.id, verifiedDevice: device });
   assert.equal(access.cashDrawer.id, device.cashDrawerId);
 
-  const otherManager = await prisma.user.create({
+  const cashier2 = await prisma.user.create({
     data: { email: `manager2-${runId}@example.test`, passwordHash: "not-a-real-hash", name: "Manager Two", role: "RESTAURANT_MANAGER", restaurantId: a.restaurant.id }
   });
-  const otherTerminal = await prisma.posDevice.findFirst({ where: { restaurantId: a.restaurant.id, deviceType: "MAIN_TERMINAL", locationId: a.main.id, NOT: { id: device.id } } });
-  const inUse = await outcome(openShift({ restaurantId: a.restaurant.id, user: otherManager, deviceId: otherTerminal.id, body: { openingCashCents: 1 } }));
-  assert.equal(inUse.code, "POS_CASH_DRAWER_IN_USE");
-  assert.equal((await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } })).currentBalanceCents, 15000, "balance is not overwritten");
+  const joined = await openShift({ restaurantId: a.restaurant.id, user: cashier2, deviceId: device.id, body: { openingCashCents: 1 } });
+  assert.equal(joined.cashDrawerId, device.cashDrawerId);
+  drawer = await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } });
+  assert.equal(drawer.currentBalanceCents, 15000, "joining does not overwrite the counted balance");
+  assert.equal(await prisma.cashDrawerSession.count({ where: { cashDrawerId: device.cashDrawerId, closedAt: null } }), 1);
+  await requireCashRegisterAccess({ restaurantId: a.restaurant.id, user: cashier2, deviceId: device.id, verifiedDevice: device });
 
   await closeShift({ restaurantId: a.restaurant.id, user: a.manager, shiftId: shift.id, body: { closingCashCents: 15000 } });
-  const reopened = await openShift({ restaurantId: a.restaurant.id, user: otherManager, deviceId: otherTerminal.id, body: { openingCashCents: 15000 } });
-  assert.equal(reopened.cashDrawerId, device.cashDrawerId);
+  drawer = await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } });
+  assert.equal(drawer.status, "OPEN", "drawer stays open while another shift uses it");
+  const session = await prisma.cashDrawerSession.findFirst({ where: { cashDrawerId: device.cashDrawerId, closedAt: null } });
+  assert.equal(session.shiftId, joined.id, "open session is handed to the remaining shift");
+
+  const stale = await outcome(closeShift({ restaurantId: a.restaurant.id, user: a.manager, shiftId: shift.id, body: { closingCashCents: 0 } }));
+  assert.equal(stale.code, "POS_SHIFT_ALREADY_CLOSED");
+  assert.equal((await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } })).status, "OPEN", "stale clock-out does not close a drawer in use");
+
+  await closeShift({ restaurantId: a.restaurant.id, user: cashier2, shiftId: joined.id, body: { closingCashCents: 16000 } });
+  drawer = await prisma.cashDrawer.findUnique({ where: { id: device.cashDrawerId } });
+  assert.equal(drawer.status, "CLOSED");
+  assert.equal(drawer.currentBalanceCents, 16000);
+});
+
+test("a terminal can be revoked even if its drawer was deactivated", async () => {
+  const terminal = await registerPosDevice({
+    restaurantId: a.restaurant.id, user: a.manager, fingerprint: `${runId}-a-lost`,
+    body: { name: "Lost tablet", deviceType: "MAIN_TERMINAL", locationId: a.main.id }
+  });
+  await prisma.cashDrawer.update({ where: { id: terminal.cashDrawerId }, data: { active: false } });
+  const revoked = await updatePosDevice({ restaurantId: a.restaurant.id, user: a.manager, deviceId: terminal.id, body: { status: "REVOKED" } });
+  assert.equal(revoked.status, "REVOKED");
+  const demoted = await updatePosDevice({ restaurantId: a.restaurant.id, user: a.manager, deviceId: terminal.id, body: { deviceType: "POS_KIOSK" } });
+  assert.equal(demoted.cashDrawerId, null, "non-main devices never keep a drawer");
 });

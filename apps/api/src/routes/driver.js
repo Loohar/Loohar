@@ -84,12 +84,14 @@ async function updateOwnedDeliveryStatus({ delivery, status, userId, note }) {
     if (moved.count === 0) throw conflictError("Delivery status changed; refresh and try again.", "DELIVERY_STATUS_CONFLICT");
     await tx.deliveryStatusHistory.create({ data: { deliveryId: delivery.id, status, note, changedBy: userId } });
     if (orderStatusForDeliveryStatus[status]) {
-      await tx.order.update({
-        where: { id: delivery.orderId },
-        data: {
-          status: orderStatusForDeliveryStatus[status],
-          statusHistory: { create: { status: orderStatusForDeliveryStatus[status], note: `Driver marked delivery ${status}`, changedBy: userId } }
-        }
+      // A restaurant-cancelled or rejected order is never revived by a driver update.
+      const orderMoved = await tx.order.updateMany({
+        where: { id: delivery.orderId, status: { notIn: ["CANCELLED", "REJECTED"] } },
+        data: { status: orderStatusForDeliveryStatus[status] }
+      });
+      if (orderMoved.count === 0) throw conflictError("This order was cancelled by the restaurant.", "DELIVERY_ORDER_CLOSED");
+      await tx.orderStatusHistory.create({
+        data: { orderId: delivery.orderId, status: orderStatusForDeliveryStatus[status], note: `Driver marked delivery ${status}`, changedBy: userId }
       });
     }
     return tx.delivery.findUnique({ where: { id: delivery.id }, include: includeDeliveryDetails() });
@@ -99,7 +101,8 @@ async function updateOwnedDeliveryStatus({ delivery, status, userId, note }) {
 // Base delivery pay is set by the restaurant, never by the claiming driver.
 const DEFAULT_DELIVERY_BASE_EARNINGS_CENTS = 500;
 const UNCLAIMABLE_ORDER_STATUSES = new Set(["REJECTED", "DELIVERED", "CANCELLED"]);
-const FINISHED_DELIVERY_STATUSES = ["DELIVERED", "CANCELLED"];
+// Unowned deliveries can be claimed only before pickup work starts, so a claim never rewinds one.
+const CLAIMABLE_DELIVERY_STATUSES = ["ASSIGNED", "ACCEPTED"];
 
 async function claimDeliveryForDriver({ order, driver, userId }) {
   const history = { status: "ACCEPTED", note: "Driver claimed delivery from QR", changedBy: userId };
@@ -126,7 +129,7 @@ async function claimDeliveryForDriver({ order, driver, userId }) {
     }
   }
   const claimed = await prisma.delivery.updateMany({
-    where: { orderId: order.id, driverId: null, status: { notIn: FINISHED_DELIVERY_STATUSES } },
+    where: { orderId: order.id, driverId: null, status: { in: CLAIMABLE_DELIVERY_STATUSES } },
     data: { driverId: driver.id, status: "ACCEPTED", claimedAt: new Date(), tipCents: order.driverTipCents ?? order.tipCents ?? 0 }
   });
   const current = await prisma.delivery.findUnique({ where: { orderId: order.id } });

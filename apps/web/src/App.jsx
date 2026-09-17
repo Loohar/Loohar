@@ -9222,8 +9222,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           ...deviceForm,
           fingerprint,
           locationId: deviceForm.locationId || locationId || null,
-          // The server assigns or creates the location's drawer for main terminals.
-          cashDrawerId: deviceForm.deviceType === "MAIN_TERMINAL" ? activeDevice?.cashDrawerId || null : null,
+          // The server keeps or creates this terminal's own drawer.
           status: "ACTIVE"
         }
       });
@@ -9250,7 +9249,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       await posApi("/shifts/clock-in", {
         method: "POST",
         body: {
-          cashDrawerId: activeDevice?.deviceType === "MAIN_TERMINAL" ? activeDevice.cashDrawerId || firstCashDrawer?.id || null : null,
+          cashDrawerId: activeDevice?.deviceType === "MAIN_TERMINAL" ? activeDevice.cashDrawerId || null : null,
           openingCashCents
         }
       });

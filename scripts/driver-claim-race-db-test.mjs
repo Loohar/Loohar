@@ -157,3 +157,22 @@ test("concurrent status transitions from the same state apply once", async () =>
   const orderHistory = await prisma.orderStatusHistory.count({ where: { orderId: order.id, status: "PICKED_UP" } });
   assert.equal(orderHistory, 1);
 });
+
+test("driver updates never revive a cancelled order and claims never rewind in-flight deliveries", async () => {
+  const order = await deliveryOrder();
+  const owner = drivers[2];
+  const claim = await call("POST", `/api/driver/orders/${order.id}/claim`, owner.userId);
+  await prisma.order.update({ where: { id: order.id }, data: { status: "CANCELLED" } });
+  const pickup = await call("PATCH", `/api/driver/deliveries/${claim.body.delivery.id}/status`, owner.userId, { status: "PICKED_UP" });
+  assert.equal(pickup.status, 409);
+  assert.equal((await prisma.order.findUnique({ where: { id: order.id } })).status, "CANCELLED");
+  assert.equal((await prisma.delivery.findUnique({ where: { id: claim.body.delivery.id } })).status, "ACCEPTED", "rolled back with the order check");
+
+  const inFlight = await deliveryOrder();
+  await prisma.delivery.create({
+    data: { restaurantId: restaurant.id, orderId: inFlight.id, status: "PICKED_UP", baseEarningsCents: 500, pickupAddress: "Restaurant", dropoffAddress: "Customer" }
+  });
+  const rewind = await call("POST", `/api/driver/orders/${inFlight.id}/claim`, drivers[3].userId);
+  assert.equal(rewind.status, 409);
+  assert.equal((await prisma.delivery.findUnique({ where: { orderId: inFlight.id } })).status, "PICKED_UP");
+});

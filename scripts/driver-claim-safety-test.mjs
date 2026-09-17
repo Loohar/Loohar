@@ -15,7 +15,8 @@ const restaurantRoutes = readFileSync("apps/api/src/routes/restaurant.js", "utf8
 const claimRoute = driverRoutes.slice(driverRoutes.indexOf('router.post("/orders/:orderId/claim"'), driverRoutes.indexOf('router.patch("/orders/:orderId/status"'));
 const assignRoute = restaurantRoutes.slice(restaurantRoutes.indexOf('"/:restaurantId/orders/:orderId/assign-driver"'), restaurantRoutes.indexOf("notifyDriverAssignment", restaurantRoutes.indexOf('"/:restaurantId/orders/:orderId/assign-driver"')));
 
-assertCheck(driverRoutes.includes("where: { orderId: order.id, driverId: null, status: { notIn: FINISHED_DELIVERY_STATUSES } }"), "Driver claims use a conditional write so only one driver can win");
+assertCheck(driverRoutes.includes("where: { orderId: order.id, driverId: null, status: { in: CLAIMABLE_DELIVERY_STATUSES } }"), "Driver claims use a conditional write so only one driver can win and in-flight deliveries are not rewound");
+assertCheck(driverRoutes.includes("DELIVERY_ORDER_CLOSED") && restaurantRoutes.includes("DELIVERY_IN_PROGRESS"), "Driver updates cannot revive closed orders and restaurants cannot reassign in-flight deliveries");
 assertCheck(!claimRoute.includes("prisma.delivery.upsert"), "Driver claim no longer overwrites an existing delivery with upsert");
 assertCheck(!driverRoutes.includes("req.body.baseEarningsCents"), "Claiming drivers cannot set their own base delivery pay");
 assertCheck(claimRoute.includes("UNCLAIMABLE_ORDER_STATUSES.has(order.status)"), "Finished, rejected or cancelled orders cannot be claimed");

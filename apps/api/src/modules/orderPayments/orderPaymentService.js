@@ -815,6 +815,12 @@ async function submitRefundToStripe({ refund, payment, merchant, reason }) {
     });
   } catch (error) {
     if (isStripeIdempotencyInProgress(error)) throw refundError("This refund is still being processed. Retry the same request shortly.", 409, "REFUND_IN_PROGRESS");
+    // Only a definite rejection releases the reserved balance. Timeouts, connection errors and
+    // provider 5xx may have created the refund, so the row stays PENDING and a same-key retry
+    // re-sends under the same Stripe idempotency key to learn the real outcome.
+    if (!isDefiniteStripeRejection(error)) {
+      throw refundError("The refund outcome is not confirmed yet. Retry the same request to confirm it.", 503, "REFUND_OUTCOME_UNKNOWN");
+    }
     await prisma.restaurantRefund.updateMany({ where: { id: refund.id, providerRefundId: null }, data: { status: "FAILED" } });
     throw error;
   }
@@ -822,10 +828,21 @@ async function submitRefundToStripe({ refund, payment, merchant, reason }) {
     where: { id: refund.id },
     data: {
       providerRefundId: providerRefund.id,
-      status: providerRefund.status === "succeeded" ? "SUCCEEDED" : providerRefund.status === "failed" ? "FAILED" : "PENDING",
-      processedAt: providerRefund.status === "succeeded" ? new Date() : null
+      ...refundStatusFromProvider(providerRefund.status)
     }
   });
+}
+
+function isDefiniteStripeRejection(error) {
+  const status = Number(error?.status || 0);
+  return status >= 400 && status < 500 && status !== 409 && status !== 429;
+}
+
+function refundStatusFromProvider(providerStatus) {
+  if (providerStatus === "succeeded") return { status: "SUCCEEDED", processedAt: new Date() };
+  if (providerStatus === "failed") return { status: "FAILED", processedAt: new Date() };
+  if (providerStatus === "canceled") return { status: "CANCELED", processedAt: new Date() };
+  return { status: "PENDING", processedAt: null };
 }
 
 export async function refundOrderPayment({ orderId, amountCents, reason, user, idempotencyKey }) {
@@ -863,7 +880,7 @@ export async function refundOrderPayment({ orderId, amountCents, reason, user, i
   const existing = await prisma.restaurantRefund.findUnique({ where: { idempotencyKey: keyHash } });
   if (existing) return replay(existing);
 
-  if (!REFUNDABLE_PAYMENT_STATUSES.has(payment.status) || !payment.providerPaymentIntentId) {
+  if (payment.provider !== "STRIPE_CONNECT" || !REFUNDABLE_PAYMENT_STATUSES.has(payment.status) || !payment.providerPaymentIntentId) {
     throw refundError("Only paid orders can be refunded.", 409, "REFUND_PAYMENT_NOT_REFUNDABLE");
   }
   if (!merchant?.stripeAccountId) throw refundError("Restaurant payment account is unavailable for refunds.", 409, "REFUND_MERCHANT_UNAVAILABLE");
@@ -883,8 +900,12 @@ export async function refundOrderPayment({ orderId, amountCents, reason, user, i
         _sum: { amountCents: true }
       });
       const remainingCents = payment.totalCents - (reserved._sum.amountCents || 0);
-      const refundCents = Math.min(requestedCents ?? remainingCents, remainingCents);
-      if (refundCents <= 0) throw refundError("This payment has no refundable balance remaining.", 409, "REFUND_EXCEEDS_REMAINING");
+      // Over-balance requests are rejected rather than silently reduced, so a retry of the same
+      // request always matches the stored refund amount.
+      const refundCents = requestedCents ?? remainingCents;
+      if (remainingCents <= 0 || refundCents > remainingCents) {
+        throw refundError("Refund amount exceeds the refundable balance remaining.", 409, "REFUND_EXCEEDS_REMAINING");
+      }
       return tx.restaurantRefund.create({
         data: {
           restaurantId: payment.restaurantId,
@@ -963,7 +984,8 @@ export async function handleStripeConnectWebhook(payload = {}) {
   const accountObject = accountLifecycleEvent ? await stripeAccountForLifecycleEvent({ payload, eventType: eventType || "", object }) : null;
   const eventId = payload.id || payload.providerEventId;
   const providerEventId = eventId || `manual-${eventType || "unknown"}-${object.id || Date.now()}`;
-  const paymentIntentId = object.id || object.payment_intent;
+  // Charge and refund objects reference their PaymentIntent; PaymentIntent events are the object itself.
+  const paymentIntentId = object.payment_intent || object.id;
   const orderPaymentId = object.metadata?.orderPaymentId;
   const orderId = object.metadata?.orderId;
   let payment = orderPaymentId ? await prisma.restaurantOrderPayment.findUnique({ where: { id: orderPaymentId } }) : null;
@@ -1000,6 +1022,20 @@ async function applyStripeConnectEvent({ eventType, object, accountObject, accou
   if (["payment_intent.payment_failed", "payment.failed"].includes(eventType)) {
     if (ORDER_PAYMENT_SETTLED_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
     return { received: true, payment: await markOrderPaymentFailed({ payment, failureReason: object.last_payment_error?.message }) };
+  }
+  if (["refund.created", "refund.updated", "refund.failed", "charge.refund.updated"].includes(eventType)) {
+    const restaurantRefund = await prisma.restaurantRefund.findFirst({
+      where: {
+        orderPaymentId: payment.id,
+        OR: [{ providerRefundId: object.id }, ...(object.metadata?.restaurantRefundId ? [{ id: object.metadata.restaurantRefundId }] : [])]
+      }
+    });
+    if (!restaurantRefund) return { received: true, ignored: true, reason: "refund_not_found" };
+    await prisma.restaurantRefund.update({
+      where: { id: restaurantRefund.id },
+      data: { providerRefundId: restaurantRefund.providerRefundId || object.id, ...refundStatusFromProvider(object.status) }
+    });
+    return { received: true, refundUpdated: true };
   }
   if (eventType === "charge.refunded") {
     const refundedAmount = Number(object.amount_refunded || 0);
