@@ -5,6 +5,7 @@ import { FEATURE } from "../config/entitlements.js";
 import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
+import { validateSelectedModifiers } from "./modifierValidationService.js";
 import { assemblePosMenuCategories } from "./posMenuReadModel.js";
 import { requestCashDrawerOpen } from "./posHardwareService.js";
 import { emitKitchenTicketCreated } from "./realtimeService.js";
@@ -235,152 +236,7 @@ function zeroPlatformFeeQuoteJson(extra = {}) {
   return { ...ZERO_PLATFORM_FEE_QUOTE, ...extra };
 }
 
-function invalidModifierSelection(details = {}) {
-  return httpError("Menu item modifier selection is malformed.", 400, {
-    code: "POS_MODIFIER_INVALID",
-    ...details
-  });
-}
-
-function normalizedModifierSelection(modifierGroupId, modifierOptionId, details = {}) {
-  const groupId = modifierGroupId == null ? null : String(modifierGroupId || "").trim();
-  const optionId = String(modifierOptionId || "").trim();
-  if (!optionId || (modifierGroupId != null && !groupId)) throw invalidModifierSelection(details);
-  return { modifierGroupId: groupId, modifierOptionId: optionId };
-}
-
-function resolveLineModifierSelections(line = {}) {
-  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(line, key);
-
-  // Aliases are alternatives. Prefer the canonical representation when supplied.
-  if (hasOwn("modifierSelections")) {
-    const source = line.modifierSelections;
-    if (Array.isArray(source)) {
-      return source.flatMap((selection, selectionIndex) => {
-        if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
-          throw invalidModifierSelection({ selectionIndex });
-        }
-        const groupId = selection.modifierGroupId ?? selection.groupId ?? null;
-        if (Array.isArray(selection.optionIds)) {
-          return selection.optionIds.map((optionId) => normalizedModifierSelection(groupId, optionId, { selectionIndex }));
-        }
-        const optionId = selection.modifierOptionId ?? selection.optionId;
-        if (optionId == null) throw invalidModifierSelection({ selectionIndex });
-        return [normalizedModifierSelection(groupId, optionId, { selectionIndex })];
-      });
-    }
-    if (source && typeof source === "object") {
-      return Object.entries(source).flatMap(([groupId, value]) => {
-        const optionIds = Array.isArray(value) ? value : [value];
-        return optionIds.map((optionId) => normalizedModifierSelection(groupId, optionId, { groupId }));
-      });
-    }
-    throw invalidModifierSelection();
-  }
-
-  const legacyKey = hasOwn("modifierOptionIds") ? "modifierOptionIds" : hasOwn("optionIds") ? "optionIds" : null;
-  if (!legacyKey) return [];
-  if (!Array.isArray(line[legacyKey])) throw invalidModifierSelection({ field: legacyKey });
-  return line[legacyKey].map((optionId, selectionIndex) => (
-    normalizedModifierSelection(null, optionId, { field: legacyKey, selectionIndex })
-  ));
-}
-
-function rawLineOptionIds(line = {}) {
-  return resolveLineModifierSelections(line).map((selection) => selection.modifierOptionId);
-}
-
-function normalizeLineOptionIds(line = {}) {
-  return [...new Set(rawLineOptionIds(line))];
-}
-
-function normalizeMenuItemModifierGroups(menuItem = {}) {
-  const groups = (menuItem.optionGroups || [])
-    .map((group) => ({
-      ...group,
-      options: [...(group.options || [])].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-    }))
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-
-  const groupedOptionIds = new Set(groups.flatMap((group) => (group.options || []).map((option) => option.id)));
-  const ungroupedOptions = (menuItem.options || [])
-    .filter((option) => !groupedOptionIds.has(option.id))
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-
-  if (ungroupedOptions.length) {
-    groups.push({
-      id: `__ungrouped:${menuItem.id}`,
-      menuItemId: menuItem.id,
-      name: "Options",
-      required: false,
-      minSelect: 0,
-      maxSelect: ungroupedOptions.length,
-      sortOrder: groups.length + 1,
-      options: ungroupedOptions
-    });
-  }
-
-  return groups;
-}
-
-export function validateSelectedModifiers(menuItem, line = {}) {
-  const selections = resolveLineModifierSelections(line);
-  const rawOptionIds = selections.map((selection) => selection.modifierOptionId);
-  const optionIds = normalizeLineOptionIds(line);
-  if (rawOptionIds.length !== optionIds.length) {
-    throw httpError("Duplicate menu item modifier selected.", 400, { code: "POS_MODIFIER_DUPLICATE" });
-  }
-
-  const groups = normalizeMenuItemModifierGroups(menuItem);
-  const optionToGroup = new Map();
-  for (const group of groups) {
-    for (const option of group.options || []) {
-      optionToGroup.set(option.id, { group, option });
-    }
-  }
-
-  const selectedByGroup = new Map(groups.map((group) => [group.id, []]));
-  for (const selection of selections) {
-    const optionId = selection.modifierOptionId;
-    const match = optionToGroup.get(optionId);
-    if (!match) throw httpError("Menu item modifier is invalid for this item.", 400, { code: "POS_MODIFIER_INVALID", optionId });
-    if (selection.modifierGroupId && selection.modifierGroupId !== match.group.id) {
-      throw httpError("Menu item modifier group does not match this option.", 400, {
-        code: "POS_MODIFIER_INVALID",
-        groupId: selection.modifierGroupId,
-        optionId
-      });
-    }
-    selectedByGroup.get(match.group.id).push(match.option);
-  }
-
-  for (const group of groups) {
-    const selected = selectedByGroup.get(group.id) || [];
-    const minSelect = Math.max(0, Number(group.minSelect ?? 0));
-    const maxSelect = Math.max(1, Number(group.maxSelect ?? group.options?.length ?? 1));
-    if ((group.required || minSelect > 0) && selected.length < Math.max(1, minSelect)) {
-      throw httpError(`${group.name} requires a selection.`, 400, { code: "POS_MODIFIER_REQUIRED", groupId: group.id });
-    }
-    if (selected.length > maxSelect) {
-      throw httpError(`${group.name} allows up to ${maxSelect} selection${maxSelect === 1 ? "" : "s"}.`, 400, { code: "POS_MODIFIER_MAXIMUM", groupId: group.id, maxSelect });
-    }
-  }
-
-  const modifiers = optionIds.map((optionId) => {
-    const { group, option } = optionToGroup.get(optionId);
-    return {
-      id: option.id,
-      optionId: option.id,
-      name: option.name,
-      optionName: option.name,
-      priceCents: option.priceCents,
-      groupId: group.id,
-      groupName: group.name
-    };
-  });
-
-  return { optionIds, modifiers };
-}
+export { validateSelectedModifiers } from "./modifierValidationService.js";
 
 export function hashDeviceFingerprint(restaurantId, fingerprint = "") {
   const normalized = String(fingerprint || "").trim().toLowerCase();
@@ -676,6 +532,48 @@ export async function requireActiveDevice({ restaurantId, deviceId, fingerprint 
   if (!device) throw httpError("Active POS device is required for this action.", 403, { code: "POS_DEVICE_REQUIRED" });
   if (device.status !== "ACTIVE") throw httpError("POS device is not active.", 403, { code: "POS_DEVICE_INACTIVE" });
   return device;
+}
+
+// Cash drawers, locations and registers referenced by device or shift requests must belong to
+// the restaurant in context; ids from the request body are never trusted on their own.
+async function assertRestaurantLocation(client, restaurantId, locationId) {
+  if (!locationId) return null;
+  const location = await client.restaurantLocation.findFirst({ where: { id: locationId, restaurantId }, select: { id: true } });
+  if (!location) throw httpError("Location not found for this restaurant.", 404, { code: "POS_LOCATION_NOT_FOUND" });
+  return location.id;
+}
+
+async function assertRestaurantRegister(client, restaurantId, registerId) {
+  if (!registerId) return null;
+  const register = await client.posRegister.findFirst({ where: { id: registerId, restaurantId, active: true }, select: { id: true } });
+  if (!register) throw httpError("Register not found for this restaurant.", 404, { code: "POS_REGISTER_NOT_FOUND" });
+  return register.id;
+}
+
+async function resolveRestaurantCashDrawer(client, { restaurantId, cashDrawerId, locationId = null }) {
+  const drawer = await client.cashDrawer.findFirst({ where: { id: cashDrawerId, restaurantId, active: true } });
+  if (!drawer) throw httpError("Cash drawer not found for this restaurant.", 404, { code: "POS_CASH_DRAWER_NOT_FOUND" });
+  if (locationId && drawer.locationId && drawer.locationId !== locationId) {
+    throw httpError("Cash drawer belongs to a different location.", 409, { code: "POS_CASH_DRAWER_LOCATION_MISMATCH" });
+  }
+  return drawer;
+}
+
+// Each main terminal gets its own drawer unless a manager explicitly assigns a shared one.
+async function ensureDeviceCashDrawer(client, { restaurantId, locationId = null, existingDrawerId = null, deviceName = "Main terminal" }) {
+  if (existingDrawerId) {
+    const existing = await client.cashDrawer.findFirst({ where: { id: existingDrawerId, restaurantId, active: true } });
+    if (existing && (!existing.locationId || !locationId || existing.locationId === locationId)) return existing;
+  }
+  return client.cashDrawer.create({
+    data: {
+      restaurantId,
+      locationId: locationId || null,
+      name: `${String(deviceName || "Main terminal").slice(0, 100)} cash drawer`,
+      status: "CLOSED",
+      currentBalanceCents: 0
+    }
+  });
 }
 
 export async function currentShift({ restaurantId, userId, deviceId = null }) {
@@ -2602,15 +2500,23 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_DEVICES);
   const fingerprintHash = hashDeviceFingerprint(restaurantId, fingerprint || body?.fingerprint);
   if (!fingerprintHash) throw httpError("Device fingerprint is required.", 400);
+  const deviceType = body?.deviceType || "POS_KIOSK";
+  const locationId = await assertRestaurantLocation(prisma, restaurantId, body?.locationId || null);
+  const existingDevice = await prisma.posDevice.findFirst({ where: { restaurantId, deviceFingerprintHash: fingerprintHash }, select: { cashDrawerId: true } });
+  const cashDrawer = deviceType !== "MAIN_TERMINAL"
+    ? null
+    : body?.cashDrawerId
+      ? await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })
+      : await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId: existingDevice?.cashDrawerId, deviceName: body?.name });
   const data = {
     restaurantId,
-    locationId: body?.locationId || null,
+    locationId,
     name: String(body?.name || "POS device").slice(0, 120),
-    deviceType: body?.deviceType || "POS_KIOSK",
+    deviceType,
     deviceFingerprintHash: fingerprintHash,
     status: body?.status || "ACTIVE",
     cardPaymentsEnabled: Boolean(body?.cardPaymentsEnabled),
-    cashDrawerId: body?.cashDrawerId || null,
+    cashDrawerId: cashDrawer?.id || null,
     registeredByUserId: user.id,
     lastSeenAt: new Date(),
     settingsJson: safeJson(body?.settings, {})
@@ -2635,14 +2541,30 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_DEVICES);
   const device = await prisma.posDevice.findFirst({ where: { id: deviceId, restaurantId } });
   if (!device) throw httpError("POS device not found.", 404);
+  const locationId = body?.locationId === undefined
+    ? device.locationId
+    : await assertRestaurantLocation(prisma, restaurantId, body.locationId || null);
+  const deviceType = body?.deviceType || device.deviceType;
+  const locationChanged = locationId !== device.locationId;
+  const typeChanged = deviceType !== device.deviceType;
+  let cashDrawerId = device.cashDrawerId;
+  if (deviceType !== "MAIN_TERMINAL") {
+    cashDrawerId = null;
+  } else if (body?.cashDrawerId) {
+    cashDrawerId = (await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })).id;
+  } else if (body?.status !== "REVOKED" && (!device.cashDrawerId || locationChanged || typeChanged || body?.cashDrawerId === null)) {
+    // Status or name changes leave the drawer alone, so a lost terminal can always be revoked.
+    const existingDrawerId = locationChanged || body?.cashDrawerId === null ? null : device.cashDrawerId;
+    cashDrawerId = (await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId, deviceName: body?.name || device.name })).id;
+  }
   const updated = await prisma.posDevice.update({
     where: { id: device.id },
     data: {
       name: body?.name ? String(body.name).slice(0, 120) : undefined,
       deviceType: body?.deviceType || undefined,
       status: body?.status || undefined,
-      locationId: body?.locationId === undefined ? undefined : body.locationId || null,
-      cashDrawerId: body?.cashDrawerId === undefined ? undefined : body.cashDrawerId || null,
+      locationId: body?.locationId === undefined ? undefined : locationId,
+      cashDrawerId,
       cardPaymentsEnabled: body?.cardPaymentsEnabled === undefined ? undefined : Boolean(body.cardPaymentsEnabled),
       revokedAt: body?.status === "REVOKED" ? new Date() : undefined
     }
@@ -2724,28 +2646,44 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_SHIFTS);
   const existing = await currentShift({ restaurantId, userId: user.id, deviceId });
   if (existing) return existing;
+  const device = deviceId ? await prisma.posDevice.findFirst({ where: { id: deviceId, restaurantId } }) : null;
+  const locationId = await assertRestaurantLocation(prisma, restaurantId, body?.locationId || device?.locationId || null);
+  const registerId = await assertRestaurantRegister(prisma, restaurantId, body?.registerId || null);
+  const requestedDrawerId = body?.cashDrawerId || device?.cashDrawerId || null;
   const shift = await prisma.$transaction(async (tx) => {
+    const drawer = requestedDrawerId
+      ? await resolveRestaurantCashDrawer(tx, { restaurantId, cashDrawerId: requestedDrawerId, locationId })
+      : null;
+    let joinsOpenDrawer = false;
+    if (drawer) {
+      // Serialize clock-ins on the same drawer so only one can open its session.
+      await tx.$queryRaw`SELECT id FROM "CashDrawer" WHERE id = ${drawer.id} FOR UPDATE`;
+      const openSession = await tx.cashDrawerSession.findFirst({ where: { cashDrawerId: drawer.id, closedAt: null }, select: { id: true } });
+      // A drawer already open on another shift is shared: the new shift joins it without
+      // resetting the counted balance or starting a second session.
+      joinsOpenDrawer = Boolean(openSession);
+    }
     const created = await tx.employeeShift.create({
       data: {
         restaurantId,
-        locationId: body?.locationId || null,
+        locationId,
         employeeUserId: user.id,
         deviceId,
-        registerId: body?.registerId || null,
-        cashDrawerId: body?.cashDrawerId || null,
+        registerId,
+        cashDrawerId: drawer?.id || null,
         openingCashCents: cents(body?.openingCashCents)
       }
     });
-    if (body?.cashDrawerId) {
+    if (drawer && !joinsOpenDrawer) {
       await tx.cashDrawer.update({
-        where: { id: body.cashDrawerId },
+        where: { id: drawer.id },
         data: { status: "OPEN", currentBalanceCents: cents(body?.openingCashCents) }
       });
       await tx.cashDrawerSession.create({
         data: {
           restaurantId,
-          locationId: body?.locationId || null,
-          cashDrawerId: body.cashDrawerId,
+          locationId,
+          cashDrawerId: drawer.id,
           shiftId: created.id,
           openedByUserId: user.id,
           openingCashCents: cents(body?.openingCashCents)
@@ -2760,7 +2698,7 @@ export async function openShift({ restaurantId, user, body, deviceId = null }) {
     action: "pos.shift.opened",
     entityType: "EmployeeShift",
     entityId: shift.id,
-    metadata: { deviceId, cashDrawerId: body?.cashDrawerId || null }
+    metadata: { deviceId, cashDrawerId: shift.cashDrawerId || null }
   });
   return shift;
 }
@@ -2772,27 +2710,40 @@ export async function closeShift({ restaurantId, user, shiftId, body }) {
   if (shift.employeeUserId !== user.id) await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_SHIFTS);
   const closingCashCents = cents(body?.closingCashCents);
   const updated = await prisma.$transaction(async (tx) => {
-    const closed = await tx.employeeShift.update({
-      where: { id: shift.id },
+    if (shift.cashDrawerId) await tx.$queryRaw`SELECT id FROM "CashDrawer" WHERE id = ${shift.cashDrawerId} FOR UPDATE`;
+    const heldSession = shift.cashDrawerId
+      ? await tx.cashDrawerSession.findFirst({ where: { cashDrawerId: shift.cashDrawerId, shiftId: shift.id, closedAt: null } })
+      : null;
+    const otherOpenShift = shift.cashDrawerId
+      ? await tx.employeeShift.findFirst({ where: { cashDrawerId: shift.cashDrawerId, status: "OPEN", NOT: { id: shift.id } }, orderBy: { openedAt: "asc" } })
+      : null;
+    const closesDrawer = Boolean(heldSession && !otherOpenShift);
+    // Only an OPEN shift can be closed; a stale clock-out must not touch a drawer in use.
+    const closing = await tx.employeeShift.updateMany({
+      where: { id: shift.id, status: "OPEN" },
       data: {
         status: "CLOSED",
         closedAt: new Date(),
         closingCashCents,
-        discrepancyCents: shift.cashDrawerId ? closingCashCents - shift.openingCashCents : null,
+        discrepancyCents: closesDrawer ? closingCashCents - heldSession.openingCashCents : null,
         notes: body?.notes ? String(body.notes).slice(0, 500) : null
       }
     });
-    if (shift.cashDrawerId) {
+    if (closing.count === 0) throw httpError("POS shift is already closed.", 409, { code: "POS_SHIFT_ALREADY_CLOSED" });
+    if (closesDrawer) {
       await tx.cashDrawer.update({
         where: { id: shift.cashDrawerId },
         data: { status: "CLOSED", currentBalanceCents: closingCashCents }
       });
-      await tx.cashDrawerSession.updateMany({
-        where: { shiftId: shift.id, closedAt: null },
+      await tx.cashDrawerSession.update({
+        where: { id: heldSession.id },
         data: { closedAt: new Date(), closingCashCents, closedByUserId: user.id }
       });
+    } else if (heldSession && otherOpenShift) {
+      // Hand the open drawer session to a shift still using the drawer.
+      await tx.cashDrawerSession.update({ where: { id: heldSession.id }, data: { shiftId: otherOpenShift.id } });
     }
-    return closed;
+    return tx.employeeShift.findUnique({ where: { id: shift.id } });
   });
   await recordAudit({
     actorUserId: user.id,

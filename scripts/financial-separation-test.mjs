@@ -90,10 +90,10 @@ const groups = {
     assertCheck(webhooks.includes("STRIPE_PLATFORM_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-platform"), "Stripe platform webhook has its own route and secret");
   },
   "stripe-connect": () => {
-    assertCheck(apiEnv.includes("STRIPE_CONNECT_SECRET_KEY") && apiEnv.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && apiEnv.includes("STRIPE_CONNECT_CLIENT_ID"), "Stripe Connect env vars are split");
+    assertCheck(apiEnv.includes("STRIPE_CONNECT_SECRET_KEY") && apiEnv.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && apiEnv.includes("STRIPE_CONNECT_ACCOUNTS_V2_WEBHOOK_SECRET") && apiEnv.includes("STRIPE_CONNECT_CLIENT_ID"), "Stripe Connect env vars are split");
     assertCheck(webEnv.includes("VITE_STRIPE_CONNECT_PUBLIC_KEY"), "Frontend exposes only the Stripe Connect publishable key");
-    assertCheck(webhooks.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-connect"), "Stripe Connect webhook has its own route and secret");
-    assertCheck(orderService.includes('type: "express"') && orderService.includes("account_links"), "Merchant onboarding uses provider-hosted Stripe Express account links");
+    assertCheck(webhooks.includes("STRIPE_CONNECT_WEBHOOK_SECRET") && webhooks.includes("STRIPE_CONNECT_ACCOUNTS_V2_WEBHOOK_SECRET") && server.includes("/api/webhooks/stripe-connect") && server.includes("/api/webhooks/stripe-connect-accounts-v2"), "Stripe Connect webhooks have split routes and secrets");
+    assertCheck(includesAll(orderService, ['STRIPE_CONNECT_ACCOUNT_CONFIGURATION = "merchant"', 'dashboard: "express"', 'path: "/core/accounts"', 'path: "/core/account_links"', "card_payments"]) && !orderService.includes('path: "/accounts"'), "Merchant onboarding uses Accounts v2 provider-hosted Stripe Express account links");
   },
   "authorize-net-platform": () => {
     assertCheck(apiEnv.includes("AUTHORIZE_NET_PLATFORM_ENABLED=false"), "Authorize.Net platform billing is disabled by default");
@@ -105,7 +105,7 @@ const groups = {
   },
   "tenant-provisioning": () => {
     assertCheck(platformService.includes("checkout.session.completed") && platformService.includes("activatePaidRegistration"), "Tenant provisioning starts from verified Stripe platform webhook processing");
-    assertCheck(includesAll(platformService, ["restaurant.create", "websiteSettings", "domains", "categories", "restaurantStaff.upsert", "registration.completed"]), "Provisioning creates tenant, website/domain settings, starter categories, memberships, and audit records");
+    assertCheck(includesAll(platformService, ["restaurant.create", "websiteSettings", "domains", "categories", "restaurantStaff.upsert", "business.created"]), "Provisioning creates tenant, website/domain settings, starter categories, memberships, and audit records");
     assertCheck(platformService.includes("restaurantId: createdRestaurant.id") && platformService.includes("stripeCheckoutSessionId"), "Provisioning attaches the platform subscription to the created tenant");
     assertCheck(registrationService.includes("status: \"INVITED\"") && registrationService.includes("forcePasswordChange: false") && registrationService.includes("temporaryPassword: false"), "Self-service owner account remains unpaid and not temporary until webhook provisioning");
   },

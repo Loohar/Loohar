@@ -1,6 +1,7 @@
-import crypto from "crypto";
 import { Router } from "express";
 import { prisma } from "../config/prisma.js";
+import { parseRawWebhook, verifyStripeWebhook } from "../modules/paymentProviders/stripeRest.js";
+import { processStripeWebhookEventOnce } from "../modules/paymentProviders/stripeWebhookEvents.js";
 import { recordAudit } from "../services/auditService.js";
 import { normalizeStripeEvent } from "../services/paymentService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../services/notificationService.js";
@@ -8,68 +9,13 @@ import { emitOrderUpdate } from "../services/realtimeService.js";
 
 const router = Router();
 
-function timingSafeEqualHex(left = "", right = "") {
-  const leftBuffer = Buffer.from(left, "hex");
-  const rightBuffer = Buffer.from(right, "hex");
-  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function parseStripeSignature(signatureHeader = "") {
-  return signatureHeader.split(",").reduce((parts, pair) => {
-    const [key, value] = pair.split("=");
-    if (!key || !value) return parts;
-    if (key === "t") parts.timestamp = value;
-    if (key === "v1") parts.signatures.push(value);
-    return parts;
-  }, { timestamp: "", signatures: [] });
-}
-
-function parseWebhookBody(req) {
-  if (Buffer.isBuffer(req.body)) {
-    const rawBody = req.body.toString("utf8");
-    try {
-      return { rawBody, payload: JSON.parse(rawBody) };
-    } catch {
-      const error = new Error("Invalid webhook JSON payload");
-      error.status = 400;
-      throw error;
-    }
-  }
-  const rawBody = JSON.stringify(req.body || {});
-  return { rawBody, payload: req.body || {} };
-}
-
-function verifyStripeWebhookSignature({ rawBody, signatureHeader }) {
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) return;
-  if (!signatureHeader) {
-    const error = new Error("Missing Stripe signature");
-    error.status = 400;
-    throw error;
-  }
-  const { timestamp, signatures } = parseStripeSignature(signatureHeader);
-  if (!timestamp || signatures.length === 0) {
-    const error = new Error("Invalid Stripe signature header");
-    error.status = 400;
-    throw error;
-  }
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const expectedSignature = crypto.createHmac("sha256", webhookSecret).update(signedPayload, "utf8").digest("hex");
-  const valid = signatures.some((signature) => timingSafeEqualHex(signature, expectedSignature));
-  if (!valid) {
-    const error = new Error("Invalid Stripe signature");
-    error.status = 400;
-    throw error;
-  }
-}
-
-async function issueLoyaltyPoints({ order }) {
-  const existing = await prisma.loyaltyPoint.findFirst({ where: { orderId: order.id, reason: "Order reward" } });
+async function issueLoyaltyPoints({ order, client = prisma }) {
+  const existing = await client.loyaltyPoint.findFirst({ where: { orderId: order.id, reason: "Order reward" } });
   if (existing) return existing;
   const settings = order.restaurant.loyaltySettingsJson || { pointsPerDollar: 1 };
   const points = Math.floor((order.subtotalCents / 100) * Number(settings.pointsPerDollar || 1));
   if (points <= 0) return null;
-  return prisma.loyaltyPoint.create({
+  return client.loyaltyPoint.create({
     data: {
       restaurantId: order.restaurantId,
       customerId: order.customerId,
@@ -80,51 +26,65 @@ async function issueLoyaltyPoints({ order }) {
   });
 }
 
+const LEGACY_PAID_STATUSES = new Set(["PAID", "REFUNDED"]);
+
 async function markPaymentPaid({ payment, providerPaymentId, stripePaymentIntentId, stripeCustomerId }) {
-  const updatedPayment = await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      status: "PAID",
-      providerPaymentId: payment.providerPaymentId || providerPaymentId,
-      stripePaymentIntentId: stripePaymentIntentId || payment.stripePaymentIntentId,
-      stripeCustomerId: stripeCustomerId || payment.stripeCustomerId,
-      paidAt: new Date(),
-      failureReason: null
-    },
-    include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
-  });
-  const order = await prisma.order.update({
-    where: { id: updatedPayment.orderId },
-    data: {
-      status: "ACCEPTED",
-      statusHistory: { create: { status: "ACCEPTED", note: "Payment succeeded" } }
-    },
-    include: { restaurant: true, customer: true, items: true, statusHistory: true }
-  });
-  await issueLoyaltyPoints({ order });
-  if (order.couponCode) {
-    await prisma.coupon.updateMany({
-      where: { restaurantId: order.restaurantId, code: order.couponCode },
-      data: { redeemedCount: { increment: 1 } }
+  // Conditional claim inside one transaction: concurrent deliveries settle once and a failure
+  // never leaves a PAID payment on an order that was not accepted.
+  const settled = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.payment.updateMany({
+      where: { id: payment.id, status: { notIn: [...LEGACY_PAID_STATUSES] } },
+      data: {
+        status: "PAID",
+        providerPaymentId: payment.providerPaymentId || providerPaymentId,
+        stripePaymentIntentId: stripePaymentIntentId || payment.stripePaymentIntentId,
+        stripeCustomerId: stripeCustomerId || payment.stripeCustomerId,
+        paidAt: new Date(),
+        failureReason: null
+      }
     });
-  }
+    if (claimed.count === 0) return null;
+    const order = await tx.order.update({
+      where: { id: payment.orderId },
+      data: {
+        status: "ACCEPTED",
+        statusHistory: { create: { status: "ACCEPTED", note: "Payment succeeded" } }
+      },
+      include: { restaurant: true, customer: true, items: true, statusHistory: true }
+    });
+    await issueLoyaltyPoints({ order, client: tx });
+    if (order.couponCode) {
+      await tx.coupon.updateMany({
+        where: { restaurantId: order.restaurantId, code: order.couponCode },
+        data: { redeemedCount: { increment: 1 } }
+      });
+    }
+    const updatedPayment = await tx.payment.findUnique({
+      where: { id: payment.id },
+      include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
+    });
+    return { payment: updatedPayment, order };
+  });
+  if (!settled) return { ignored: true, reason: "payment_already_settled" };
+  const { payment: updatedPayment, order } = settled;
   await Promise.allSettled([notifyOrderConfirmation({ order }), notifyNewOrderAlert({ order })]);
   emitOrderUpdate(order);
   await recordAudit({ restaurantId: order.restaurantId, action: "payment.paid", entityType: "Payment", entityId: updatedPayment.id, metadata: { providerPaymentId: updatedPayment.providerPaymentId, stripePaymentIntentId: updatedPayment.stripePaymentIntentId } });
-  return { payment: updatedPayment, order };
+  return settled;
 }
 
 async function markPaymentFailed({ payment, failureReason, stripePaymentIntentId, stripeCustomerId }) {
-  const updatedPayment = await prisma.payment.update({
-    where: { id: payment.id },
+  const claimed = await prisma.payment.updateMany({
+    where: { id: payment.id, status: { notIn: [...LEGACY_PAID_STATUSES] } },
     data: {
       status: "FAILED",
       stripePaymentIntentId: stripePaymentIntentId || payment.stripePaymentIntentId,
       stripeCustomerId: stripeCustomerId || payment.stripeCustomerId,
       failureReason: failureReason || "Payment failed"
-    },
-    include: { order: true }
+    }
   });
+  const updatedPayment = await prisma.payment.findUnique({ where: { id: payment.id }, include: { order: true } });
+  if (claimed.count === 0) return updatedPayment;
   await recordAudit({ restaurantId: updatedPayment.order.restaurantId, action: "payment.failed", entityType: "Payment", entityId: updatedPayment.id, metadata: { failureReason: updatedPayment.failureReason } });
   return updatedPayment;
 }
@@ -176,39 +136,68 @@ async function updateTenantSubscriptionFromStripe({ event }) {
   return { subscription: updatedSubscription };
 }
 
+async function applyLegacyStripeEvent(event) {
+  if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.eventType)) {
+    return { received: true, ...(await updateTenantSubscriptionFromStripe({ event })) };
+  }
+  let payment = event.providerPaymentId
+    ? await prisma.payment.findFirst({ where: { providerPaymentId: event.providerPaymentId } })
+    : null;
+  if (!payment && event.stripePaymentIntentId) {
+    payment = await prisma.payment.findFirst({ where: { stripePaymentIntentId: event.stripePaymentIntentId } });
+  }
+  if (!payment && event.orderId) {
+    payment = await prisma.payment.findUnique({ where: { orderId: event.orderId } });
+  }
+  if (!payment) {
+    // Leave the event unprocessed so Stripe redelivers it once the payment record exists.
+    const error = new Error("Payment not found");
+    error.status = 404;
+    throw error;
+  }
+
+  // Guards keep late or repeated deliveries from re-running paid side effects (order status reset,
+  // coupon redemption, notifications) or downgrading a settled payment.
+  if (["payment_intent.succeeded", "checkout.session.completed", "payment.succeeded"].includes(event.eventType)) {
+    if (LEGACY_PAID_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    return { received: true, ...(await markPaymentPaid({ payment, providerPaymentId: event.providerPaymentId, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId })) };
+  }
+  if (["payment_intent.payment_failed", "payment.failed"].includes(event.eventType)) {
+    if (LEGACY_PAID_STATUSES.has(payment.status)) return { received: true, ignored: true, reason: "payment_already_settled" };
+    return { received: true, payment: await markPaymentFailed({ payment, failureReason: event.failureReason, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId }) };
+  }
+  if (["charge.refunded", "payment.refunded"].includes(event.eventType)) {
+    if (payment.status === "REFUNDED") return { received: true, ignored: true, reason: "payment_already_refunded" };
+    return { received: true, payment: await markPaymentRefunded({ payment }) };
+  }
+  return { received: true, ignored: true };
+}
+
 router.post("/webhook", async (req, res, next) => {
   try {
-    const { rawBody, payload } = parseWebhookBody(req);
-    verifyStripeWebhookSignature({ rawBody, signatureHeader: req.get("stripe-signature") || "" });
+    const { rawBody, payload } = parseRawWebhook(req);
+    // Fails closed: a missing STRIPE_WEBHOOK_SECRET rejects every event instead of skipping verification.
+    verifyStripeWebhook({
+      rawBody,
+      signatureHeader: req.get("stripe-signature") || "",
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET
+    });
+    if (!payload.id || !payload.type) {
+      const error = new Error("Stripe event id and type are required");
+      error.status = 400;
+      throw error;
+    }
     const event = normalizeStripeEvent(payload);
-    if (["customer.subscription.updated", "customer.subscription.deleted"].includes(event.eventType)) {
-      const result = await updateTenantSubscriptionFromStripe({ event });
-      return res.json({ received: true, ...result });
-    }
-    let payment = event.providerPaymentId
-      ? await prisma.payment.findFirst({ where: { providerPaymentId: event.providerPaymentId } })
-      : null;
-    if (!payment && event.stripePaymentIntentId) {
-      payment = await prisma.payment.findFirst({ where: { stripePaymentIntentId: event.stripePaymentIntentId } });
-    }
-    if (!payment && event.orderId) {
-      payment = await prisma.payment.findUnique({ where: { orderId: event.orderId } });
-    }
-    if (!payment) return res.status(404).json({ error: "Payment not found" });
-
-    if (["payment_intent.succeeded", "checkout.session.completed", "payment.succeeded"].includes(event.eventType)) {
-      const result = await markPaymentPaid({ payment, providerPaymentId: event.providerPaymentId, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId });
-      return res.json({ received: true, ...result });
-    }
-    if (["payment_intent.payment_failed", "payment.failed"].includes(event.eventType)) {
-      const failedPayment = await markPaymentFailed({ payment, failureReason: event.failureReason, stripePaymentIntentId: event.stripePaymentIntentId, stripeCustomerId: event.stripeCustomerId });
-      return res.json({ received: true, payment: failedPayment });
-    }
-    if (["charge.refunded", "payment.refunded"].includes(event.eventType)) {
-      const refundedPayment = await markPaymentRefunded({ payment });
-      return res.json({ received: true, payment: refundedPayment });
-    }
-    res.json({ received: true, ignored: true });
+    const result = await processStripeWebhookEventOnce({
+      restaurantId: null,
+      paymentId: null,
+      eventDomain: event.eventType.startsWith("customer.subscription.") ? "PLATFORM_BILLING" : "RESTAURANT_ORDER_PAYMENT",
+      provider: "stripe_legacy",
+      providerEventId: `stripe_legacy:${payload.id}`,
+      eventType: event.eventType,
+      payloadJson: { id: payload.id, type: payload.type }
+    }, () => applyLegacyStripeEvent(event));
+    res.json(result);
   } catch (error) {
     next(error);
   }

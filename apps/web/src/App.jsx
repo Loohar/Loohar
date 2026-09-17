@@ -5226,6 +5226,7 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
   const currentStepIndex = Math.max(0, onboardingSteps.findIndex((step) => step.id === activeStep));
   const optionalOnboardingSteps = new Set(["menu", "gallery", "payments"]);
   const platformSubscriptionStatus = String(platformSubscription?.status || "").toUpperCase();
+  const merchantPaymentReady = Boolean(merchantAccount?.provider === "STRIPE_CONNECT" && merchantAccount.status === "ENABLED" && merchantAccount.stripeAccountId && merchantAccount.stripeChargesEnabled);
   const businessHourErrors = activeStep === "hours" ? validateBusinessHours(draft.storeHoursJson, draft.timezone) : [];
   const message = messageState && (!messageState.step || messageState.step === activeStep) ? messageState.text : "";
   const liveAnnouncement = [message, error, menuReviewMessage, serverRefreshPending ? "Fresh server data is available after you save your current edits." : ""].filter(Boolean).join(" ");
@@ -6848,8 +6849,10 @@ function RestaurantOnboardingWizard({ apiOnline, token, user, initialSlug = "" }
                 </div>
                 <button className="button-primary mt-4 w-full justify-center" type="button" onClick={startMerchantOnboarding} disabled={paymentsLoading || saving === "merchant-onboarding"}>{saving === "merchant-onboarding" ? "Opening..." : merchantAccount?.status === "ENABLED" ? "Update Stripe Connect" : "Start Stripe Connect onboarding"}</button>
               </div>
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 md:col-span-2">
-                Paid online ordering stays blocked until the restaurant merchant account is enabled. Platform subscription revenue and restaurant order volume are tracked in separate records.
+              <div className={`rounded-md border p-4 text-sm md:col-span-2 ${merchantPaymentReady ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                {merchantPaymentReady
+                  ? "Paid online ordering is connected for this restaurant. Card charges and payouts are enabled, and platform subscription revenue remains separate from restaurant order volume."
+                  : "Paid online ordering stays blocked until the restaurant merchant account is enabled. Platform subscription revenue and restaurant order volume are tracked in separate records."}
               </div>
             </div>
           ) : null}
@@ -9219,7 +9222,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
           ...deviceForm,
           fingerprint,
           locationId: deviceForm.locationId || locationId || null,
-          cashDrawerId: deviceForm.deviceType === "MAIN_TERMINAL" ? firstCashDrawer?.id || null : null,
+          // The server keeps or creates this terminal's own drawer.
           status: "ACTIVE"
         }
       });
@@ -9246,7 +9249,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       await posApi("/shifts/clock-in", {
         method: "POST",
         body: {
-          cashDrawerId: activeDevice?.deviceType === "MAIN_TERMINAL" ? firstCashDrawer?.id || null : null,
+          cashDrawerId: activeDevice?.deviceType === "MAIN_TERMINAL" ? activeDevice.cashDrawerId || null : null,
           openingCashCents
         }
       });
@@ -13943,6 +13946,8 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [paying, setPaying] = useState(false);
   const stripeRef = useRef(null);
   const stripeElementsRef = useRef(null);
+  const checkoutAttemptRef = useRef(null);
+  const placingOrderRef = useRef(false);
   const stripeElementMountRef = useRef(null);
   const [couponCode, setCouponCode] = useState("");
   const [restaurantTipChoice, setRestaurantTipChoice] = useState("10");
@@ -13989,7 +13994,14 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       tipPercentage: restaurantTipChoice !== "CUSTOM" ? Number(restaurantTipChoice) : undefined,
       tipType: restaurantTipChoice === "CUSTOM" || driverTipChoice === "CUSTOM" ? "CUSTOM" : tip > 0 ? "PERCENTAGE" : "NONE",
       couponCode: couponCode || undefined,
-      items: cart.map((item) => ({ menuItemId: item.id, quantity: item.quantity, options: item.selectedModifiers || [] }))
+      items: cart.map((item) => ({
+        menuItemId: item.id,
+        quantity: item.quantity,
+        modifierSelections: (item.selectedModifiers || []).map((modifier) => ({
+          modifierGroupId: modifier.modifierGroupId,
+          modifierOptionId: modifier.modifierOptionId
+        }))
+      }))
     };
   }
 
@@ -14127,7 +14139,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       const defaults = {};
       (item.optionGroups || []).forEach((group) => {
         const defaultOptions = (group.options || []).filter((option) => option.isDefault);
-        defaults[group.id || group.name] = group.maxSelect === 1 ? defaultOptions[0]?.name || "" : defaultOptions.map((option) => option.name);
+        defaults[group.id || group.name] = group.maxSelect === 1 ? defaultOptions[0]?.id || "" : defaultOptions.map((option) => option.id);
       });
       setSelectedOptions(defaults);
       setSelectedQuantity(1);
@@ -14144,11 +14156,11 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   function toggleOption(group, option) {
     const key = group.id || group.name;
     setSelectedOptions((current) => {
-      if (group.maxSelect === 1) return { ...current, [key]: option.name };
+      if (group.maxSelect === 1) return { ...current, [key]: option.id };
       const selected = Array.isArray(current[key]) ? current[key] : [];
-      return selected.includes(option.name)
-        ? { ...current, [key]: selected.filter((name) => name !== option.name) }
-        : { ...current, [key]: [...selected, option.name].slice(0, group.maxSelect || 99) };
+      return selected.includes(option.id)
+        ? { ...current, [key]: selected.filter((optionId) => optionId !== option.id) }
+        : { ...current, [key]: [...selected, option.id].slice(0, group.maxSelect || 99) };
     });
   }
 
@@ -14157,7 +14169,13 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     return (selectedItem.optionGroups || []).flatMap((group) => {
       const key = group.id || group.name;
       const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key] : [selectedOptions[key]].filter(Boolean);
-      return (group.options || []).filter((option) => selected.includes(option.name)).map((option) => ({ group: group.name, name: option.name, priceCents: option.priceCents || 0 }));
+      return (group.options || []).filter((option) => selected.includes(option.id)).map((option) => ({
+        modifierGroupId: group.id,
+        modifierOptionId: option.id,
+        group: group.name,
+        name: option.name,
+        priceCents: option.priceCents || 0
+      }));
     });
   }
 
@@ -14198,12 +14216,21 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     }
     if (!customer.name || !customer.email) return setError("Enter your name and email before checkout.");
     if (serviceType === "DELIVERY" && !customer.deliveryAddress) return setError("Enter a delivery address before checkout.");
+    if (placingOrderRef.current) return;
+    const body = orderPaymentBody(true);
+    const fingerprint = JSON.stringify(body);
+    // Retries of the same cart reuse one Idempotency-Key so the server returns the original order.
+    if (checkoutAttemptRef.current?.fingerprint !== fingerprint) {
+      checkoutAttemptRef.current = { fingerprint, key: `checkout-${crypto.randomUUID()}` };
+    }
+    placingOrderRef.current = true;
     try {
       setPaymentClientSecret("");
       setPaymentPublicKey("");
       const payload = await api("/api/order-payments/create", {
         method: "POST",
-        body: orderPaymentBody(true)
+        body,
+        headers: { "Idempotency-Key": checkoutAttemptRef.current.key }
       });
       setOrderStatus({ ...payload.order, tracking: payload.tracking });
       setPaymentStatus(payload.payment);
@@ -14211,7 +14238,10 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       setPaymentClientSecret(payload.clientSecret || "");
       await loadHistory();
     } catch (orderError) {
+      if (["CHECKOUT_ATTEMPT_FAILED", "CHECKOUT_IDEMPOTENCY_KEY_REUSED"].includes(orderError.code)) checkoutAttemptRef.current = null;
       setError(orderError.message);
+    } finally {
+      placingOrderRef.current = false;
     }
   }
 
@@ -14244,8 +14274,13 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
     try {
       const trackingToken = orderStatus?.tracking?.token;
       const query = trackingToken ? `?token=${encodeURIComponent(trackingToken)}` : "";
-      const payload = await api(`/api/customer/orders/${orderId}/status${query}`);
-      setOrderStatus((current) => ({ ...payload.order, tracking: current?.tracking }));
+      const payload = await api(`/api/customer/orders/${orderId}/status${query}`, trackingToken ? { skipAuth: true } : {});
+      setOrderStatus((current) => ({
+        ...payload.order,
+        totalCents: payload.order?.totalCents ?? payload.order?.totals?.totalCents ?? current?.totalCents,
+        tracking: current?.tracking
+      }));
+      if (payload.payment) setPaymentStatus(payload.payment);
     } catch (statusError) {
       setError(statusError.message);
     }
@@ -14434,7 +14469,7 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(group.options || []).map((option) => {
                             const key = group.id || group.name;
-                            const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key].includes(option.name) : selectedOptions[key] === option.name;
+                            const selected = Array.isArray(selectedOptions[key]) ? selectedOptions[key].includes(option.id) : selectedOptions[key] === option.id;
                             return <button className={`seg ${selected ? "active" : ""}`} key={option.id || option.name} onClick={() => toggleOption(group, option)}>{option.name}{option.priceCents ? ` +${money(option.priceCents)}` : ""}</button>;
                           })}
                         </div>

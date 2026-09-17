@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../../config/prisma.js";
+import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
 import { recordAudit } from "../../services/auditService.js";
 import { sendAccountSetupEmail } from "../../services/accountAccessService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
@@ -990,6 +991,14 @@ export async function handleStripePlatformWebhook(payload = {}) {
   const object = payload.data?.object || payload.object || {};
   const eventId = payload.id || payload.providerEventId;
   const providerEventId = eventId || `manual-${eventType}-${object.id || Date.now()}`;
+  return processStripeWebhookEventOnce(
+    { eventDomain: "PLATFORM_BILLING", provider: "stripe_platform", providerEventId, eventType, payloadJson: payload },
+    () => applyStripePlatformEvent({ eventType, object }),
+    { ledger: prisma.platformBillingEvent, completionData: (result) => ({ subscriptionId: result.subscription?.id || null }) }
+  );
+}
+
+async function applyStripePlatformEvent({ eventType, object }) {
   const pendingRegistrationId = object.metadata?.pendingRegistrationId;
   let subscription = null;
 
@@ -1060,20 +1069,6 @@ export async function handleStripePlatformWebhook(payload = {}) {
       });
     }
   }
-
-  await prisma.platformBillingEvent.upsert({
-    where: { providerEventId },
-    create: {
-      subscriptionId: subscription?.id || null,
-      eventDomain: "PLATFORM_BILLING",
-      provider: "stripe_platform",
-      providerEventId,
-      eventType,
-      payloadJson: payload,
-      processedAt: new Date()
-    },
-    update: { processedAt: new Date() }
-  });
 
   return { received: true, subscription };
 }

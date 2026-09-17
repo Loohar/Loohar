@@ -1,18 +1,36 @@
 import { Router } from "express";
 import { z } from "zod";
 import { FEATURE } from "../config/entitlements.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { authenticateAccessToken, requireAuth, requireRole } from "../middleware/auth.js";
 import { assertFeatureForRestaurant, featureGuard } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
-import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
+import { createMerchantOnboardingLink, createOrderPayment, getMerchantAccount, publicReceiptForOrder, publicStatusForOrder, receiptForOrder, refundOrderPayment, statusForOrder } from "../modules/orderPayments/orderPaymentService.js";
+import { CHECKOUT_IDEMPOTENCY_HEADER } from "../modules/orderPayments/checkoutIdempotency.js";
 import { calculateOrderQuote } from "../modules/orderPayments/quoteService.js";
 
 const router = Router();
 
+const modifierSelectionSchema = z.object({
+  modifierGroupId: z.string().optional(),
+  groupId: z.string().optional(),
+  optionGroupId: z.string().optional(),
+  modifierOptionId: z.string().optional(),
+  optionId: z.string().optional(),
+  id: z.string().optional(),
+  optionIds: z.array(z.string()).optional(),
+  name: z.string().optional(),
+  group: z.string().optional(),
+  priceCents: z.number().int().optional()
+});
+
 const orderItemSchema = z.object({
   menuItemId: z.string(),
   quantity: z.number().int().positive(),
-  options: z.array(z.object({ name: z.string(), priceCents: z.number().int() })).default([])
+  modifierSelections: z.array(modifierSelectionSchema).optional(),
+  selectedModifiers: z.array(modifierSelectionSchema).optional(),
+  modifierOptionIds: z.array(z.string()).optional(),
+  optionIds: z.array(z.string()).optional(),
+  options: z.array(modifierSelectionSchema).default([])
 });
 
 const quoteSchema = z.object({
@@ -60,6 +78,24 @@ async function assertOrderPaymentEntitlements(req) {
   }
 }
 
+function bearerTokenFor(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7) : null;
+}
+
+function trackingTokenFor(req) {
+  const headerToken = req.headers["x-loohar-order-token"] || req.headers["x-loohar-tracking-token"] || "";
+  return req.query.token?.toString() || (Array.isArray(headerToken) ? headerToken[0] : headerToken);
+}
+
+async function orderPaymentAccessFor(req) {
+  const trackingToken = trackingTokenFor(req);
+  if (trackingToken) return { user: null, trackingToken };
+  const bearerToken = bearerTokenFor(req);
+  if (!bearerToken) return { user: null, trackingToken };
+  return { user: await authenticateAccessToken(bearerToken), trackingToken };
+}
+
 router.post("/quote", validate(quoteSchema), async (req, res, next) => {
   try {
     await assertOrderPaymentEntitlements(req);
@@ -85,7 +121,7 @@ router.post("/quote", validate(quoteSchema), async (req, res, next) => {
 router.post("/create", validate(createSchema), async (req, res, next) => {
   try {
     await assertOrderPaymentEntitlements(req);
-    const result = await createOrderPayment({ body: req.body });
+    const result = await createOrderPayment({ body: req.body, idempotencyKey: req.get(CHECKOUT_IDEMPOTENCY_HEADER) });
     res.status(201).json(result);
   } catch (error) {
     next(error);
@@ -114,7 +150,7 @@ router.post("/merchant-account/onboarding-link", requireAuth, requireRole("TENAN
 
 router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER"), featureGuard(FEATURE.ORDER_PAYMENTS), validate(refundSchema), async (req, res, next) => {
   try {
-    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user });
+    const refund = await refundOrderPayment({ orderId: req.body.orderId, amountCents: req.body.amountCents, reason: req.body.reason, user: req.user, idempotencyKey: req.get(CHECKOUT_IDEMPOTENCY_HEADER) });
     res.status(201).json({ refund });
   } catch (error) {
     next(error);
@@ -123,7 +159,11 @@ router.post("/refund", requireAuth, requireRole("SUPER_ADMIN", "TENANT_OWNER", "
 
 router.get("/:orderId/status", async (req, res, next) => {
   try {
-    res.json(await statusForOrder({ orderId: req.params.orderId }));
+    const access = await orderPaymentAccessFor(req);
+    const payload = access.user
+      ? await statusForOrder({ orderId: req.params.orderId, user: access.user })
+      : await publicStatusForOrder({ orderId: req.params.orderId, token: access.trackingToken });
+    res.json(payload);
   } catch (error) {
     next(error);
   }
@@ -131,7 +171,11 @@ router.get("/:orderId/status", async (req, res, next) => {
 
 router.get("/:orderId/receipt", async (req, res, next) => {
   try {
-    res.json(await receiptForOrder({ orderId: req.params.orderId }));
+    const access = await orderPaymentAccessFor(req);
+    const payload = access.user
+      ? await receiptForOrder({ orderId: req.params.orderId, user: access.user })
+      : await publicReceiptForOrder({ orderId: req.params.orderId, token: access.trackingToken });
+    res.json(payload);
   } catch (error) {
     next(error);
   }

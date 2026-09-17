@@ -1,5 +1,7 @@
 import crypto from "crypto";
 
+const STRIPE_ACCOUNTS_V2_DEFAULT_VERSION = "2026-08-26.dahlia";
+
 export function stripePlatformConfigured() {
   return Boolean(process.env.STRIPE_PLATFORM_SECRET_KEY);
 }
@@ -14,6 +16,35 @@ export function stripePlatformPublishableKey() {
 
 export function stripeConnectPublishableKey() {
   return process.env.STRIPE_CONNECT_PUBLIC_KEY || process.env.STRIPE_PUBLIC_KEY || "";
+}
+
+export function stripeKeyMode(secretKey = "") {
+  if (!secretKey) return "MISSING";
+  if (secretKey.startsWith("sk_test_") || secretKey.startsWith("pk_test_")) return "TEST";
+  if (secretKey.startsWith("sk_live_") || secretKey.startsWith("pk_live_")) return "LIVE";
+  return "UNKNOWN";
+}
+
+function stripeDeploymentEnvironment() {
+  return String(process.env.LOOHAR_ENV || process.env.APP_ENV || process.env.DEPLOY_ENV || process.env.VERCEL_ENV || process.env.NODE_ENV || "").trim().toLowerCase();
+}
+
+export function assertStripeConnectModeAllowed() {
+  const mode = stripeKeyMode(process.env.STRIPE_CONNECT_SECRET_KEY || "");
+  const environment = stripeDeploymentEnvironment();
+  const liveAllowed = ["production", "prod", "live"].includes(environment);
+  if (mode === "LIVE" && !liveAllowed) {
+    const error = new Error("Stripe Connect live credentials are not allowed outside production.");
+    error.status = 503;
+    error.code = "STRIPE_CONNECT_LIVE_MODE_FORBIDDEN";
+    throw error;
+  }
+  if (mode === "UNKNOWN") {
+    const error = new Error("Stripe Connect credential mode could not be verified.");
+    error.status = 503;
+    error.code = "STRIPE_CONNECT_MODE_UNVERIFIED";
+    throw error;
+  }
 }
 
 export function assertStripePlatformConfigured() {
@@ -39,22 +70,59 @@ export function stripeForm(data = {}) {
   return form;
 }
 
-export async function stripeRequest({ secretKey, path, body, stripeAccount }) {
+function stripeApiVersion() {
+  return process.env.STRIPE_ACCOUNTS_V2_API_VERSION || STRIPE_ACCOUNTS_V2_DEFAULT_VERSION;
+}
+
+function sanitizeStripeErrorMessage(message = "") {
+  return String(message || "")
+    .replace(/\b(?:sk|pk)_(?:test|live)_[A-Za-z0-9_=-]+/g, "[redacted_stripe_key]")
+    .replace(/\bwhsec_[A-Za-z0-9_=-]+/g, "[redacted_webhook_secret]")
+    .replace(/\b(?:pi|seti|cs)_[A-Za-z0-9_=-]*_secret_[A-Za-z0-9_=-]+/g, "[redacted_client_secret]");
+}
+
+function stripeRequestError({ payload, response }) {
+  const stripeError = payload?.error || {};
+  const error = new Error(sanitizeStripeErrorMessage(stripeError.message || `Stripe request failed with ${response.status}`));
+  error.status = response.status >= 400 && response.status < 500 ? response.status : 502;
+  if (stripeError.code) error.code = stripeError.code;
+  if (stripeError.type) error.stripeErrorType = stripeError.type;
+  return error;
+}
+
+export async function stripeRequest({ secretKey, path, body, stripeAccount, idempotencyKey }) {
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
-      ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {})
+      ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
     },
     body
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload.error?.message || `Stripe request failed with ${response.status}`);
-    error.status = response.status >= 400 && response.status < 500 ? response.status : 502;
-    error.details = payload.error;
-    throw error;
+    throw stripeRequestError({ payload, response });
+  }
+  return payload;
+}
+
+export async function stripeV2Request({ secretKey, path, method = "POST", body, idempotencyKey, stripeContext }) {
+  const response = await fetch(`https://api.stripe.com/v2${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Stripe-Version": stripeApiVersion(),
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      ...(stripeContext ? { "Stripe-Context": stripeContext } : {})
+    },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw stripeRequestError({ payload, response });
   }
   return payload;
 }
@@ -86,7 +154,9 @@ export function parseRawWebhook(req) {
   }
 }
 
-export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret }) {
+export const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret, toleranceSeconds = STRIPE_WEBHOOK_TOLERANCE_SECONDS, nowSeconds = Math.floor(Date.now() / 1000) }) {
   if (!webhookSecret) {
     const error = new Error("Stripe webhook secret is not configured");
     error.status = 503;
@@ -107,6 +177,11 @@ export function verifyStripeWebhook({ rawBody, signatureHeader, webhookSecret })
   const valid = signatures.some((signature) => timingSafeEqualHex(signature, expectedSignature));
   if (!valid) {
     const error = new Error("Invalid Stripe signature");
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isFinite(Number(timestamp)) || Math.abs(nowSeconds - Number(timestamp)) > toleranceSeconds) {
+    const error = new Error("Stripe signature timestamp is outside the replay tolerance");
     error.status = 400;
     throw error;
   }

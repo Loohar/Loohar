@@ -66,25 +66,85 @@ function assertTransition(delivery, nextStatus) {
   }
 }
 
+function conflictError(message, code) {
+  const error = new Error(message);
+  error.status = 409;
+  error.code = code;
+  return error;
+}
+
 async function updateOwnedDeliveryStatus({ delivery, status, userId, note }) {
   assertTransition(delivery, status);
-  return prisma.delivery.update({
-    where: { id_driverId: { id: delivery.id, driverId: delivery.driverId } },
-    data: {
-      status,
-      ...timestampDataFor(status),
-      statusHistory: { create: { status, note, changedBy: userId } },
-      ...(orderStatusForDeliveryStatus[status] ? {
-        order: {
-          update: {
-            status: orderStatusForDeliveryStatus[status],
-            statusHistory: { create: { status: orderStatusForDeliveryStatus[status], note: `Driver marked delivery ${status}`, changedBy: userId } }
-          }
-        }
-      } : {})
-    },
-    include: includeDeliveryDetails()
+  return prisma.$transaction(async (tx) => {
+    // The transition was validated against the status we read; apply it only if that is still current.
+    const moved = await tx.delivery.updateMany({
+      where: { id: delivery.id, driverId: delivery.driverId, status: delivery.status },
+      data: { status, ...timestampDataFor(status) }
+    });
+    if (moved.count === 0) throw conflictError("Delivery status changed; refresh and try again.", "DELIVERY_STATUS_CONFLICT");
+    await tx.deliveryStatusHistory.create({ data: { deliveryId: delivery.id, status, note, changedBy: userId } });
+    if (orderStatusForDeliveryStatus[status]) {
+      // A restaurant-cancelled or rejected order is never revived by a driver update.
+      const orderMoved = await tx.order.updateMany({
+        where: { id: delivery.orderId, status: { notIn: ["CANCELLED", "REJECTED"] } },
+        data: { status: orderStatusForDeliveryStatus[status] }
+      });
+      if (orderMoved.count === 0) throw conflictError("This order was cancelled by the restaurant.", "DELIVERY_ORDER_CLOSED");
+      await tx.orderStatusHistory.create({
+        data: { orderId: delivery.orderId, status: orderStatusForDeliveryStatus[status], note: `Driver marked delivery ${status}`, changedBy: userId }
+      });
+    }
+    return tx.delivery.findUnique({ where: { id: delivery.id }, include: includeDeliveryDetails() });
   });
+}
+
+// Base delivery pay is set by the restaurant, never by the claiming driver.
+const DEFAULT_DELIVERY_BASE_EARNINGS_CENTS = 500;
+const UNCLAIMABLE_ORDER_STATUSES = new Set(["REJECTED", "DELIVERED", "CANCELLED"]);
+// Unowned deliveries can be claimed only before pickup work starts, so a claim never rewinds one.
+const CLAIMABLE_DELIVERY_STATUSES = ["ASSIGNED", "ACCEPTED"];
+
+async function claimDeliveryForDriver({ order, driver, userId }) {
+  const history = { status: "ACCEPTED", note: "Driver claimed delivery from QR", changedBy: userId };
+  if (!order.delivery) {
+    try {
+      return await prisma.delivery.create({
+        data: {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          driverId: driver.id,
+          status: "ACCEPTED",
+          claimedAt: new Date(),
+          baseEarningsCents: DEFAULT_DELIVERY_BASE_EARNINGS_CENTS,
+          tipCents: order.driverTipCents ?? order.tipCents ?? 0,
+          pickupAddress: order.restaurant.address || "Restaurant pickup",
+          dropoffAddress: order.deliveryAddress || "Customer dropoff",
+          statusHistory: { create: history }
+        },
+        include: includeDeliveryDetails()
+      });
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+      // Another claim created the delivery first; fall through to the conditional claim.
+    }
+  }
+  const claimed = await prisma.delivery.updateMany({
+    where: { orderId: order.id, driverId: null, status: { in: CLAIMABLE_DELIVERY_STATUSES } },
+    data: { driverId: driver.id, status: "ACCEPTED", claimedAt: new Date(), tipCents: order.driverTipCents ?? order.tipCents ?? 0 }
+  });
+  const current = await prisma.delivery.findUnique({ where: { orderId: order.id } });
+  if (claimed.count === 1) {
+    await prisma.deliveryStatusHistory.create({ data: { deliveryId: current.id, ...history } });
+  } else if (current?.driverId !== driver.id) {
+    throw conflictError("Delivery is already claimed by another driver", "DELIVERY_ALREADY_CLAIMED");
+  } else if (current.status === "ASSIGNED") {
+    const accepted = await prisma.delivery.updateMany({
+      where: { id: current.id, driverId: driver.id, status: "ASSIGNED" },
+      data: { status: "ACCEPTED", claimedAt: new Date() }
+    });
+    if (accepted.count === 1) await prisma.deliveryStatusHistory.create({ data: { deliveryId: current.id, ...history } });
+  }
+  return prisma.delivery.findUnique({ where: { orderId: order.id }, include: includeDeliveryDetails() });
 }
 
 router.get("/me", async (req, res, next) => {
@@ -210,29 +270,10 @@ router.post("/orders/:orderId/claim", async (req, res, next) => {
     if (order.delivery?.driverId && order.delivery.driverId !== driver.id) {
       return res.status(409).json({ error: "Delivery is already claimed by another driver" });
     }
-    const delivery = await prisma.delivery.upsert({
-      where: { orderId: order.id },
-      create: {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        driverId: driver.id,
-        status: "ACCEPTED",
-        claimedAt: new Date(),
-        baseEarningsCents: Number(req.body.baseEarningsCents || 500),
-        tipCents: order.driverTipCents ?? order.tipCents ?? 0,
-        pickupAddress: order.restaurant.address || "Restaurant pickup",
-        dropoffAddress: order.deliveryAddress || "Customer dropoff",
-        statusHistory: { create: { status: "ACCEPTED", note: "Driver claimed delivery from QR", changedBy: req.user.id } }
-      },
-      update: {
-        driverId: driver.id,
-        status: "ACCEPTED",
-        claimedAt: new Date(),
-        tipCents: order.driverTipCents ?? order.tipCents ?? 0,
-        statusHistory: { create: { status: "ACCEPTED", note: "Driver claimed delivery from QR", changedBy: req.user.id } }
-      },
-      include: includeDeliveryDetails()
-    });
+    if (UNCLAIMABLE_ORDER_STATUSES.has(order.status)) {
+      return res.status(409).json({ error: "This order can no longer be claimed", code: "DELIVERY_ORDER_NOT_CLAIMABLE" });
+    }
+    const delivery = await claimDeliveryForDriver({ order, driver, userId: req.user.id });
     emitDeliveryUpdate(delivery);
     res.json({ delivery });
   } catch (error) {
