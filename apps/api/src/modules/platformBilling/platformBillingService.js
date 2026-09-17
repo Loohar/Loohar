@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { prisma } from "../../config/prisma.js";
 import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
 import { stripeSubscriptionPeriod } from "../../utils/stripeSubscriptionPeriod.js";
+import { planLimitSummary } from "../../../../shared/planEntitlements.js";
 import { recordAudit } from "../../services/auditService.js";
 import { sendAccountSetupEmail } from "../../services/accountAccessService.js";
 import { defaultTenantHost } from "../../services/domainService.js";
@@ -44,7 +45,7 @@ const PLAN_PRICES = {
 };
 
 const PLAN_FEATURES = {
-  STARTER: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding"],
+  STARTER: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding", "Online card payments", "POS register", "Kitchen display", "Employee accounts"],
   PROFESSIONAL: ["Everything in Starter", "Delivery workflows", "Driver management", "Loyalty", "Coupons", "Delivery zones"],
   ENTERPRISE: ["Everything in Professional", "Advanced analytics", "Multi-location foundation", "Priority support"]
 };
@@ -318,15 +319,15 @@ async function ensureTenantSubscriptionPlan(tx, planCode) {
       code,
       name,
       monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
-      maxLocations: code === "ENTERPRISE" ? null : 1,
-      maxDrivers: code === "STARTER" ? 0 : code === "PROFESSIONAL" ? 25 : null,
+      maxLocations: planLimitSummary(code).locationLimit,
+      maxDrivers: planLimitSummary(code).staffLimit,
       featuresJson: { source: "introductory_program", features: PLAN_FEATURES[code] || [] }
     },
     update: {
       name,
       monthlyPriceCents: PLAN_PRICES[code].MONTHLY,
-      maxLocations: code === "ENTERPRISE" ? null : 1,
-      maxDrivers: code === "STARTER" ? 0 : code === "PROFESSIONAL" ? 25 : null,
+      maxLocations: planLimitSummary(code).locationLimit,
+      maxDrivers: planLimitSummary(code).staffLimit,
       featuresJson: { source: "introductory_program", features: PLAN_FEATURES[code] || [] }
     }
   });
@@ -789,8 +790,7 @@ export async function getPlatformPlans() {
         introductoryProgramName: introductoryProgram.programName,
         paymentMethodRequiredAtSignup: introductoryProgram.requirePaymentMethodAtSignup,
         autoChargeWithoutExplicitAuthorization: false,
-        locationLimit: plan.code === "ENTERPRISE" ? null : 1,
-        staffLimit: plan.code === "STARTER" ? 5 : plan.code === "PROFESSIONAL" ? 25 : null,
+        ...planLimitSummary(plan.code),
         active: plan.active,
         monthlyCheckoutAvailable: Boolean(plan.stripePriceIdMonthly),
         annualCheckoutAvailable: Boolean(plan.stripePriceIdAnnual),

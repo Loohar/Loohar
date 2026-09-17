@@ -4,6 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../config/prisma.js";
 import { entitlementDecision, FEATURE, FEATURE_LABELS, requiredPlanForFeature, USAGE_LIMIT } from "../config/entitlements.js";
+import { EMPLOYEE_SEAT_ROLES } from "../../../shared/planEntitlements.js";
 import { requireAuth, requireRole, requireTenantAccess } from "../middleware/auth.js";
 import { assertUsageLimitForRestaurant, featureGuard, loadRestaurantEntitlements } from "../middleware/entitlements.js";
 import { validate } from "../middleware/validate.js";
@@ -98,15 +99,15 @@ async function assertMenuItemLimit(restaurantId) {
   return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.MENU_ITEMS, used, requestedIncrement: 1 });
 }
 
-async function assertStaffLimit(restaurantId) {
-  const used = await prisma.user.count({
-    where: {
-      restaurantId,
-      role: { in: ["TENANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_OWNER", "RESTAURANT_MANAGER", "CASHIER", "KITCHEN_STAFF", "DRIVER"] },
-      status: { not: "DELETED" }
-    }
+// Creates one employee login inside a transaction that holds a per-restaurant seat lock, so
+// concurrent invitations cannot exceed the plan's employee seats.
+async function createEmployeeWithinSeatLimit(restaurantId, create) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`employee-seats:${restaurantId}`}))`;
+    const used = await tx.user.count({ where: { restaurantId, role: { in: EMPLOYEE_SEAT_ROLES }, status: { not: "DELETED" } } });
+    await assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.STAFF_MEMBERS, used, requestedIncrement: 1 });
+    return create(tx);
   });
-  return assertUsageLimitForRestaurant({ restaurantId, limitCode: USAGE_LIMIT.STAFF_MEMBERS, used, requestedIncrement: 1 });
 }
 
 async function assertDeliveryZoneLimit(restaurantId) {
@@ -2094,12 +2095,16 @@ router.get("/:restaurantId/drivers", async (req, res, next) => {
 
 router.post("/:restaurantId/drivers", async (req, res, next) => {
   try {
+    const restaurantId = restaurantIdFor(req);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
-    const user = await prisma.user.create({
-      data: { email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId: restaurantIdFor(req), forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+    const { user, driver } = await createEmployeeWithinSeatLimit(restaurantId, async (tx) => {
+      const user = await tx.user.create({
+        data: { email, name: req.body.name, phone: req.body.phone, passwordHash, role: "DRIVER", restaurantId, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      });
+      const driver = await tx.driver.create({ data: { restaurantId, userId: user.id } });
+      return { user, driver };
     });
-    const driver = await prisma.driver.create({ data: { restaurantId: restaurantIdFor(req), userId: user.id } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ driver });
   } catch (error) {
@@ -2122,13 +2127,15 @@ router.post("/:restaurantId/staff", async (req, res, next) => {
     const role = sanitizeEmployeeRole(req.body.role);
     assertCanManageEmployeeRole(req.user, role);
     const permissionsJson = permissionsFromRequest(req.user, role, req.body.permissionsJson);
-    await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
-    const user = await prisma.user.create({
-      data: { email, name: req.body.name, passwordHash, role, restaurantId, phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+    const { user, staff } = await createEmployeeWithinSeatLimit(restaurantId, async (tx) => {
+      const user = await tx.user.create({
+        data: { email, name: req.body.name, passwordHash, role, restaurantId, phone: req.body.phone, forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      });
+      const staff = await tx.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, permissionsJson } });
+      return { user, staff };
     });
-    const staff = await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, permissionsJson } });
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.created", entityType: "User", entityId: user.id, metadata: { role } });
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     res.status(201).json({ staff });
@@ -2182,17 +2189,19 @@ router.post("/:restaurantId/employees", async (req, res, next) => {
     const role = sanitizeEmployeeRole(req.body.role);
     assertCanManageEmployeeRole(req.user, role);
     const permissionsJson = role === "DRIVER" ? null : permissionsFromRequest(req.user, role, req.body.permissionsJson);
-    await assertStaffLimit(restaurantId);
     const passwordHash = await bcrypt.hash(generateTemporaryPassword(), 12);
     const email = normalizeEmail(req.body.email);
-    const user = await prisma.user.create({
-      data: { email, name: req.body.name || email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status === "SUSPENDED" ? "SUSPENDED" : "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+    const user = await createEmployeeWithinSeatLimit(restaurantId, async (tx) => {
+      const user = await tx.user.create({
+        data: { email, name: req.body.name || email, phone: req.body.phone, passwordHash, role, restaurantId, status: req.body.status === "SUSPENDED" ? "SUSPENDED" : "ACTIVE", forcePasswordChange: true, temporaryPassword: true, passwordChangedAt: null }
+      });
+      if (role === "DRIVER") {
+        await tx.driver.create({ data: { restaurantId, userId: user.id, available: Boolean(req.body.available) } });
+      } else {
+        await tx.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, active: req.body.status !== "SUSPENDED", permissionsJson } });
+      }
+      return user;
     });
-    if (role === "DRIVER") {
-      await prisma.driver.create({ data: { restaurantId, userId: user.id, available: Boolean(req.body.available) } });
-    } else {
-      await prisma.restaurantStaff.create({ data: { restaurantId, userId: user.id, role, active: req.body.status !== "SUSPENDED", permissionsJson } });
-    }
     await Promise.allSettled([sendAccountSetupEmail({ user })]);
     await recordAudit({ actorUserId: req.user.id, restaurantId, action: "employee.created", entityType: "User", entityId: user.id, metadata: { role } });
     res.status(201).json({ employee: { id: user.id, name: user.name, email: user.email, phone: user.phone, role, status: user.status } });

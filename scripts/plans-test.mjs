@@ -33,6 +33,10 @@ for (const feature of [
   FEATURE.BRANDING,
   FEATURE.BASIC_SETTINGS,
   FEATURE.ONBOARDING,
+  // Pilot Starter: payment onboarding, one kitchen display and employee accounts are included.
+  FEATURE.STRIPE_CONNECT,
+  FEATURE.KITCHEN_DISPLAY,
+  FEATURE.EMPLOYEE_MANAGEMENT,
   FEATURE.POS_REGISTER,
   FEATURE.POS_KIOSK_MODE,
   FEATURE.POS_DEVICE_MANAGEMENT,
@@ -52,11 +56,9 @@ for (const feature of [
   FEATURE.CUSTOMER_CRM,
   FEATURE.LOYALTY,
   FEATURE.COUPONS,
-  FEATURE.KITCHEN_DISPLAY,
   FEATURE.PRINTING,
   FEATURE.NOTIFICATIONS,
-  FEATURE.INVENTORY,
-  FEATURE.STRIPE_CONNECT
+  FEATURE.INVENTORY
 ]) {
   assert.equal(planAllowsFeature("STARTER", feature), false, `Starter should not include ${feature}`);
   assert.equal(planAllowsFeature("PROFESSIONAL", feature), true, `Professional should include ${feature}`);

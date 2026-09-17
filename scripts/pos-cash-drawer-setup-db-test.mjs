@@ -23,6 +23,7 @@ Object.assign(process.env, { DATABASE_URL: databaseUrl, DIRECT_URL: databaseUrl,
 mock.module(new URL("../apps/api/src/middleware/entitlements.js", import.meta.url).href, {
   namedExports: {
     assertFeatureForRestaurant: async () => true,
+    assertUsageLimitForRestaurant: async () => true,
     featureGuard: () => (req, res, next) => next(),
     loadRestaurantEntitlements: async () => ({})
   }

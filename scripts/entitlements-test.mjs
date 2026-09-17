@@ -130,4 +130,25 @@ assert.equal(starterZoneLimit.maxAllowed, 0);
 
 assert.equal(usageLimitDecision({ entitlement: entitlement("ENTERPRISE"), limitCode: USAGE_LIMIT.GALLERY_IMAGES, used: 1000, requestedIncrement: 100 }).allowed, true, "Enterprise usage limits are unmetered");
 
+// Pilot Starter plan: 1 location, 1 POS register, 1 kitchen display, up to 5 employee seats, all
+// from the shared plan configuration.
+assert.equal(entitlementLimitForPlan("STARTER", USAGE_LIMIT.STAFF_MEMBERS), 5, "Starter includes five employee seats");
+assert.equal(entitlementLimitForPlan("STARTER", USAGE_LIMIT.LOCATIONS), 1);
+assert.equal(entitlementLimitForPlan("STARTER", USAGE_LIMIT.POS_REGISTERS), 1);
+assert.equal(entitlementLimitForPlan("STARTER", USAGE_LIMIT.KITCHEN_DISPLAYS), 1);
+assert.equal(usageLimitDecision({ entitlement: entitlement("STARTER"), limitCode: USAGE_LIMIT.STAFF_MEMBERS, used: 4, requestedIncrement: 1 }).allowed, true, "Starter can add a fifth employee");
+assert.equal(usageLimitDecision({ entitlement: entitlement("STARTER"), limitCode: USAGE_LIMIT.STAFF_MEMBERS, used: 5, requestedIncrement: 1 }).code, "USAGE_LIMIT_REACHED", "Starter cannot add a sixth employee");
+assert.equal(usageLimitDecision({ entitlement: entitlement("STARTER"), limitCode: USAGE_LIMIT.POS_REGISTERS, used: 1, requestedIncrement: 1 }).allowed, false, "Starter cannot activate a second register");
+for (const feature of [FEATURE.EMPLOYEE_MANAGEMENT, FEATURE.KITCHEN_DISPLAY, FEATURE.STRIPE_CONNECT]) {
+  assert.equal(entitlementDecision(entitlement("STARTER"), feature, "POST").allowed, true, `Starter can use ${feature}`);
+}
+const { planLimitSummary } = await import("../apps/shared/planEntitlements.js");
+assert.deepEqual(planLimitSummary("STARTER"), { locationLimit: 1, staffLimit: 5, registerLimit: 1, kitchenDisplayLimit: 1 });
+const { readFileSync } = await import("node:fs");
+for (const file of ["apps/api/src/modules/platformBilling/platformBillingService.js", "apps/api/src/routes/restaurant.js", "apps/web/src/App.jsx"]) {
+  const source = readFileSync(file, "utf8");
+  assert.equal(/staffLimit:\s*(plan\.code|\d)/.test(source), false, `${file} must not hardcode plan staff limits`);
+  assert.equal(/maxDrivers:\s*code ===/.test(source), false, `${file} must not hardcode plan driver limits`);
+}
+
 console.log("Entitlement tests passed.");

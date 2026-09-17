@@ -97,6 +97,7 @@ import { isPrivateNetworkHost } from "./shared/networkHost.js";
 import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowth, demoOrders, demoRestaurant, demoRestaurants, demoSocialLinks, demoWebsiteBundle, demoWebsiteSettings, demoDomain } from "./data/demo.js";
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
 import { POS_OFFLINE_SYNC_STATUS } from "../../shared/posOfflinePricing.js";
+import { planLimitSummary } from "../../shared/planEntitlements.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -3453,14 +3454,13 @@ const fallbackRegistrationPlans = [
     description: "Launch a branded ordering website with pickup.",
     monthlyPriceCents: 9900,
     annualPriceCents: 99000,
-    features: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding"],
+    features: ["Direct ordering website", "Pickup ordering", "Basic menu/catalog", "Restaurant onboarding", "Online card payments", "POS register", "Kitchen display", "Employee accounts"],
     trialDays: fallbackIntroTrialDays,
     introductoryProgramAvailable: true,
     introductoryProgramName: "90-Day Introductory Program",
     paymentMethodRequiredAtSignup: false,
     autoChargeWithoutExplicitAuthorization: false,
-    locationLimit: 1,
-    staffLimit: 5,
+    ...planLimitSummary("STARTER"),
     active: true,
     checkoutAvailable: false
   },
@@ -3476,8 +3476,7 @@ const fallbackRegistrationPlans = [
     introductoryProgramName: "90-Day Introductory Program",
     paymentMethodRequiredAtSignup: false,
     autoChargeWithoutExplicitAuthorization: false,
-    locationLimit: 1,
-    staffLimit: 25,
+    ...planLimitSummary("PROFESSIONAL"),
     active: true,
     checkoutAvailable: false
   },
@@ -3493,8 +3492,7 @@ const fallbackRegistrationPlans = [
     introductoryProgramName: "90-Day Introductory Program",
     paymentMethodRequiredAtSignup: false,
     autoChargeWithoutExplicitAuthorization: false,
-    locationLimit: null,
-    staffLimit: null,
+    ...planLimitSummary("ENTERPRISE"),
     active: true,
     checkoutAvailable: false
   }

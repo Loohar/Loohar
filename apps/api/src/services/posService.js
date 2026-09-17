@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { prisma } from "../config/prisma.js";
 import { FEATURE } from "../config/entitlements.js";
-import { assertFeatureForRestaurant } from "../middleware/entitlements.js";
+import { assertFeatureForRestaurant, assertUsageLimitForRestaurant } from "../middleware/entitlements.js";
 import { recordAudit } from "./auditService.js";
 import { menuItemSendToKitchen, withMenuCustomizationModes } from "./menuCustomizationService.js";
 import { validateSelectedModifiers } from "./modifierValidationService.js";
@@ -23,6 +23,7 @@ import {
   resolvePosDeliveryPricingSnapshot,
   validatePosOfflinePricingSnapshot
 } from "../../../shared/posOfflinePricing.js";
+import { DEVICE_TYPE_USAGE_LIMIT, deviceTypesForUsageLimit } from "../../../shared/planEntitlements.js";
 
 export const POS_PERMISSION = {
   ACCESS: "POS_ACCESS",
@@ -2532,6 +2533,24 @@ export async function cardPaymentIntent({ restaurantId, user, orderId, deviceId,
   };
 }
 
+// Plan device entitlements (POS registers, kitchen displays) count ACTIVE devices. The check runs only
+// when a device newly becomes an active device of a metered kind, under a per-restaurant lock, so
+// renaming or re-registering an existing device never trips a limit and concurrent registrations
+// cannot exceed it.
+async function writeWithinDeviceEntitlement({ restaurantId, previous, next }, write) {
+  const limitCode = DEVICE_TYPE_USAGE_LIMIT[next.deviceType];
+  const alreadyCounted = previous?.status === "ACTIVE" && DEVICE_TYPE_USAGE_LIMIT[previous.deviceType] === limitCode;
+  if (!limitCode || next.status !== "ACTIVE" || alreadyCounted) return write(prisma);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`pos-devices:${restaurantId}:${limitCode}`}))`;
+    const used = await tx.posDevice.count({
+      where: { restaurantId, status: "ACTIVE", deviceType: { in: deviceTypesForUsageLimit(limitCode) }, ...(previous?.id ? { id: { not: previous.id } } : {}) }
+    });
+    await assertUsageLimitForRestaurant({ restaurantId, limitCode, used, requestedIncrement: 1 });
+    return write(tx);
+  });
+}
+
 export async function registerPosDevice({ restaurantId, user, body, fingerprint }) {
   await assertPosFeature(restaurantId, "POST");
   await assertPosPermission(user, restaurantId, POS_PERMISSION.MANAGE_DEVICES);
@@ -2559,9 +2578,9 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
     settingsJson: safeJson(body?.settings, {})
   };
   const existing = await prisma.posDevice.findFirst({ where: { restaurantId, deviceFingerprintHash: fingerprintHash } });
-  const device = existing
-    ? await prisma.posDevice.update({ where: { id: existing.id }, data })
-    : await prisma.posDevice.create({ data });
+  const device = await writeWithinDeviceEntitlement({ restaurantId, previous: existing, next: data }, (client) => (existing
+    ? client.posDevice.update({ where: { id: existing.id }, data })
+    : client.posDevice.create({ data })));
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
@@ -2594,7 +2613,8 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
     const existingDrawerId = locationChanged || body?.cashDrawerId === null ? null : device.cashDrawerId;
     cashDrawerId = (await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId, deviceName: body?.name || device.name })).id;
   }
-  const updated = await prisma.posDevice.update({
+  const next = { deviceType, status: body?.status || device.status };
+  const updated = await writeWithinDeviceEntitlement({ restaurantId, previous: device, next }, (client) => client.posDevice.update({
     where: { id: device.id },
     data: {
       name: body?.name ? String(body.name).slice(0, 120) : undefined,
@@ -2605,7 +2625,7 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
       cardPaymentsEnabled: body?.cardPaymentsEnabled === undefined ? undefined : Boolean(body.cardPaymentsEnabled),
       revokedAt: body?.status === "REVOKED" ? new Date() : undefined
     }
-  });
+  }));
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
