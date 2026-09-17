@@ -22,9 +22,9 @@ re-verified.
 | Online ordering | Card checkout (Stripe Connect) | Partial | Required | L-05 fixed order creation; L-03 idempotency; not certified |
 | Online ordering | Order tracking & receipt | Available | Required | Token-gated (L-01) |
 | Payments | Stripe Connect onboarding (Accounts v2) | Available | Required | `test:stripe-connect-accounts-v2` |
-| Payments | Webhooks | Available | Required | L-04 hardening in candidate |
+| Payments | Webhooks | Available | Required | L-04 hardening, ledgers and settlement guards in candidate (`48c27e9`) |
 | Payments | Refunds | Partial (API only, no UI) | Required | API idempotent, balance-capped, connected-account correct (L-07, `48c27e9`); no UI (L-16) |
-| Payments | Platform (SaaS) billing | Partial | Recommended | In-app plan change not available (Reported); L-09 ledger gap |
+| Payments | Platform (SaaS) billing | Partial | Recommended | In-app plan change not available (Reported); webhook event ledger in candidate (L-09) |
 | Tips | Online tips | Partial | Required | POS tips not available (Reported) |
 | POS | Register sign-in, cart, modifiers, hold/recall | Available | Required | POS suites pass |
 | POS | Cash tender | Available in code | Required | Drawers now provisioned per main terminal with shared-drawer shifts (L-15, `48c27e9`); needs staging POS acceptance |
