@@ -785,7 +785,10 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
     return { reviewRequired: true, reason: "order_not_awaiting_payment", orderStatus: settled.unexpectedOrderStatus };
   }
   const { payment: updatedPayment, order } = settled;
-  await Promise.allSettled([notifyOrderConfirmation(await customerReceiptEmailFor(order)), notifyNewOrderAlert({ order })]);
+  await Promise.allSettled([
+    customerReceiptEmailFor(order).then((email) => notifyOrderConfirmation(email)),
+    notifyNewOrderAlert({ order })
+  ]);
   emitOrderUpdate(order);
   await recordAudit({ restaurantId: order.restaurantId, action: "order_payment.paid", entityType: "RestaurantOrderPayment", entityId: updatedPayment.id, metadata: { providerPaymentIntentId: updatedPayment.providerPaymentIntentId } });
   return settled;
@@ -797,9 +800,22 @@ async function customerReceiptEmailFor(order) {
   try {
     const full = await prisma.order.findUnique({ where: { id: order.id }, include: receiptOrderInclude() });
     if (!full) return { order };
-    const issued = await issueOrderTrackingToken(order.id);
-    const receipt = buildReceiptPayload(issued.order || full, { kind: "customer", trackingToken: issued.trackingToken });
-    return { order: full, receipt, trackingUrl: customerTrackingUrls(full, issued.trackingToken).webUrl };
+    // The customer is already holding a tracking token from checkout; rotating it here would break
+    // their tracking page and any 3DS return URL. Re-derive that token instead, and only mint a new
+    // one when the order has no usable token at all.
+    const keyHash = full.restaurantOrderPayment?.checkoutIdempotencyKeyHash || null;
+    const derived = keyHash ? checkoutTrackingToken({ keyHash }) : null;
+    const tokenStillValid = Boolean(full.trackingTokenHash) && (!full.trackingTokenExpiresAt || full.trackingTokenExpiresAt > new Date());
+    let receiptOrder = full;
+    let trackingToken = derived && full.trackingTokenHash === hashToken(derived) ? derived : null;
+    if (!trackingToken && !tokenStillValid) {
+      const issued = await issueOrderTrackingToken(order.id);
+      receiptOrder = issued.order || full;
+      trackingToken = issued.trackingToken;
+    }
+    const receipt = buildReceiptPayload(receiptOrder, { kind: "customer", trackingToken: trackingToken || undefined });
+    const trackingUrl = trackingToken ? customerTrackingUrls(receiptOrder, trackingToken).webUrl : "";
+    return { order: receiptOrder, receipt, trackingUrl };
   } catch {
     return { order };
   }

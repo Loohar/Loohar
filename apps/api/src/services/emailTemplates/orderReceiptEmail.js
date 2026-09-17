@@ -11,7 +11,7 @@ function escapeHtml(value = "") {
 
 function money(cents) {
   const amount = Number(cents || 0) / 100;
-  return `$${amount.toFixed(2)}`;
+  return amount < 0 ? `-$${Math.abs(amount).toFixed(2)}` : `$${amount.toFixed(2)}`;
 }
 
 function tenderLabel(payment = {}) {
@@ -23,14 +23,17 @@ function tenderLabel(payment = {}) {
   return "Payment";
 }
 
+// Every line the printed receipt shows, so the emailed lines always add up to the same total.
 function totalsRows(totals = {}, payment = {}) {
   const rows = [
     ["Subtotal", totals.subtotalCents],
     ...(totals.discountCents ? [["Discount", -totals.discountCents]] : []),
     ...(totals.deliveryFeeCents ? [["Delivery", totals.deliveryFeeCents]] : []),
+    ...(totals.serviceFeeCents ? [["Service fee", totals.serviceFeeCents]] : []),
     ["Tax", totals.taxCents],
     ...(totals.restaurantTipCents ? [["Tip", totals.restaurantTipCents]] : []),
-    ...(totals.driverTipCents ? [["Driver tip", totals.driverTipCents]] : [])
+    ...(totals.driverTipCents ? [["Driver tip", totals.driverTipCents]] : []),
+    ...(totals.otherFeesCents ? [["Other", totals.otherFeesCents]] : [])
   ];
   const refunded = Number(payment.refundedCents || 0);
   return { rows, refunded };

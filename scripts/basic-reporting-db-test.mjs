@@ -82,6 +82,12 @@ before(async () => {
   ctx.pending = await paidOrder(ctx.a, { totalCents: 900, status: "REQUIRES_PAYMENT_METHOD", orderStatus: "PENDING" });
   ctx.cancelled = await paidOrder(ctx.a, { totalCents: 700, status: "CANCELED", orderStatus: "CANCELLED" });
   ctx.otherLocation = await paidOrder(ctx.a, { totalCents: 2500, locationId: ctx.a.second.id, type: "WALK_IN" });
+  ctx.delivery = await paidOrder(ctx.a, { totalCents: 3000, type: "DELIVERY" });
+  await prisma.restaurantOrderPayment.update({ where: { id: ctx.delivery.payment.id }, data: { driverTipCents: 450 } });
+  ctx.pendingRefund = await paidOrder(ctx.a, { totalCents: 1800 });
+  await prisma.restaurantRefund.create({
+    data: { restaurantId: ctx.a.restaurant.id, orderPaymentId: ctx.pendingRefund.payment.id, provider: "STRIPE_CONNECT", status: "PENDING", amountCents: 800, idempotencyKey: `rf_pending_${runId}` }
+  });
   await prisma.restaurantRefund.create({
     data: { restaurantId: ctx.a.restaurant.id, orderPaymentId: ctx.online.payment.id, provider: "STRIPE_CONNECT", status: "SUCCEEDED", amountCents: 500, idempotencyKey: `rf_${runId}` }
   });
@@ -95,29 +101,30 @@ after(() => prisma.$disconnect());
 
 test("the daily summary totals only this restaurant's settled money for the day", async () => {
   const summary = await buildBasicSalesSummary({ restaurantId: ctx.a.restaurant.id, day: "", locationId: "" });
-  assert.equal(summary.payments.collectedCents, 2000 + 1000 + 1500 + 2500, "settled payments only");
-  assert.equal(summary.payments.tipsCents, 300);
+  assert.equal(summary.payments.collectedCents, 2000 + 1000 + 1500 + 2500 + 3000 + 1800, "settled payments only");
   assert.equal(summary.payments.restaurantTipsCents, 300, "restaurant tips are reported separately");
-  assert.equal(summary.payments.driverTipsCents, 0, "driver tips are reported separately for tip-out");
+  assert.equal(summary.payments.driverTipsCents, 450, "driver tips are reported separately for tip-out");
+  assert.equal(summary.payments.tipsCents, 750);
   assert.equal(summary.payments.taxCollectedCents, 150);
+  assert.equal(summary.reconciliation.ordersWithoutSettledPaymentCount, 1);
   assert.equal(summary.refunds.amountCents, 500);
-  assert.equal(summary.reconciliation.netCollectedCents, 7000 - 500);
+  assert.equal(summary.reconciliation.netCollectedCents, 11800 - 500);
   assert.equal(summary.reconciliation.platformFeeCents, 0, "Loohar takes no platform fee");
   assert.equal(summary.reconciliation.awaitingPaymentCount, 1);
   assert.equal(summary.reconciliation.awaitingPaymentCents, 900);
   assert.equal(summary.reconciliation.failedPaymentCount, 1);
   assert.equal(summary.orders.cancelledCount, 1);
-  assert.equal(summary.orders.count, 5, "cancelled orders are excluded from the order count");
+  assert.equal(summary.orders.count, 7, "cancelled orders are excluded from the order count");
   assert.equal(summary.reconciliation.ordersWithoutSettledPaymentCount, 1);
 });
 
 test("payments are split by how the money was taken", async () => {
   const summary = await buildBasicSalesSummary({ restaurantId: ctx.a.restaurant.id, day: "", locationId: "" });
   const methods = Object.fromEntries(summary.payments.byMethod.map((row) => [row.method, row.amountCents]));
-  assert.equal(methods.ONLINE_CARD, 2000 + 2500);
+  assert.equal(methods.ONLINE_CARD, 2000 + 2500 + 3000 + 1800);
   assert.equal(methods.POS_CASH, 1000);
   assert.equal(methods.POS_CARD_PRESENT, 1500);
-  assert.equal(summary.payments.settledCount, 4);
+  assert.equal(summary.payments.settledCount, 6);
 });
 
 test("the summary can be scoped to one location", async () => {
@@ -163,6 +170,13 @@ test("the payments list shows how each payment was taken and what is refundable"
   const pending = byOrder.get(ctx.pending.order.id);
   assert.equal(pending.status, "REQUIRES_PAYMENT_METHOD");
   assert.equal(pending.refundableCents, 0, "an unpaid order is voided, never refunded");
+
+  const cash = byOrder.get(ctx.cash.order.id);
+  assert.equal(cash.refundableCents, 0, "cash is refunded at the drawer, never through Stripe");
+
+  const pendingRefund = byOrder.get(ctx.pendingRefund.order.id);
+  assert.equal(pendingRefund.pendingRefundCents, 800, "a refund still confirming is shown");
+  assert.equal(pendingRefund.refundableCents, 1000, "a pending refund already holds its balance");
   assert.equal("quoteJson" in online, false, "quote internals stay internal");
   assert.equal("checkoutIdempotencyKeyHash" in online, false);
 });
@@ -184,7 +198,9 @@ test("the dashboard payments page refunds through the payment, and voiding stays
   const { readFileSync } = await import("node:fs");
   const app = readFileSync("apps/web/src/App.jsx", "utf8");
   assert.ok(app.includes('api("/api/order-payments/refund"'), "refunds use the guarded refund endpoint");
-  assert.ok(app.includes('"Idempotency-Key": `refund-${payment.id}-${amountCents}-${draft.attempt || 1}`'), "each refund attempt carries its own idempotency key");
+  assert.ok(app.includes("refundAttemptKeysRef.current.get(payment.id) || `refund-${payment.id}-${crypto.randomUUID()}`"), "each refund click carries its own idempotency key");
+  assert.ok(app.includes('if (status === "SUCCEEDED") setRefundNotice'), "the operator is told the refund's real status");
+  assert.ok(app.includes("The customer has not been refunded."), "a failed refund is reported as a failure");
   assert.ok(app.includes("This payment has ${money(payment.refundableCents)} left to refund."), "a refund cannot exceed what is left");
   assert.ok(app.includes("reporting/payments"), "the page reads the payments list");
   assert.ok(app.includes("An order that was never paid is voided from Orders instead."), "voids and refunds stay distinct in the UI");

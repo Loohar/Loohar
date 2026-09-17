@@ -155,7 +155,70 @@ test("a paid order emails the customer an itemized receipt, not a data dump", as
   assert.ok(cash.text.includes("Cash"), "the tender type is named");
 
   const service = readFileSync("apps/api/src/modules/orderPayments/orderPaymentService.js", "utf8");
-  assert.ok(service.includes("notifyOrderConfirmation(await customerReceiptEmailFor(order))"), "settlement sends the itemized receipt");
+  assert.ok(service.includes("customerReceiptEmailFor(order).then((email) => notifyOrderConfirmation(email))"), "settlement sends the itemized receipt without blocking on it");
+});
+
+test("a hostile item name cannot inject markup into the receipt email", async () => {
+  const { renderOrderReceiptEmail } = await import("../apps/api/src/services/emailTemplates/orderReceiptEmail.js");
+  const { html } = renderOrderReceiptEmail({
+    receipt: {
+      restaurant: { name: `Bad "Diner" <img src=x onerror=alert(1)>`, phone: "<b>555</b>" },
+      order: { orderNumber: "1<script>" },
+      items: [{ name: "<script>alert(1)</script>", quantity: 1, totalCents: 100 }],
+      totals: { subtotalCents: 100, taxCents: 0, totalCents: 100 },
+      payment: { provider: "STRIPE_CONNECT", status: "PAID" }
+    },
+    trackingUrl: 'https://example.test/app/order/o1?token=t" onload="alert(1)'
+  });
+  assert.equal(html.includes("<script>"), false, "script tags are escaped");
+  assert.equal(html.includes("<img"), false, "an image tag cannot reach the customer's mail client");
+  assert.equal(html.includes('token=t" onload='), false, "the tracking link cannot break out of its attribute");
+  assert.ok(html.includes("&lt;script&gt;"), "the hostile name is shown as text");
+});
+
+test("the emailed receipt lines add up to the printed total", async () => {
+  const { renderOrderReceiptEmail } = await import("../apps/api/src/services/emailTemplates/orderReceiptEmail.js");
+  const { buildReceiptPayload } = await import("../apps/api/src/services/orderWorkflowService.js");
+  const restaurant = await prisma.restaurant.findUnique({ where: { slug: runId } });
+  const menuItem = await prisma.menuItem.findFirst({ where: { restaurantId: restaurant.id } });
+  const customer = await prisma.customer.create({ data: { restaurantId: restaurant.id, name: "Fees", email: `fees-${runId}@example.test` } });
+  const order = await prisma.order.create({
+    data: {
+      restaurant: { connect: { id: restaurant.id } },
+      customer: { connect: { id: customer.id } },
+      orderNumber: `${runId}-fees`,
+      type: "DELIVERY",
+      subtotalCents: 4000,
+      discountCents: 500,
+      taxCents: 280,
+      deliveryFeeCents: 300,
+      restaurantTipCents: 200,
+      driverTipCents: 150,
+      totalCents: 4430,
+      items: { create: [{ menuItem: { connect: { id: menuItem.id } }, name: "Plate", quantity: 2, unitPriceCents: 2000 }] }
+    }
+  });
+  await prisma.restaurantOrderPayment.create({
+    data: {
+      restaurantId: restaurant.id, orderId: order.id, provider: "STRIPE_CONNECT", status: "PAID", paidAt: new Date(),
+      subtotalCents: 4000, discountCents: 500, taxCents: 280, deliveryFeeCents: 300, serviceFeeCents: 0,
+      restaurantTipCents: 200, driverTipCents: 150, totalCents: 4430, restaurantGrossCents: 4280, restaurantNetCents: 4280
+    }
+  });
+  const full = await prisma.order.findUnique({ where: { id: order.id }, include: { restaurant: true, customer: true, items: true, statusHistory: true, payment: true, restaurantOrderPayment: { include: { refunds: true } } } });
+  const receipt = buildReceiptPayload(full, { kind: "customer" });
+  const { text } = renderOrderReceiptEmail({ receipt });
+  const lineAmounts = text
+    .split("\n")
+    .filter((line) => /^(Subtotal|Discount|Delivery|Service fee|Tax|Tip|Driver tip|Other):/.test(line))
+    .map((line) => {
+      const amount = line.split(": ").pop().trim();
+      const negative = amount.startsWith("-");
+      return Math.round(Number(amount.replace(/[-$,]/g, "")) * 100) * (negative ? -1 : 1);
+    });
+  const summed = Math.round(lineAmounts.reduce((total, amount) => total + amount, 0));
+  assert.equal(summed, receipt.totals.totalCents, `emailed lines (${summed}) must add up to the total (${receipt.totals.totalCents})`);
+  assert.ok(text.includes("Total: $44.30"));
 });
 
 test("web storefront starts from real restaurant fulfilment and no sample customer", () => {

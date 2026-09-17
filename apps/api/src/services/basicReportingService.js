@@ -82,8 +82,14 @@ export async function listRestaurantPayments({ restaurantId, day, locationId, li
   return {
     range: { day: range.day, from: range.from.toISOString(), to: range.to.toISOString(), timezone: range.timezone },
     locationId: location?.id || null,
+    // The list is capped; the summary above it is not, so say when there is more than one page.
+    hasMore: payments.length >= Math.min(Math.max(Number(limit) || 100, 1), 200),
     payments: payments.map((payment) => {
+      // Pending refunds already hold balance on the server, so the page must not offer it twice.
       const refundedCents = payment.refunds.filter((refund) => refund.status === "SUCCEEDED").reduce((sum, refund) => sum + refund.amountCents, 0);
+      const pendingRefundCents = payment.refunds.filter((refund) => refund.status === "PENDING").reduce((sum, refund) => sum + refund.amountCents, 0);
+      // Cash is refunded at the drawer; Loohar can only reverse a card payment it captured.
+      const refundableThroughLoohar = payment.provider === "STRIPE_CONNECT" && ["PAID", "PARTIALLY_REFUNDED"].includes(payment.status);
       return {
         id: payment.id,
         orderId: payment.orderId,
@@ -103,7 +109,8 @@ export async function listRestaurantPayments({ restaurantId, day, locationId, li
         driverTipCents: payment.driverTipCents || 0,
         totalCents: payment.totalCents,
         refundedCents,
-        refundableCents: ["PAID", "PARTIALLY_REFUNDED"].includes(payment.status) ? Math.max(0, payment.totalCents - refundedCents) : 0,
+        pendingRefundCents,
+        refundableCents: refundableThroughLoohar ? Math.max(0, payment.totalCents - refundedCents - pendingRefundCents) : 0,
         paidAt: payment.paidAt,
         createdAt: payment.createdAt,
         failureReason: payment.failureReason,

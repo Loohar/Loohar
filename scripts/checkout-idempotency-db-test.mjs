@@ -79,7 +79,7 @@ mock.module(new URL("../apps/api/src/modules/orderPayments/quoteService.js", imp
 });
 
 const { prisma } = await import("../apps/api/src/config/prisma.js");
-const { createOrderPayment } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
+const { createOrderPayment, markOrderPaymentPaid } = await import("../apps/api/src/modules/orderPayments/orderPaymentService.js");
 const { hashToken, issueOrderTrackingToken } = await import("../apps/api/src/services/orderWorkflowService.js");
 
 const runId = `l03${Date.now().toString(36)}`;
@@ -242,4 +242,20 @@ test("replay fails visibly when the connected account is no longer available", a
   const replay = await outcome(createOrderPayment({ body, idempotencyKey: keyFor("noacct") }));
   assert.equal(replay.ok, false);
   assert.equal(replay.status, 503);
+});
+
+test("settling a payment keeps the tracking link the customer was already given", async () => {
+  const restaurantE = await seedRestaurant("e");
+  const body = bodyFor(restaurantE);
+  const checkout = await createOrderPayment({ body, idempotencyKey: keyFor("tracking") });
+  const issuedToken = checkout.tracking.token;
+  const payment = await prisma.restaurantOrderPayment.findUnique({ where: { id: checkout.payment.id } });
+
+  await markOrderPaymentPaid({ payment, providerChargeId: `ch_${runId}_tracking` });
+
+  const order = await prisma.order.findUnique({ where: { id: checkout.order.id } });
+  assert.equal(order.trackingTokenHash, hashToken(issuedToken), "the customer's tracking token still works after payment");
+  const replay = await createOrderPayment({ body, idempotencyKey: keyFor("tracking") });
+  assert.equal(replay.tracking.token, issuedToken, "an idempotent replay still returns the same tracking token");
+  assert.equal(replay.payment.status, "PAID");
 });

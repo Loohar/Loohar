@@ -9548,6 +9548,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       });
       setCart([]);
       setQuote(null);
+      setTipCents(0);
       setNotice("Order held for later.");
       dispatchWorkflow({ type: POS_EVENT.HOLD_ORDER });
       void loadOrderLists();
@@ -9579,6 +9580,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       if (!preserveCart) {
         setCart([]);
         setQuote(null);
+        setTipCents(0);
       }
       setNotice("Order sent to the kitchen queue.");
       if (refreshAfterSubmit) void loadOrderLists();
@@ -9769,6 +9771,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       };
     }));
     setQuote(null);
+    setTipCents(0);
     setNotice("Held order loaded into the register.");
   }
 
@@ -9917,7 +9920,7 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
   // The tip is part of the server-verified total, so changing it always re-quotes.
   async function applyTip(nextTipCents) {
     const normalized = Math.max(0, Math.round(Number(nextTipCents) || 0));
-    setTipCents(normalized);
+    const previous = tipCents;
     if (lastOrder?.id) return;
     if (!cart.length) return;
     if (!apiOnline || connectionFailed) {
@@ -9925,7 +9928,13 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
       setTipCents(0);
       return;
     }
-    await calculateQuote(cart, { tipCents: normalized });
+    setTipCents(normalized);
+    const nextQuote = await calculateQuote(cart, { tipCents: normalized });
+    // Never show a tip the server did not put in the total (an offline fallback quote carries none).
+    if (!nextQuote || Number(nextQuote.tipCents || 0) !== normalized) {
+      setTipCents(Number(nextQuote?.tipCents || 0) || (nextQuote ? 0 : previous));
+      if (nextQuote) setError("The tip could not be added to this check. Try again once the register is back online.");
+    }
   }
 
   async function loadTerminalReaders() {
@@ -10145,6 +10154,8 @@ function RestaurantPosWorkspace({ apiOnline, apiMode, authReady, token, user, re
     setCart([]);
     setSelectedCartLineId("");
     setQuote(null);
+    // A tip belongs to the guest who chose it, never to the next check.
+    setTipCents(0);
   }
 
   function returnHome() {
@@ -11008,6 +11019,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [refundDrafts, setRefundDrafts] = useState({});
   const [refundNotice, setRefundNotice] = useState("");
+  const refundAttemptKeysRef = useRef(new Map());
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerSegmentFilter, setCustomerSegmentFilter] = useState("ALL");
   const [customerTypeFilter, setCustomerTypeFilter] = useState("ALL");
@@ -12400,10 +12412,6 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     }
   }
 
-  useEffect(() => {
-    if (isPaymentsPage) void loadPayments(paymentsDay);
-  }, [isPaymentsPage, paymentsDay, restaurantId, apiOnline, token]);
-
   async function refundPayment(payment) {
     if (!apiOnline || !token) return liveRestaurantRequired("Live API connection and restaurant login are required to refund a payment.");
     const draft = refundDrafts[payment.id] || {};
@@ -12412,18 +12420,27 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
       : Math.round(Number(draft.amount) * 100);
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return setError("Enter a refund amount greater than zero.");
     if (amountCents > payment.refundableCents) return setError(`This payment has ${money(payment.refundableCents)} left to refund.`);
+    // A fresh key per click: retrying the same click is safe, while a genuine second refund of the
+    // same amount is never mistaken for a replay of the first.
+    const attemptKey = refundAttemptKeysRef.current.get(payment.id) || `refund-${payment.id}-${crypto.randomUUID()}`;
+    refundAttemptKeysRef.current.set(payment.id, attemptKey);
     setSavingAction(`refund-${payment.id}`);
     setError("");
+    setRefundNotice("");
     try {
-      await api("/api/order-payments/refund", {
+      const result = await api("/api/order-payments/refund", {
         method: "POST",
         token,
-        // One key per refund attempt, so a retry after a network error cannot refund twice.
-        headers: { "Idempotency-Key": `refund-${payment.id}-${amountCents}-${draft.attempt || 1}` },
+        headers: { "Idempotency-Key": attemptKey },
         body: { orderId: payment.orderId, amountCents, reason: draft.reason || "requested_by_customer" }
       });
-      setRefundNotice(`Refunded ${money(amountCents)} on order ${payment.orderNumber || payment.orderId}.`);
-      setRefundDrafts((current) => ({ ...current, [payment.id]: { ...draft, amount: "", attempt: (draft.attempt || 1) + 1 } }));
+      refundAttemptKeysRef.current.delete(payment.id);
+      const status = result?.refund?.status || "PENDING";
+      const label = `${money(result?.refund?.amountCents ?? amountCents)} on order ${payment.orderNumber || payment.orderId}`;
+      if (status === "SUCCEEDED") setRefundNotice(`Refunded ${label}.`);
+      else if (status === "PENDING") setRefundNotice(`Refund of ${label} was submitted and is still confirming with the card network.`);
+      else setError(`The refund of ${label} did not go through (${readable(status)}). The customer has not been refunded.`);
+      setRefundDrafts((current) => ({ ...current, [payment.id]: { ...draft, amount: "" } }));
       await loadPayments();
     } catch (refundError) {
       setError(refundError.message);
@@ -12553,6 +12570,9 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const isCustomersPage = currentRestaurantPage === "customers";
   const isDriversPage = currentRestaurantPage === "drivers";
   const isPaymentsPage = currentRestaurantPage === "payments";
+  useEffect(() => {
+    if (isPaymentsPage) void loadPayments(paymentsDay);
+  }, [isPaymentsPage, paymentsDay, restaurantId, apiOnline, token]);
   const refundReasons = ["requested_by_customer", "duplicate", "fraudulent"];
   const isReportsPage = currentRestaurantPage === "reports";
   const isSettingsPage = currentRestaurantPage === "settings";
@@ -13557,7 +13577,15 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                           </select>
                           <button className="button-muted" type="button" onClick={() => refundPayment(payment)} disabled={savingAction === `refund-${payment.id}`}>{savingAction === `refund-${payment.id}` ? "Refunding..." : "Refund"}</button>
                         </div>
-                      ) : <span className="text-xs font-semibold text-slate-400">{payment.status === "PAID" ? "Fully refunded" : "Not paid"}</span>}
+                      ) : <span className="text-xs font-semibold text-slate-400">{
+                        payment.method === "POS_CASH" || payment.method === "MANUAL"
+                          ? "Cash - refund at the drawer"
+                          : payment.pendingRefundCents
+                            ? `Refund of ${money(payment.pendingRefundCents)} confirming`
+                            : payment.status === "PAID" || payment.status === "PARTIALLY_REFUNDED"
+                              ? "Fully refunded"
+                              : "Not paid"
+                      }</span>}
                     </td>
                   </tr>
                 );

@@ -65,7 +65,7 @@ const refundSchema = z.object({
   body: z.object({
     orderId: z.string(),
     amountCents: z.number().int().positive().optional(),
-    reason: z.string().optional()
+    reason: z.string().max(200).optional()
   })
 });
 

@@ -19,10 +19,14 @@ function maskRecipient(value = "") {
   return `${name.slice(0, 2)}***@${domain}`;
 }
 
+// Log-safe view of a notification payload. Tracking links are bearer credentials for an order, and
+// a receipt carries the customer's details, so neither is ever logged.
 function sanitizeNotificationData(data = {}) {
   return Object.fromEntries(
     Object.entries(data).map(([key, value]) => {
-      if (/token|password|secret|resetUrl/i.test(key)) return [key, "[redacted]"];
+      if (/token|password|secret|resetUrl|trackingUrl|url$/i.test(key)) return [key, "[redacted]"];
+      if (key === "receipt") return [key, "[receipt omitted]"];
+      if (value && typeof value === "object") return [key, "[omitted]"];
       return [key, value];
     })
   );
@@ -145,6 +149,9 @@ export async function sendSms({ to, template, data = {} }) {
 
 // The customer gets the same itemized receipt the restaurant would print, not a summary line.
 export async function notifyOrderConfirmation({ order, receipt = null, trackingUrl = "" }) {
+  // POS walk-in orders carry a synthetic address; sending there would hard-bounce every counter sale.
+  const recipient = String(order.customer?.email || "");
+  if (!recipient || recipient.endsWith("@guest.loohar.local")) return { queued: false, skipped: "no_customer_email" };
   return sendEmail({
     to: order.customer?.email,
     subject: `Order #${order.orderNumber} confirmed`,
