@@ -43,6 +43,74 @@ function sumBy(rows, field) {
   return rows.reduce((total, row) => total + (Number(row[field]) || 0), 0);
 }
 
+// Payments the restaurant can act on: one row per order payment, with how it was taken and how much
+// of it has been refunded. Amounts and refund state always come from stored rows.
+export async function listRestaurantPayments({ restaurantId, day, locationId, limit = 100 }) {
+  const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { timezone: true } });
+  if (!restaurant) {
+    const error = new Error("Restaurant not found.");
+    error.status = 404;
+    throw error;
+  }
+  const range = zonedDayRange(day, restaurant.timezone || "America/Denver");
+  const location = locationId
+    ? await prisma.restaurantLocation.findFirst({ where: { id: locationId, restaurantId }, select: { id: true } })
+    : null;
+  if (locationId && !location) {
+    const error = new Error("Location not found for this restaurant.");
+    error.status = 404;
+    error.code = "LOCATION_NOT_FOUND";
+    throw error;
+  }
+  const payments = await prisma.restaurantOrderPayment.findMany({
+    where: {
+      restaurantId,
+      createdAt: { gte: range.from, lt: range.to },
+      ...(location ? { order: { locationId: location.id } } : {})
+    },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(Math.max(Number(limit) || 100, 1), 200),
+    select: {
+      id: true, orderId: true, status: true, provider: true, currency: true, quoteJson: true,
+      subtotalCents: true, discountCents: true, taxCents: true, deliveryFeeCents: true,
+      restaurantTipCents: true, driverTipCents: true, totalCents: true,
+      paidAt: true, createdAt: true, failureReason: true,
+      order: { select: { orderNumber: true, type: true, status: true, locationId: true, customer: { select: { name: true } } } },
+      refunds: { select: { id: true, amountCents: true, status: true, reason: true, createdAt: true }, orderBy: { createdAt: "desc" } }
+    }
+  });
+  return {
+    range: { day: range.day, from: range.from.toISOString(), to: range.to.toISOString(), timezone: range.timezone },
+    locationId: location?.id || null,
+    payments: payments.map((payment) => {
+      const refundedCents = payment.refunds.filter((refund) => refund.status === "SUCCEEDED").reduce((sum, refund) => sum + refund.amountCents, 0);
+      return {
+        id: payment.id,
+        orderId: payment.orderId,
+        orderNumber: payment.order?.orderNumber || null,
+        orderType: payment.order?.type || null,
+        orderStatus: payment.order?.status || null,
+        customerName: payment.order?.customer?.name || null,
+        method: paymentMethod(payment),
+        status: payment.status,
+        currency: payment.currency,
+        subtotalCents: payment.subtotalCents,
+        discountCents: payment.discountCents,
+        taxCents: payment.taxCents,
+        deliveryFeeCents: payment.deliveryFeeCents,
+        tipCents: (payment.restaurantTipCents || 0) + (payment.driverTipCents || 0),
+        totalCents: payment.totalCents,
+        refundedCents,
+        refundableCents: ["PAID", "PARTIALLY_REFUNDED"].includes(payment.status) ? Math.max(0, payment.totalCents - refundedCents) : 0,
+        paidAt: payment.paidAt,
+        createdAt: payment.createdAt,
+        failureReason: payment.failureReason,
+        refunds: payment.refunds
+      };
+    })
+  };
+}
+
 export async function buildBasicSalesSummary({ restaurantId, day, locationId }) {
   const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId }, select: { timezone: true } });
   if (!restaurant) {

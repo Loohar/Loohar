@@ -19,7 +19,7 @@ Object.assign(process.env, { DATABASE_URL: databaseUrl, DIRECT_URL: databaseUrl,
 console.log = () => {};
 
 const { prisma } = await import("../apps/api/src/config/prisma.js");
-const { buildBasicSalesSummary } = await import("../apps/api/src/services/basicReportingService.js");
+const { buildBasicSalesSummary, listRestaurantPayments } = await import("../apps/api/src/services/basicReportingService.js");
 
 const runId = `br${Date.now().toString(36)}`;
 const ctx = {};
@@ -145,4 +145,47 @@ test("an explicit past day reports that day in the restaurant's timezone", async
   const summary = await buildBasicSalesSummary({ restaurantId: ctx.a.restaurant.id, day, locationId: "" });
   assert.equal(summary.range.day, day);
   assert.equal(summary.payments.collectedCents, 4444);
+});
+
+test("the payments list shows how each payment was taken and what is refundable", async () => {
+  const { payments } = await listRestaurantPayments({ restaurantId: ctx.a.restaurant.id, day: "", locationId: "" });
+  const byOrder = new Map(payments.map((payment) => [payment.orderId, payment]));
+  const online = byOrder.get(ctx.online.order.id);
+  assert.equal(online.method, "ONLINE_CARD");
+  assert.equal(online.totalCents, 2000);
+  assert.equal(online.refundedCents, 500, "successful refunds are subtracted");
+  assert.equal(online.refundableCents, 1500);
+  assert.equal(byOrder.get(ctx.cash.order.id).method, "POS_CASH");
+  assert.equal(byOrder.get(ctx.terminal.order.id).method, "POS_CARD_PRESENT");
+
+  const pending = byOrder.get(ctx.pending.order.id);
+  assert.equal(pending.status, "REQUIRES_PAYMENT_METHOD");
+  assert.equal(pending.refundableCents, 0, "an unpaid order is voided, never refunded");
+  assert.equal("quoteJson" in online, false, "quote internals stay internal");
+  assert.equal("checkoutIdempotencyKeyHash" in online, false);
+});
+
+test("the payments list is tenant and location scoped", async () => {
+  const other = await listRestaurantPayments({ restaurantId: ctx.b.restaurant.id, day: "", locationId: "" });
+  assert.equal(other.payments.length, 1);
+  assert.equal(other.payments[0].totalCents, 9999);
+  const scoped = await listRestaurantPayments({ restaurantId: ctx.a.restaurant.id, day: "", locationId: ctx.a.second.id });
+  assert.equal(scoped.payments.length, 1);
+  assert.equal(scoped.payments[0].orderId, ctx.otherLocation.order.id);
+  await assert.rejects(
+    () => listRestaurantPayments({ restaurantId: ctx.a.restaurant.id, day: "", locationId: ctx.b.main.id }),
+    (error) => error.status === 404 && error.code === "LOCATION_NOT_FOUND"
+  );
+});
+
+test("the dashboard payments page refunds through the payment, and voiding stays on orders", async () => {
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync("apps/web/src/App.jsx", "utf8");
+  assert.ok(app.includes('api("/api/order-payments/refund"'), "refunds use the guarded refund endpoint");
+  assert.ok(app.includes('"Idempotency-Key": `refund-${payment.id}-${amountCents}-${draft.attempt || 1}`'), "each refund attempt carries its own idempotency key");
+  assert.ok(app.includes("This payment has ${money(payment.refundableCents)} left to refund."), "a refund cannot exceed what is left");
+  assert.ok(app.includes("reporting/payments"), "the page reads the payments list");
+  assert.ok(app.includes("An order that was never paid is voided from Orders instead."), "voids and refunds stay distinct in the UI");
+  const lifecycle = readFileSync("apps/api/src/services/orderLifecycleService.js", "utf8");
+  assert.ok(lifecycle.includes("ORDER_REFUND_REQUIRED"), "a paid order cannot be voided without refunding first");
 });

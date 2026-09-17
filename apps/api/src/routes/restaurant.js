@@ -38,7 +38,7 @@ import {
 } from "../services/restaurantMetricsService.js";
 import { normalizeEmail } from "../utils/authSecurity.js";
 import { isActiveTaxProfile } from "../services/taxDomain.js";
-import { buildBasicSalesSummary } from "../services/basicReportingService.js";
+import { buildBasicSalesSummary, listRestaurantPayments } from "../services/basicReportingService.js";
 import { POS_PERMISSION } from "../services/posService.js";
 import { assertOrderTransition, closeOnlinePaymentForCancellation, isUnpaidOnlineCheckout } from "../services/orderLifecycleService.js";
 
@@ -2652,6 +2652,21 @@ router.delete("/:restaurantId/inventory/:itemId", async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: "Inventory item not found" });
     const item = await prisma.inventoryItem.update({ where: { id: existing.id }, data: { active: false } });
     res.json({ item });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Payments a restaurant can review and refund. Refunding stays on POST /api/order-payments/refund,
+// which is deliberately separate from voiding an unpaid order (a status change to CANCELLED).
+router.get("/:restaurantId/reporting/payments", async (req, res, next) => {
+  try {
+    res.json(await listRestaurantPayments({
+      restaurantId: restaurantIdFor(req),
+      day: req.query.day?.toString() || "",
+      locationId: req.query.locationId?.toString() || "",
+      limit: req.query.limit
+    }));
   } catch (error) {
     next(error);
   }

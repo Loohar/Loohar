@@ -27,13 +27,22 @@ const pageHelpers = sliceBetween(app, "function restaurantPageFromPath(", "\nfun
 const restaurantApp = sliceBetween(app, "function RestaurantApp(", "\nfunction KitchenApp");
 const routeBlock = sliceBetween(app, "if (isRestaurantRoute || isSiteAdminRoute)", "\n  if (isSiteRoute)");
 
-const requiredPages = ["dashboard", "pos", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
+const requiredPages = ["dashboard", "pos", "orders", "payments", "kitchen", "customers", "drivers", "reports", "settings"];
 
 assertCheck(packageJson.scripts?.["test:restaurant-routing"] === "node scripts/restaurant-routing-test.mjs", "Restaurant routing test script is registered");
 for (const page of requiredPages) {
   assertCheck(pageDefinitions.includes(`${page}: {`), `${page} is defined as a restaurant page`);
 }
-assertCheck(app.includes('const restaurantPageOrder = ["dashboard", "pos", "orders", "kitchen", "customers", "drivers", "reports", "settings"]'), "Restaurant sidebar order uses the required dedicated routes");
+// The sidebar may grow, but every required page must be present and keep its relative order.
+const sidebarOrder = (app.match(/const restaurantPageOrder = \[(.*?)\];/)?.[1] || "")
+  .split(",")
+  .map((entry) => entry.trim().replace(/"/g, ""))
+  .filter(Boolean);
+const requiredPositions = requiredPages.map((page) => sidebarOrder.indexOf(page));
+assertCheck(
+  requiredPositions.every((position, index) => position >= 0 && (index === 0 || requiredPositions[index - 1] < position)),
+  "Restaurant sidebar order uses the required dedicated routes"
+);
 assertCheck(app.includes("function restaurantPagePath") && app.includes('const base = slug ? `/restaurant/${slug}` : "/restaurant"') && app.includes("return `${base}/${page}`"), "Restaurant route helper builds /restaurant/:slug/:page paths");
 assertCheck(app.includes("function legacyRestaurantRedirectPath") && app.includes("return restaurantPagePath(slug, page)"), "Malformed legacy routes redirect to tenant-scoped paths");
 assertCheck(app.includes('if (prefix === "restaurant" && isRestaurantPageSegment(parts[1])) return "";'), "Route slug parser does not treat page names as tenant slugs");

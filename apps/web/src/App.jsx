@@ -1368,6 +1368,12 @@ const restaurantPageDefinitions = {
     title: "POS kiosk",
     description: "Run a secure full-screen register for cashier and counter staff."
   },
+  payments: {
+    label: "Payments",
+    icon: CreditCard,
+    title: "Payments and refunds",
+    description: "Review what was taken today and refund a paid order. Unpaid orders are voided from Orders instead."
+  },
   orders: {
     label: "Orders",
     icon: ReceiptText,
@@ -1406,7 +1412,7 @@ const restaurantPageDefinitions = {
   }
 };
 
-const restaurantPageOrder = ["dashboard", "pos", "orders", "kitchen", "customers", "drivers", "reports", "settings"];
+const restaurantPageOrder = ["dashboard", "pos", "orders", "payments", "kitchen", "customers", "drivers", "reports", "settings"];
 const restaurantSettingsChildRoutes = new Set([
   "account",
   "restaurant-profile",
@@ -1478,6 +1484,8 @@ function restaurantPageFromPath(path = "") {
   if (parts[0] !== "restaurant") return "dashboard";
   const maybePage = parts[2] || (isRestaurantPageSegment(parts[1]) ? parts[1] : "dashboard");
   if (maybePage === "onboarding") return "settings";
+  // A dedicated page wins over a same-named settings section (/payments vs /settings/payments).
+  if (isRestaurantPageSegment(maybePage)) return maybePage;
   if (restaurantSettingsChildRoutes.has(maybePage)) return "settings";
   if (maybePage === "dashboard" && typeof window !== "undefined") {
     const legacyHashPages = {
@@ -1511,7 +1519,7 @@ function normalizeRestaurantSettingsSectionId(section = "") {
 function restaurantSettingsSectionFromPath(path = "", hash = "") {
   const parts = pathParts(path);
   if (parts[0] === "restaurant" && parts[2] === "settings" && parts[3]) return normalizeRestaurantSettingsSectionId(parts[3]);
-  if (parts[0] === "restaurant" && restaurantSettingsChildRoutes.has(parts[2])) return normalizeRestaurantSettingsSectionId(parts[2]);
+  if (parts[0] === "restaurant" && !isRestaurantPageSegment(parts[2]) && restaurantSettingsChildRoutes.has(parts[2])) return normalizeRestaurantSettingsSectionId(parts[2]);
   if (hash) return normalizeRestaurantSettingsSectionId(hash);
   return "";
 }
@@ -10974,6 +10982,11 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const [notificationSettings, setNotificationSettings] = useState(() => emptyNotificationSettings());
   const [operationsReport, setOperationsReport] = useState(() => emptyOperationsReport());
   const [reportRange, setReportRange] = useState("30d");
+  const [paymentsDay, setPaymentsDay] = useState("");
+  const [paymentsView, setPaymentsView] = useState({ payments: [], range: null, summary: null });
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [refundDrafts, setRefundDrafts] = useState({});
+  const [refundNotice, setRefundNotice] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [customerSegmentFilter, setCustomerSegmentFilter] = useState("ALL");
   const [customerTypeFilter, setCustomerTypeFilter] = useState("ALL");
@@ -12346,6 +12359,58 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     navigateInApp(receiptPathForOrder(order, kind, options));
   }
 
+  // Payments and refunds. Refunding is deliberately separate from voiding an unpaid order, which
+  // stays a status change on the Orders page.
+  async function loadPayments(day = paymentsDay) {
+    if (!apiOnline || !token || !restaurantId) return;
+    setPaymentsLoading(true);
+    try {
+      const query = day ? `?day=${encodeURIComponent(day)}` : "";
+      const [list, summary] = await Promise.all([
+        api(`/api/restaurants/${restaurantId}/reporting/payments${query}`, { token }),
+        api(`/api/restaurants/${restaurantId}/reporting/daily${query}`, { token })
+      ]);
+      setPaymentsView({ payments: list.payments || [], range: list.range || null, summary });
+    } catch (paymentsError) {
+      setError(paymentsError.message);
+      setPaymentsView({ payments: [], range: null, summary: null });
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isPaymentsPage) void loadPayments(paymentsDay);
+  }, [isPaymentsPage, paymentsDay, restaurantId, apiOnline, token]);
+
+  async function refundPayment(payment) {
+    if (!apiOnline || !token) return liveRestaurantRequired("Live API connection and restaurant login are required to refund a payment.");
+    const draft = refundDrafts[payment.id] || {};
+    const amountCents = draft.amount === undefined || draft.amount === ""
+      ? payment.refundableCents
+      : Math.round(Number(draft.amount) * 100);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return setError("Enter a refund amount greater than zero.");
+    if (amountCents > payment.refundableCents) return setError(`This payment has ${money(payment.refundableCents)} left to refund.`);
+    setSavingAction(`refund-${payment.id}`);
+    setError("");
+    try {
+      await api("/api/order-payments/refund", {
+        method: "POST",
+        token,
+        // One key per refund attempt, so a retry after a network error cannot refund twice.
+        headers: { "Idempotency-Key": `refund-${payment.id}-${amountCents}-${draft.attempt || 1}` },
+        body: { orderId: payment.orderId, amountCents, reason: draft.reason || "requested_by_customer" }
+      });
+      setRefundNotice(`Refunded ${money(amountCents)} on order ${payment.orderNumber || payment.orderId}.`);
+      setRefundDrafts((current) => ({ ...current, [payment.id]: { ...draft, amount: "", attempt: (draft.attempt || 1) + 1 } }));
+      await loadPayments();
+    } catch (refundError) {
+      setError(refundError.message);
+    } finally {
+      setSavingAction("");
+    }
+  }
+
   async function saveNotificationSettings(next = notificationSettings) {
     if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API connection and restaurant login are required to save notification settings.");
     try {
@@ -12466,6 +12531,8 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const isOrdersPage = currentRestaurantPage === "orders";
   const isCustomersPage = currentRestaurantPage === "customers";
   const isDriversPage = currentRestaurantPage === "drivers";
+  const isPaymentsPage = currentRestaurantPage === "payments";
+  const refundReasons = ["requested_by_customer", "duplicate", "fraudulent"];
   const isReportsPage = currentRestaurantPage === "reports";
   const isSettingsPage = currentRestaurantPage === "settings";
   const isSettingsCenterPage = isSettingsPage && !selectedSettingsSectionId;
@@ -13423,6 +13490,61 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
           </>}
         </div>
         ) : null}
+      </div>
+      ) : null}
+      {isPaymentsPage ? (
+      <div className="panel" id="payments">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+          <div>
+            <h3 className="panel-title">Payments and refunds</h3>
+            <p className="mt-2 text-sm text-slate-500">Money taken on this day, however it was collected. Refunds go back to the customer through the same payment. An order that was never paid is voided from Orders instead.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input className="input max-w-44" type="date" value={paymentsDay || paymentsView.range?.day || ""} onChange={(event) => setPaymentsDay(event.target.value)} aria-label="Payments day" />
+            <button className="button-muted" type="button" onClick={() => loadPayments()} disabled={paymentsLoading}><RefreshCw size={16} />Refresh</button>
+          </div>
+        </div>
+        {refundNotice ? <div className="mt-3 rounded-md bg-mint/10 px-3 py-2 text-sm font-semibold text-mint" role="status">{refundNotice}</div> : null}
+        {paymentsView.summary ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <div className="summary-line rounded-md bg-slate-50 px-3"><span>Collected</span><strong>{money(paymentsView.summary.payments?.collectedCents || 0)}</strong></div>
+            <div className="summary-line rounded-md bg-slate-50 px-3"><span>Refunded</span><strong>{money(paymentsView.summary.refunds?.amountCents || 0)}</strong></div>
+            <div className="summary-line rounded-md bg-slate-50 px-3"><span>Net</span><strong>{money(paymentsView.summary.reconciliation?.netCollectedCents || 0)}</strong></div>
+            <div className="summary-line rounded-md bg-slate-50 px-3"><span>Awaiting payment</span><strong>{paymentsView.summary.reconciliation?.awaitingPaymentCount || 0}</strong></div>
+          </div>
+        ) : null}
+        <div className="mt-4 overflow-x-auto">
+          <table className="table">
+            <thead><tr><th>Order</th><th>Taken by</th><th>Status</th><th>Total</th><th>Refunded</th><th>Refund</th></tr></thead>
+            <tbody>
+              {paymentsView.payments.map((payment) => {
+                const draft = refundDrafts[payment.id] || {};
+                const refundable = payment.refundableCents > 0;
+                return (
+                  <tr key={payment.id}>
+                    <td><strong>{payment.orderNumber || payment.orderId}</strong><span className="block text-xs text-slate-500">{payment.customerName || "Walk-in"}</span></td>
+                    <td>{readable(payment.method)}</td>
+                    <td><StatusPill tone={payment.status === "PAID" ? "good" : payment.status === "FAILED" ? "bad" : "neutral"}>{readable(payment.status)}</StatusPill></td>
+                    <td>{money(payment.totalCents)}</td>
+                    <td>{payment.refundedCents ? money(payment.refundedCents) : "-"}</td>
+                    <td>
+                      {refundable ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input className="input max-w-24" type="number" min="0.01" step="0.01" placeholder={(payment.refundableCents / 100).toFixed(2)} value={draft.amount ?? ""} onChange={(event) => setRefundDrafts((current) => ({ ...current, [payment.id]: { ...draft, amount: event.target.value } }))} aria-label={`Refund amount for order ${payment.orderNumber || payment.orderId}`} />
+                          <select className="select max-w-40" value={draft.reason || "requested_by_customer"} onChange={(event) => setRefundDrafts((current) => ({ ...current, [payment.id]: { ...draft, reason: event.target.value } }))} aria-label="Refund reason">
+                            {refundReasons.map((reason) => <option value={reason} key={reason}>{readable(reason)}</option>)}
+                          </select>
+                          <button className="button-muted" type="button" onClick={() => refundPayment(payment)} disabled={savingAction === `refund-${payment.id}`}>{savingAction === `refund-${payment.id}` ? "Refunding..." : "Refund"}</button>
+                        </div>
+                      ) : <span className="text-xs font-semibold text-slate-400">{payment.status === "PAID" ? "Fully refunded" : "Not paid"}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!paymentsView.payments.length ? <tr><td colSpan={6}>{paymentsLoading ? "Loading payments..." : "No payments on this day."}</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </div>
       ) : null}
       {isReportsPage ? (
