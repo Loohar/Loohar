@@ -130,6 +130,34 @@ test("subscription periods pair start and end from the item that renews first", 
   assert.deepEqual(stripeSubscriptionPeriod({}), { currentPeriodStart: null, currentPeriodEnd: null });
 });
 
+test("a paid order emails the customer an itemized receipt, not a data dump", async () => {
+  const { renderOrderReceiptEmail } = await import("../apps/api/src/services/emailTemplates/orderReceiptEmail.js");
+  const receipt = {
+    restaurant: { name: "Loohar Kitchen", phone: "555-0101" },
+    order: { orderNumber: "359885" },
+    items: [
+      { name: "Signature Bowl", quantity: 2, totalCents: 4140 }
+    ],
+    totals: { subtotalCents: 4140, discountCents: 0, taxCents: 342, deliveryFeeCents: 0, restaurantTipCents: 300, driverTipCents: 0, totalCents: 4782 },
+    payment: { provider: "STRIPE_CONNECT", status: "PAID", refundedCents: 0 }
+  };
+  const { html, text } = renderOrderReceiptEmail({ receipt, trackingUrl: "https://example.test/app/order/o1?token=t" });
+  for (const fragment of ["Loohar Kitchen", "359885", "2 x Signature Bowl", "$41.40", "$3.42", "$3.00", "$47.82", "Card", "Paid"]) {
+    assert.ok(html.includes(fragment), `receipt email shows ${fragment}`);
+    assert.ok(text.includes(fragment), `plain-text receipt shows ${fragment}`);
+  }
+  assert.equal(html.includes("<pre>"), false, "the receipt is not a JSON dump");
+
+  const refunded = renderOrderReceiptEmail({ receipt: { ...receipt, payment: { ...receipt.payment, status: "PARTIALLY_REFUNDED", refundedCents: 500 } } });
+  assert.ok(refunded.text.includes("Refunded: -$5.00"), "a refunded amount is shown to the customer");
+
+  const cash = renderOrderReceiptEmail({ receipt: { ...receipt, payment: { provider: "MANUAL", status: "PAID", source: "POS_CASH" } } });
+  assert.ok(cash.text.includes("Cash"), "the tender type is named");
+
+  const service = readFileSync("apps/api/src/modules/orderPayments/orderPaymentService.js", "utf8");
+  assert.ok(service.includes("notifyOrderConfirmation(await customerReceiptEmailFor(order))"), "settlement sends the itemized receipt");
+});
+
 test("web storefront starts from real restaurant fulfilment and no sample customer", () => {
   const app = readFileSync("apps/web/src/App.jsx", "utf8");
   assert.ok(app.includes('useState(apiOnline ? "PICKUP" : "DELIVERY")'));

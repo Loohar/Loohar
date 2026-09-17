@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "../../config/prisma.js";
 import { recordAudit } from "../../services/auditService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
-import { buildReceiptPayload, customerTrackingUrls, findOrderForTracking, hashToken, limitedTrackingOrder, trackingExpiresAt } from "../../services/orderWorkflowService.js";
+import { buildReceiptPayload, customerTrackingUrls, findOrderForTracking, hashToken, issueOrderTrackingToken, limitedTrackingOrder, receiptOrderInclude, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
 import { assertStripeConnectConfigured, assertStripeConnectModeAllowed, stripeConnectPublishableKey, stripeRequest, stripeV2Request, stripeForm } from "../paymentProviders/stripeRest.js";
 import { processStripeWebhookEventOnce } from "../paymentProviders/stripeWebhookEvents.js";
@@ -785,10 +785,24 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
     return { reviewRequired: true, reason: "order_not_awaiting_payment", orderStatus: settled.unexpectedOrderStatus };
   }
   const { payment: updatedPayment, order } = settled;
-  await Promise.allSettled([notifyOrderConfirmation({ order }), notifyNewOrderAlert({ order })]);
+  await Promise.allSettled([notifyOrderConfirmation(await customerReceiptEmailFor(order)), notifyNewOrderAlert({ order })]);
   emitOrderUpdate(order);
   await recordAudit({ restaurantId: order.restaurantId, action: "order_payment.paid", entityType: "RestaurantOrderPayment", entityId: updatedPayment.id, metadata: { providerPaymentIntentId: updatedPayment.providerPaymentIntentId } });
   return settled;
+}
+
+// Builds the emailed receipt from the stored order, reusing the printed-receipt payload so the email
+// and the paper agree. A failure here must never block settlement, so callers wrap it in allSettled.
+async function customerReceiptEmailFor(order) {
+  try {
+    const full = await prisma.order.findUnique({ where: { id: order.id }, include: receiptOrderInclude() });
+    if (!full) return { order };
+    const issued = await issueOrderTrackingToken(order.id);
+    const receipt = buildReceiptPayload(issued.order || full, { kind: "customer", trackingToken: issued.trackingToken });
+    return { order: full, receipt, trackingUrl: customerTrackingUrls(full, issued.trackingToken).webUrl };
+  } catch {
+    return { order };
+  }
 }
 
 export async function markOrderPaymentFailed({ payment, failureReason }) {

@@ -1,3 +1,4 @@
+import { renderOrderReceiptEmail } from "./emailTemplates/orderReceiptEmail.js";
 import { renderPasswordResetEmail } from "./emailTemplates/passwordResetEmail.js";
 
 const configuredEmailProvider = process.env.EMAIL_PROVIDER || "console";
@@ -45,6 +46,8 @@ function renderEmail({ subject, template, data = {} }) {
     body = resetUrl
       ? `<p>Welcome to ${escapeHtml(platformName)}.</p><p>Your restaurant account is ready. Use the secure link below to set your password and sign in.</p><p><a href="${escapeHtml(resetUrl)}">Set your password</a></p><p>This link expires at ${escapeHtml(data.expiresAt || "the configured expiration time")}.</p>`
       : `<p>Welcome to ${escapeHtml(platformName)}.</p><p>Your account is ready. Ask your platform owner to send a password setup link if you cannot sign in.</p>`;
+  } else if (template === "order_receipt" && data.receipt) {
+    return renderOrderReceiptEmail({ receipt: data.receipt, platformName, trackingUrl: data.trackingUrl || "" });
   } else if (template === "password_reset") {
     return renderPasswordResetEmail({
       customerName: data.customerName,
@@ -140,12 +143,15 @@ export async function sendSms({ to, template, data = {} }) {
   return { queued: true, ...message };
 }
 
-export async function notifyOrderConfirmation({ order }) {
+// The customer gets the same itemized receipt the restaurant would print, not a summary line.
+export async function notifyOrderConfirmation({ order, receipt = null, trackingUrl = "" }) {
   return sendEmail({
     to: order.customer?.email,
     subject: `Order #${order.orderNumber} confirmed`,
-    template: "order_confirmation",
-    data: { orderId: order.id, orderNumber: order.orderNumber, totalCents: order.totalCents }
+    template: receipt ? "order_receipt" : "order_confirmation",
+    data: receipt
+      ? { orderId: order.id, orderNumber: order.orderNumber, totalCents: order.totalCents, receipt, trackingUrl }
+      : { orderId: order.id, orderNumber: order.orderNumber, totalCents: order.totalCents }
   });
 }
 
