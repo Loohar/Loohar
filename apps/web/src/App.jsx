@@ -14080,8 +14080,12 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
   const [orderingEnabled, setOrderingEnabled] = useState(true);
   const [storefrontPlaceholder, setStorefrontPlaceholder] = useState(null);
   const [cart, setCart] = useState([]);
-  const [serviceType, setServiceType] = useState("DELIVERY");
-  const [customer, setCustomer] = useState({ name: "Maya Chen", email: "customer@demo.local", phone: "555-0166", deliveryAddress: "2425 Market St, Denver, CO" });
+  const [serviceType, setServiceType] = useState(apiOnline ? "PICKUP" : "DELIVERY");
+  const [fulfillment, setFulfillment] = useState(() => apiOnline ? { pickup: false, delivery: false } : { pickup: true, delivery: true });
+  // Sample customer details are only for the offline demo; real storefront visitors start empty.
+  const [customer, setCustomer] = useState(() => apiOnline
+    ? { name: user?.name || "", email: user?.email || "", phone: "", deliveryAddress: "" }
+    : { name: "Maya Chen", email: "customer@demo.local", phone: "555-0166", deliveryAddress: "2425 Market St, Denver, CO" });
   const [orderStatus, setOrderStatus] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [quote, setQuote] = useState(null);
@@ -14211,6 +14215,10 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
       const payload = await api(`/api/customer/restaurants/${targetSlug}`);
       setRestaurant(normalizePublicRestaurant(payload, emptyPublicRestaurant(targetSlug)));
       setOrderingEnabled(payload.orderingEnabled ?? isOrderingBusiness(payload.restaurant?.businessType));
+      const available = { pickup: Boolean(payload.fulfillment?.pickup), delivery: Boolean(payload.fulfillment?.delivery) };
+      setFulfillment(available);
+      setServiceType(available.pickup || !available.delivery ? "PICKUP" : "DELIVERY");
+      setCustomer((current) => current.email === "customer@demo.local" ? { name: user?.name || "", email: user?.email || "", phone: "", deliveryAddress: "" } : current);
       setStorefrontPlaceholder(payload.moduleNotice || payload.placeholder || null);
       setCart([]);
       setPaymentClientSecret("");
@@ -14482,8 +14490,8 @@ function CustomerApp({ apiOnline, token, user, initialSlug = "demo-bistro", embe
         <div className="flex flex-wrap gap-2">
           {embedded ? null : <input className="input max-w-44" value={slug} onChange={(event) => setSlug(event.target.value)} />}
           {embedded ? null : <button className="button-muted" onClick={loadMenu}><Search size={16} />Load menu</button>}
-          <button className={`seg ${serviceType === "DELIVERY" ? "active" : ""}`} onClick={() => setServiceType("DELIVERY")}><Truck size={17} />Delivery</button>
-          <button className={`seg ${serviceType === "PICKUP" ? "active" : ""}`} onClick={() => setServiceType("PICKUP")}><PackageCheck size={17} />Pickup</button>
+          {fulfillment.delivery ? <button className={`seg ${serviceType === "DELIVERY" ? "active" : ""}`} onClick={() => setServiceType("DELIVERY")}><Truck size={17} />Delivery</button> : null}
+          {fulfillment.pickup ? <button className={`seg ${serviceType === "PICKUP" ? "active" : ""}`} onClick={() => setServiceType("PICKUP")}><PackageCheck size={17} />Pickup</button> : null}
         </div>
       </div>
       <div className="order-layout">

@@ -111,6 +111,27 @@ function activeCouponWhere({ restaurantId, couponCode }) {
   };
 }
 
+function fulfillmentError(message, code) {
+  const error = new Error(message);
+  error.status = 400;
+  error.code = code;
+  return error;
+}
+
+// Online orders may only use fulfilment the restaurant has switched on. Delivery is restaurant-managed:
+// no geocoding provider is configured, so Loohar requires an address but cannot verify it against
+// delivery zones; the restaurant confirms the address before dispatch.
+function assertOnlineFulfillmentAvailable({ restaurant, orderType, body }) {
+  if (!["PICKUP", "DELIVERY"].includes(orderType)) throw fulfillmentError("Choose pickup or delivery.", "FULFILLMENT_TYPE_INVALID");
+  if (orderType === "PICKUP" && restaurant.pickupEnabled === false) {
+    throw fulfillmentError("This restaurant is not accepting pickup orders online.", "PICKUP_UNAVAILABLE");
+  }
+  if (orderType === "DELIVERY") {
+    if (restaurant.deliveryEnabled !== true) throw fulfillmentError("This restaurant is not accepting delivery orders online.", "DELIVERY_UNAVAILABLE");
+    if (String(body.deliveryAddress || "").trim().length < 5) throw fulfillmentError("Enter a delivery address.", "DELIVERY_ADDRESS_REQUIRED");
+  }
+}
+
 export async function calculateOrderQuote({ restaurantId, body }) {
   const restaurant = await prisma.restaurant.findUnique({
     where: { id: restaurantId },
@@ -199,6 +220,7 @@ export async function calculateOrderQuote({ restaurantId, body }) {
   }
 
   const orderType = body.type || "PICKUP";
+  assertOnlineFulfillmentAvailable({ restaurant, orderType, body });
   const deliveryRule = restaurant.deliveryFeeRules?.[0];
   const configuredDeliveryFeeCents = deliveryRule?.deliveryFeeCents ?? restaurant.deliveryFeeCents ?? 0;
   const freeDelivery = Boolean(coupon?.freeDelivery || coupon?.type === "FREE_DELIVERY");

@@ -28,31 +28,16 @@ function canReadCustomerOrderStatus(user, order) {
 // Storefront customers need each item's modifier groups (the server rejects orders missing required
 // selections) but never the tenant's billing, lifecycle or internal configuration fields.
 const STOREFRONT_OPTION_GROUPS = { include: { options: { orderBy: { sortOrder: "asc" } } }, orderBy: { sortOrder: "asc" } };
-router.get("/restaurants/:slug", async (req, res, next) => {
+async function featureIncluded(restaurantId, feature) {
   try {
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { slug: req.params.slug },
-      include: {
-        categories: {
-          where: { active: true },
-          include: { items: { where: { available: true }, include: { options: true, optionGroups: STOREFRONT_OPTION_GROUPS } } },
-          orderBy: { sortOrder: "asc" }
-        }
-      }
-    });
-    if (!restaurant || restaurant.status !== "ACTIVE") return res.status(404).json({ error: "Business not found" });
-    await assertFeatureForRestaurant({ restaurantId: restaurant.id, feature: FEATURE.FOOD_CATALOG, method: req.method });
-    const orderingEnabled = ["RESTAURANT", "COFFEE_SHOP", "BAKERY", "FOOD_TRUCK"].includes(restaurant.businessType);
-    const moduleNotice = orderingEnabled
-      ? null
-      : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: publicRestaurantProfile(orderingEnabled ? restaurant : { ...restaurant, categories: [] }), orderingEnabled, moduleNotice });
-  } catch (error) {
-    next(error);
+    await assertFeatureForRestaurant({ restaurantId, feature, method: "POST" });
+    return true;
+  } catch {
+    return false;
   }
-});
+}
 
-router.get("/sites/:slug", async (req, res, next) => {
+async function sendStorefront(req, res, next) {
   try {
     const restaurant = await prisma.restaurant.findUnique({
       where: { slug: req.params.slug },
@@ -70,11 +55,23 @@ router.get("/sites/:slug", async (req, res, next) => {
     const moduleNotice = orderingEnabled
       ? null
       : { module: "FOOD_CATALOG", message: "Food retail catalog ordering is planned for this tenant type. Restaurant ordering remains the complete workflow now." };
-    res.json({ restaurant: publicRestaurantProfile(orderingEnabled ? restaurant : { ...restaurant, categories: [] }), orderingEnabled, moduleNotice });
+    // What checkout will actually accept: the restaurant's switches and the plan, mirrored from the quote rules.
+    const [pickupIncluded, deliveryIncluded] = await Promise.all([
+      featureIncluded(restaurant.id, FEATURE.PICKUP),
+      featureIncluded(restaurant.id, FEATURE.DELIVERY)
+    ]);
+    const fulfillment = {
+      pickup: orderingEnabled && restaurant.pickupEnabled !== false && pickupIncluded,
+      delivery: orderingEnabled && restaurant.deliveryEnabled === true && deliveryIncluded
+    };
+    res.json({ restaurant: publicRestaurantProfile(orderingEnabled ? restaurant : { ...restaurant, categories: [] }), orderingEnabled, fulfillment, moduleNotice });
   } catch (error) {
     next(error);
   }
-});
+}
+
+router.get("/restaurants/:slug", sendStorefront);
+router.get("/sites/:slug", sendStorefront);
 
 export const createOrderSchema = z.object({
   body: z.object({

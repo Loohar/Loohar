@@ -58,6 +58,7 @@ for (const path of ["restaurants", "sites"]) {
     const [item] = body.restaurant.categories[0].items;
     assert.equal(item.optionGroups.length, 1, "required modifier groups reach the storefront");
     assert.equal(item.optionGroups[0].options[0].name, "Chicken");
+    assert.deepEqual(body.fulfillment, { pickup: true, delivery: true }, "storefront reports the fulfilment checkout accepts");
     for (const field of ["billingMode", "tenantClassification", "trialConfigJson", "paymentLifecycleStatus", "settingsJson", "tenantLifecycleStatus"]) {
       assert.equal(field in body.restaurant, false, `${field} is not public`);
     }
@@ -86,6 +87,14 @@ test("subscription periods pair start and end from the item that renews first", 
   ] } }), { currentPeriodStart: 500, currentPeriodEnd: 600 });
   assert.deepEqual(stripeSubscriptionPeriod({ items: { data: [] } }), { currentPeriodStart: null, currentPeriodEnd: null });
   assert.deepEqual(stripeSubscriptionPeriod({}), { currentPeriodStart: null, currentPeriodEnd: null });
+});
+
+test("web storefront starts from real restaurant fulfilment and no sample customer", () => {
+  const app = readFileSync("apps/web/src/App.jsx", "utf8");
+  assert.ok(app.includes('useState(apiOnline ? "PICKUP" : "DELIVERY")'));
+  assert.ok(app.includes("setFulfillment(available)"));
+  assert.ok(app.includes("{fulfillment.delivery ? <button"));
+  assert.ok(app.includes("Sample customer details are only for the offline demo"));
 });
 
 test("web checkout initialises Stripe.js with the restaurant's connected account", () => {
