@@ -1,6 +1,6 @@
 # Loohar Pilot Control Center
 
-Last updated: 2026-09-18 03:30 UTC · Machine-readable twin: `.pilot/state.json`
+Last updated: 2026-09-18 05:00 UTC · Machine-readable twin: `.pilot/state.json`
 
 Status vocabulary: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED · TESTED (local) ·
 STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness percentages are used.
@@ -11,10 +11,10 @@ STAGED · STAGING CERTIFIED · PRODUCTION · BLOCKED · DEFERRED. No readiness p
 | --- | --- | --- |
 | Production API / web | `0526862` | `/version`, `/version.json` → production |
 | origin/main | `0526862` | `git fetch origin` |
-| Staging API | `cebe5e3` (schema ok, separate DB from production) | `/version`, `/health` |
+| Staging API | `eaeff30` (schema ok, separate DB from production) | `/version`, `/health` |
 | Staging web | UNKNOWN — `loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app` behind Vercel SSO | `/version.json` 302 |
 | Staging preview → staging API CORS | ALLOWED for exact origin; other origins 403 | live probe |
-| Pilot candidate | `77cb7b0` on `release/loohar-pilot-rc-v01` on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
+| Pilot candidate | `eaeff30` on `release/loohar-pilot-rc-v01` (deployed and certified on staging) on `fix/launch-review3-fixes-v01` (pushed, NOT yet on staging — Render does not auto-deploy) | worktree `SaaS_Platform-reporting-v01` |
 | Frozen | `feature/loohar-national-tax-provider-v01` @ `1e0562b` | do not modify/merge |
 
 Candidate chain on production `0526862`: L-01 (`2d85007`,`b291ddd`,`cfec6a4`,`a3262dc`) →
@@ -107,7 +107,7 @@ fixed in `bf7430a` with tests that fail on the previous commit.
 
 | Blocker | Minimum owner action |
 | --- | --- |
-| Staging deploy access | This machine holds no Render credentials, so the authorised staging redeploy cannot be performed. Provide a staging-only deploy hook or API key in a file (never in chat) — see `.pilot/state.json` for the exact command |
+| Privileged staging evidence | Run `node scripts/staging-privileged-evidence.mjs` with a staging owner account — unblocks MFA, KDS, POS and reporting certification plus the simulated Terminal sale |
 | Staging web identity | Signed in to Vercel, open the preview `/version.json` and confirm `97d4d02` + staging API target, or grant the loohar team read access |
 | Staging evidence accounts | Create staging-only privileged accounts yourself (never share passwords in chat) for MFA/refund/KDS/POS evidence |
 | POS card-present | Buy a Stripe Terminal reader and run the on-site acceptance in `docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md` (the simulated workstream is done) |

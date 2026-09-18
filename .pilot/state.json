@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T03:30:00Z",
+  "updatedAt": "2026-09-18T05:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,15 +15,15 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "cebe5e33d3f8483e62248d84649e658225a85557",
-      "apiVerifiedAt": "2026-09-17T21:00:00Z",
+      "apiSha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
+      "apiVerifiedAt": "2026-09-18T05:00:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
-      "autoDeploy": "NO \u2014 owner redeploys manually; bf7430a deployed by owner 2026-09-17",
+      "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
-      "onlineCardCheckout": "CERTIFIED with a real Stripe TEST payment at bf7430a (order cmu5tqkr60001105q8iqvmfv2, 4782 reconciled)"
+      "onlineCardCheckout": "CERTIFIED at eaeff30 with a real Stripe TEST payment including a tip (order 688130, 4982 reconciled end to end)"
     }
   },
   "git": {
@@ -33,8 +33,8 @@
       "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704"
     },
     "candidate": {
-      "branch": "release/loohar-pilot-rc-v01 (also fix/launch-review3-fixes-v01)",
-      "sha": "77cb7b0",
+      "branch": "release/loohar-pilot-rc-v01",
+      "sha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -222,9 +222,29 @@
           "sha": "77cb7b0",
           "item": "L-42",
           "summary": "end-to-end pilot onboarding certification (signup to taking money)"
+        },
+        {
+          "sha": "e444c46",
+          "item": "L-43",
+          "summary": "Stripe Connect onboarding certification"
+        },
+        {
+          "sha": "31efdd3",
+          "item": "L-44",
+          "summary": "staging deploy tooling that verifies its target"
+        },
+        {
+          "sha": "0390b3b",
+          "item": "L-44",
+          "summary": "credential self-check for the deploy tool"
+        },
+        {
+          "sha": "eaeff30",
+          "item": "L-45",
+          "summary": "adversarial tenant isolation for payments, reporting, refunds and tracking"
         }
       ],
-      "deployedToStaging": false
+      "deployedToStaging": true
     },
     "frozenBranches": [
       {
@@ -433,14 +453,14 @@
       "title": "Web checkout cannot confirm direct-charge PaymentIntents (Stripe.js missing stripeAccount)",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PASS (staging, bf7430a)",
+      "certification": "PASS (staging, eaeff30)",
       "evidence": "Reproduced on staging: PaymentIntent retrieve with pk + client secret without Stripe-Account returns 404 resource_missing (order cmu5tqkr60001105q8iqvmfv2)"
     },
     "L-30": {
       "title": "Storefront lacked modifier groups; public endpoints leaked internal tenant/billing fields",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY"
+      "certification": "PASS (staging, eaeff30)"
     },
     "L-31": {
       "title": "Subscription webhooks ignore item-level billing periods (Stripe basil/dahlia)",
@@ -452,7 +472,7 @@
       "title": "Storefront defaulted to delivery and prefilled a demo customer",
       "priority": "P1",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY"
+      "certification": "PASS (staging, eaeff30)"
     },
     "L-33": {
       "title": "Starter plan usable for pilot: 5 employee seats, 1 register, 1 KDS, centralized entitlements",
@@ -475,28 +495,28 @@
       "priority": "P0",
       "status": "PASS",
       "certifiedAt": "2026-09-17T20:26:50Z",
-      "certifiedSha": "bf7430a0ccb847ad45ffff55071f1a236fc76704",
-      "evidence": "Loohar/Evidence/payments/STAGING_ONLINE_CARD_CERTIFICATION-bf7430a.md",
-      "result": "Client prices ignored (sent 1c, charged 4782); PaymentIntent 404 without connected account and 200 with it; test card confirmed; webhook settled PAID and moved the order to ACCEPTED; Stripe 4782 = payment 4782 = order 4782; idempotent replay returns the same order and PaymentIntent"
+      "certifiedSha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
+      "evidence": "Loohar/Evidence/payments/STAGING_CERTIFICATION-eaeff30.md",
+      "result": "Recertified at eaeff30 with a tip: client sent 1c and was charged 4982; tip 500 recorded separately; webhook settled PAID in ~4s; Stripe 4982 = payment 4982 = order 4982"
     },
     "L-35": {
       "title": "Customer order status omitted payment state",
       "priority": "P1",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY",
+      "certification": "PASS (staging, eaeff30)",
       "note": "Found while certifying online card checkout on staging"
     },
     "L-36": {
       "title": "Platform (SaaS) billing webhook has no secret on staging",
       "priority": "P2",
       "status": "BLOCKED (owner)",
-      "note": "/api/webhooks/stripe-platform returns 503 fail-closed on staging. Restaurant order payments are unaffected. Set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks."
+      "note": "Confirmed again at eaeff30: /api/webhooks/stripe-platform returns 503 fail-closed on staging because no secret is set."
     },
     "L-37": {
       "title": "POS register tips",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY",
+      "certification": "PASS (staging, eaeff30)",
       "note": "Tips were impossible in store before this. Server-verified, capped, untaxed, recorded as restaurant tips; reporting separates restaurant and driver tips."
     },
     "L-38": {
@@ -530,10 +550,28 @@
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
       "note": "Public signup provisions a Starter restaurant with owner and location; selling is refused until the tenant's own tax profile is verified; online checkout is refused until Stripe onboarding, then charges menu price + that restaurant's tax on its connected account."
+    },
+    "L-43": {
+      "title": "Stripe Connect onboarding certification",
+      "priority": "P0",
+      "status": "TESTED (local), STAGED",
+      "certification": "PASS (local service-level)"
+    },
+    "L-44": {
+      "title": "Staging deploy tooling",
+      "priority": "P1",
+      "status": "IN USE",
+      "note": "scripts/deploy-staging.mjs deploys an exact SHA to loohar-api-staging only, never prints the credential, and fails if production changes."
+    },
+    "L-45": {
+      "title": "Adversarial tenant isolation for pilot payment surfaces",
+      "priority": "P0",
+      "status": "TESTED (local), STAGED",
+      "certification": "PASS (local, real routes and auth)"
     }
   },
   "tests": {
-    "candidateSha": "77cb7b0",
+    "candidateSha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -556,7 +594,8 @@
       "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)",
       "test:pos-tips-db": "PASS (4)",
-      "test:pilot-onboarding-db": "PASS (4)"
+      "test:pilot-onboarding-db": "PASS (5)",
+      "test:pilot-tenant-isolation-db": "PASS (5)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
@@ -577,10 +616,10 @@
     ]
   },
   "humanActionsRequired": [
-    "STAGING DEPLOY ACCESS (now the main blocker): this machine has no Render credentials, so Claude cannot redeploy loohar-api-staging itself as authorised. Create a staging-only Render deploy hook (Render > loohar-api-staging > Settings > Deploy Hook) or a read/deploy API key, and save it to a file only Claude reads, e.g. `mkdir -p ~/.loohar && printf 'RENDER_STAGING_DEPLOY_HOOK=<url>\\n' > ~/.loohar/staging.env && chmod 600 ~/.loohar/staging.env`. Never paste it into chat.",
-    "Vercel: invite subashsunar00@gmail.com (account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer so staging web SHA can be verified",
-    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account (unblocks MFA, KDS, POS and reporting staging evidence)",
-    "Optional: set RESEND_API_KEY on staging so customer receipt emails actually send (EMAIL_PROVIDER defaults to console)",
+    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account. This is now the single biggest blocker: it unblocks MFA, KDS, POS register and reporting staging certification, and the simulated Stripe Terminal sale.",
+    "Vercel: invite subashsunar00@gmail.com (account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer so the staging web SHA can be verified",
+    "Optional: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks",
+    "Optional: set RESEND_API_KEY on staging so customer receipt emails actually send",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
     "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
     "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
@@ -589,5 +628,5 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Stripe Connect onboarding link certification and Super Admin surface hardening; staging certification resumes as soon as deploy access exists."
+  "nextAutonomousTask": "Super Admin surface hardening and reporting/reconciliation certification; staging redeploys now happen automatically per candidate."
 }
