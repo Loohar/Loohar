@@ -536,10 +536,19 @@ export async function provisionRestaurantTenant({
         locations: {
           create: {
             name: "Primary Location",
-            address: [payload.address, payload.city, payload.state, payload.zip].filter(Boolean).join(", ") || null,
+            // Tax verification reads the street line from `address` and the rest from settings, so a
+            // new restaurant can resolve its jurisdiction without re-entering the address it just gave.
+            address: payload.address || null,
             phone: payload.phone || payload.businessPhone || null,
             timezone: payload.timezone || "America/Denver",
-            settingsJson: { primary: true, source }
+            settingsJson: {
+              primary: true,
+              source,
+              city: payload.city || "",
+              state: payload.state || "",
+              zip: payload.zip || "",
+              country: payload.country || "US"
+            }
           }
         },
         categories: {

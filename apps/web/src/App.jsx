@@ -11077,6 +11077,7 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
   const [taxWorkspace, setTaxWorkspace] = useState({ ready: false, counts: { activeLocations: 0, readyLocations: 0 }, locations: [] });
   const [taxAcknowledgements, setTaxAcknowledgements] = useState({});
   const [savingTaxAction, setSavingTaxAction] = useState("");
+  const [taxCategoryDrafts, setTaxCategoryDrafts] = useState({});
   const [website, setWebsite] = useState(() => emptyWebsiteSettings());
   const [domain, setDomain] = useState(() => emptyDomainSettings(initialProfile.slug));
   const [gallery, setGallery] = useState([]);
@@ -11565,14 +11566,20 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
     return payload;
   }
 
-  async function resolveTaxProfileForLocation(location) {
+  async function resolveTaxProfileForLocation(location, { productServiceId } = {}) {
     if (!apiOnline || !token || !restaurantId) return liveRestaurantRequired("Live API is required to verify tax jurisdiction.");
+    // Colorado returns category-specific rates, so the restaurant supplies the product/service
+    // category from its own state account. Loohar never guesses one.
+    const category = productServiceId === undefined ? Number(taxCategoryDrafts[location.id] || 0) : Number(productServiceId);
+    if (category && (!Number.isSafeInteger(category) || category <= 0)) {
+      return showToast("Enter the numeric product/service category from your state tax account.", "bad");
+    }
     setSavingTaxAction(`resolve:${location.id}`);
     try {
       await api(`/api/restaurants/${restaurantId}/locations/${location.id}/tax-profile/resolve`, {
         method: "POST",
         token,
-        body: {}
+        body: category ? { productServiceId: category } : {}
       });
       await reloadTaxWorkspace();
       showToast("Verified tax candidate is ready for review.");
@@ -13940,6 +13947,30 @@ function RestaurantApp({ apiOnline, apiMode, authReady, token, user, initialSlug
                           <strong className="block text-amber-950">{categoryReviewState.label}</strong>
                           <span className="block">{categoryReviewState.detail}</span>
                           <span className="mt-1 block font-semibold text-amber-950">{taxLocationVerificationLabel(categoryReviewProfile)}</span>
+                          {canManageTaxes ? (
+                            <div className="mt-3">
+                              <label className="block text-xs font-bold uppercase tracking-wide text-amber-950" htmlFor={`tax-category-${location.id}`}>Product or service category</label>
+                              <p className="mt-1 text-xs text-amber-900">Your state tax account lists a numeric category for what you sell (for example prepared food). Enter yours and verify again; Loohar will not choose a category for you.</p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <input
+                                  id={`tax-category-${location.id}`}
+                                  className="input max-w-40"
+                                  inputMode="numeric"
+                                  placeholder="Category number"
+                                  value={taxCategoryDrafts[location.id] || ""}
+                                  onChange={(event) => setTaxCategoryDrafts((current) => ({ ...current, [location.id]: event.target.value.replace(/\D/g, "").slice(0, 9) }))}
+                                />
+                                <button
+                                  className="button-primary"
+                                  type="button"
+                                  onClick={() => resolveTaxProfileForLocation(location)}
+                                  disabled={Boolean(savingTaxAction) || !String(taxCategoryDrafts[location.id] || "").trim()}
+                                >
+                                  <Shield size={16} />{savingTaxAction === `resolve:${location.id}` ? "Verifying..." : "Verify with this category"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

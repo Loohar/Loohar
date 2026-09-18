@@ -86,6 +86,11 @@ test("a public signup provisions a working Starter restaurant", async () => {
       email: `owner-${runId}@example.test`,
       password: "a-strong-pilot-password",
       businessName: `Pilot Diner ${runId}`,
+      address: "200 Signup Street",
+      city: "Denver",
+      state: "CO",
+      zip: "80202",
+      country: "US",
       publicBusinessName: `Pilot Diner ${runId}`,
       preferredSlug: `pilot-${runId}`,
       businessType: "RESTAURANT",
@@ -107,6 +112,16 @@ test("a public signup provisions a working Starter restaurant", async () => {
   const location = await prisma.restaurantLocation.findFirst({ where: { restaurantId: ctx.restaurantId } });
   assert.ok(location, "the restaurant has a location to sell from");
   ctx.location = location;
+
+  // Tax verification reads the street line from `address` and city/state/zip from settings. Without
+  // them a new restaurant cannot resolve its jurisdiction, so it could never sell.
+  const { normalizeBusinessAddress, validateBusinessAddress } = await import("../apps/api/src/services/taxDomain.js");
+  const address = normalizeBusinessAddress(location);
+  assert.equal(address.addressLine1, "200 Signup Street");
+  assert.equal(address.city, "Denver");
+  assert.equal(address.stateProvince, "CO");
+  assert.equal(address.postalCode, "80202");
+  assert.equal(validateBusinessAddress(address).valid, true, "the address captured at signup is ready for tax verification");
 });
 
 test("the new restaurant is on Starter with the pilot entitlements", async () => {
@@ -215,4 +230,15 @@ test("online orders wait for payment onboarding, then take a card", async () => 
   assert.equal(checkout.stripeAccountId, `acct_${runId}`, "the browser is told which connected account to confirm on");
   assert.ok(checkout.clientSecret, "the customer can complete the payment");
   assert.equal(checkout.payment.status, "REQUIRES_PAYMENT_METHOD", "nothing is marked paid before the webhook");
+});
+
+test("a restaurant can supply its own tax category instead of Loohar guessing one", async () => {
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync("apps/web/src/App.jsx", "utf8");
+  assert.ok(app.includes("async function resolveTaxProfileForLocation(location, { productServiceId } = {})"), "tax verification accepts a category");
+  assert.ok(app.includes("body: category ? { productServiceId: category } : {}"), "the category is sent to the API when supplied");
+  assert.ok(app.includes("Product or service category"), "the restaurant is asked for its category");
+  assert.ok(app.includes("Loohar will not choose a category for you."), "Loohar never guesses a tax category");
+  const domain = readFileSync("apps/api/src/services/taxDomain.js", "utf8");
+  assert.equal(domain.includes("productServiceId: 626"), false, "no product service is hardcoded as a restaurant default");
 });
