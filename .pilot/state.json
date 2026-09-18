@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T05:00:00Z",
+  "updatedAt": "2026-09-18T06:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,8 +15,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
-      "apiVerifiedAt": "2026-09-18T05:00:00Z",
+      "apiSha": "9ad8708f3ffded557368b8a3a7c84362ff7efcb1",
+      "apiVerifiedAt": "2026-09-18T06:15:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
@@ -34,7 +34,7 @@
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
+      "sha": "9ad8708f3ffded557368b8a3a7c84362ff7efcb1",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -242,6 +242,11 @@
           "sha": "eaeff30",
           "item": "L-45",
           "summary": "adversarial tenant isolation for payments, reporting, refunds and tracking"
+        },
+        {
+          "sha": "9ad8708",
+          "item": "L-46/L-47",
+          "summary": "signup stores a tax-usable address; restaurants can supply their Colorado tax category"
         }
       ],
       "deployedToStaging": true
@@ -362,12 +367,11 @@
       "note": "Payments page lists the day's payments by tender with refundable balance; refunds use the guarded endpoint with a per-attempt idempotency key. Voids stay a status change and a paid order still cannot be cancelled without a refund (ORDER_REFUND_REQUIRED)."
     },
     "L-17": {
-      "title": "POS cashier workflow gaps: PIN self-setup, cashier receipt printing, pay after send-to-kitchen",
+      "title": "POS cashier workflow",
       "priority": "P1",
-      "status": "NOT_STARTED",
-      "verified": false,
-      "source": "manual drafting code review 2026-09-17",
-      "note": "PIN API supports cashier self-setup; UI paths need runtime POS acceptance on staging"
+      "status": "CERTIFIED (staging)",
+      "certification": "PASS (staging, 9ad8708)",
+      "result": "Device registration, cashier PIN (wrong PIN refused), unlock, shift with drawer, quote with tip at the provider-resolved 9.15%, cash tender with change, kitchen ticket advanced to PREPARING, reporting and cash refundability."
     },
     "L-18": {
       "title": "Driver app shows sample deliveries while offline",
@@ -404,9 +408,10 @@
     "L-22": {
       "title": "Privileged-role MFA",
       "priority": "P0",
-      "status": "IMPLEMENTED_LOCAL_PUSHED",
-      "sha": "c5347da",
-      "certification": "TESTED_LOCAL (12 DB cases + browser flow); not staged"
+      "status": "CERTIFIED (staging)",
+      "certification": "PASS (staging, 9ad8708)",
+      "result": "Claude provisioned its own staging tenant: enrollment needs the current password, wrong code and wrong password refused; sign-in challenged for MFA; wrong and out-of-window codes refused; recovery code works once then cannot be reused; privileged screens refuse an unenrolled owner (403).",
+      "evidence": "Loohar/Evidence/onboarding/STAGING_TENANT_CERTIFICATION-9ad8708.md"
     },
     "L-23": {
       "title": "Public registration creates owner on any tenant",
@@ -487,8 +492,8 @@
     "L-34": {
       "title": "Basic reporting and daily reconciliation",
       "priority": "P1",
-      "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY"
+      "status": "CERTIFIED (staging)",
+      "certification": "PASS (staging, 9ad8708)"
     },
     "L-01C": {
       "title": "Real Stripe TEST staging checkout certification",
@@ -516,7 +521,7 @@
       "title": "POS register tips",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PASS (staging, eaeff30)",
+      "certification": "PASS (staging, 9ad8708) \u2014 register tip 300 charged and reported separately",
       "note": "Tips were impossible in store before this. Server-verified, capped, untaxed, recorded as restaurant tips; reporting separates restaurant and driver tips."
     },
     "L-38": {
@@ -568,10 +573,24 @@
       "priority": "P0",
       "status": "TESTED (local), STAGED",
       "certification": "PASS (local, real routes and auth)"
+    },
+    "L-46": {
+      "title": "Publicly registered restaurant could never configure tax (address not structured)",
+      "priority": "P0",
+      "status": "FIXED",
+      "certification": "PASS (staging, 9ad8708)",
+      "note": "Found by taking a real staging signup to a sale. Tax verification reads the street line from location.address and city/state/zip from settingsJson; provisioning stored a joined string and no settings."
+    },
+    "L-47": {
+      "title": "Colorado tax profile could never be activated (no way to supply a product/service category)",
+      "priority": "P0",
+      "status": "FIXED",
+      "certification": "PASS (staging, 9ad8708)",
+      "note": "Tax workspace now asks the restaurant for the numeric category from its own state account. Loohar never guesses one and no default is hardcoded."
     }
   },
   "tests": {
-    "candidateSha": "eaeff302a3f964717ee508541fcf6cce3a08d596",
+    "candidateSha": "9ad8708",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -594,7 +613,7 @@
       "test:pos-terminal-db": "PASS (19)",
       "test:pos-cash-drawer-setup-db": "PASS (6)",
       "test:pos-tips-db": "PASS (4)",
-      "test:pilot-onboarding-db": "PASS (5)",
+      "test:pilot-onboarding-db": "PASS (6)",
       "test:pilot-tenant-isolation-db": "PASS (5)"
     },
     "newSuitesProvenFailingBeforeFix": true,
@@ -610,23 +629,23 @@
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
     "status": "NOT_READY",
     "reasons": [
-      "Operational readiness (monitoring, backups, runbooks) unproven",
-      "POS card-present certified only with simulated readers; physical acceptance pending",
-      "Privileged staging evidence (MFA, KDS, POS, refunds) pending owner-run capture"
+      "Stripe Connect onboarding must be completed by the restaurant before card acceptance",
+      "Physical Terminal acceptance pending hardware",
+      "Operations (monitoring, backups, runbooks) unproven"
     ]
   },
   "humanActionsRequired": [
-    "Run `cd /Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01 && node scripts/staging-privileged-evidence.mjs` with a privileged staging account. This is now the single biggest blocker: it unblocks MFA, KDS, POS register and reporting staging certification, and the simulated Stripe Terminal sale.",
     "Vercel: invite subashsunar00@gmail.com (account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer so the staging web SHA can be verified",
     "Optional: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks",
     "Optional: set RESEND_API_KEY on staging so customer receipt emails actually send",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
     "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
-    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)"
+    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
+    "Decide the Colorado product/service category guidance shown to restaurants (Loohar deliberately never picks one)"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Super Admin surface hardening and reporting/reconciliation certification; staging redeploys now happen automatically per candidate."
+  "nextAutonomousTask": "Certify Stripe Terminal simulated flow and online card on a staging tenant with completed Connect onboarding; then Super Admin surfaces, backups and monitoring."
 }
