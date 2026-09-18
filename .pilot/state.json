@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T07:15:00Z",
+  "updatedAt": "2026-09-18T11:45:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -446,7 +446,7 @@
       "title": "POS card checkout (card-present) via Stripe Terminal",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY",
+      "certification": "PASS (local, 19 tests); staging simulated sale BLOCKED on Stripe Connect onboarding for a test tenant",
       "note": "Simulated-reader workstream complete: connection tokens, reader pairing/removal, card-present collection with webhook settlement, register card tender UI. Physical acceptance is an owner step (docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md).",
       "reviewFindings": "2 critical (stale PaymentIntent after a total change; cash settling an order with a live card payment), 1 high (on-reader tipping), 1 high (settled payment reset), plus medium/low \u2014 all fixed in bf7430a with tests"
     },
@@ -595,6 +595,13 @@
       "status": "CERTIFIED (staging)",
       "certification": "PASS (staging, 9ad8708)",
       "note": "Staff receipt carries restaurant name and address, items, subtotal, tax, tip, total, tender and balance."
+    },
+    "L-49": {
+      "title": "Stripe Connect onboarding cannot be completed by automation",
+      "priority": "P1",
+      "status": "BLOCKED (owner, 2 minutes)",
+      "note": "Stripe's hosted onboarding runs an anti-automation challenge ('Challenge expired') on the phone step. Claude does not attempt to bypass external security controls, so a human must complete the test-mode onboarding once for a development tenant. Everything after that (card payments, Terminal simulated readers, refunds on staging) is automated.",
+      "ownerAction": "Open the one-time Stripe TEST onboarding link Claude provides for tenant pilot-cert-01fcb4 (connected account acct_1UH5PS0odCEx5ZnL) and click through with the test-data shortcuts. It is Stripe test mode: no real identity, bank details or money."
     }
   },
   "tests": {
@@ -643,13 +650,12 @@
     ]
   },
   "humanActionsRequired": [
-    "Vercel: invite subashsunar00@gmail.com (account id 8wWiOB1OmIwz0nuyMYQeVmzS) to the loohar team as Viewer so the staging web SHA can be verified",
-    "Optional: set STRIPE_PLATFORM_WEBHOOK_SECRET on loohar-api-staging to certify platform billing webhooks",
-    "Optional: set RESEND_API_KEY on staging so customer receipt emails actually send",
+    "Complete Stripe TEST-mode Connect onboarding once for the development tenant (link provided in chat; single use, expires in ~15 minutes \u2014 ask for a fresh one if it lapses). This unblocks card, Terminal simulated and refund certification on staging.",
+    "Vercel: the loohar team still does not appear for account subashsunar00@gmail.com (id 8wWiOB1OmIwz0nuyMYQeVmzS) \u2014 the invite needs to be created and accepted before the staging web SHA can be verified",
+    "Render/Supabase: only the staging deploy hook is present on this machine; a read-only Render API key and Supabase project credentials would let Claude verify logs, backups and PITR itself",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
     "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
-    "Provide monitoring/backup access or confirm Supabase backup/PITR and alert routing (L-11)",
-    "Decide the Colorado product/service category guidance shown to restaurants (Loohar deliberately never picks one)"
+    "Decide the Colorado product/service category guidance shown to restaurants"
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
