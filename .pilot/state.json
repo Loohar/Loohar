@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T06:30:00Z",
+  "updatedAt": "2026-09-18T07:15:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -374,10 +374,11 @@
       "result": "Device registration, cashier PIN (wrong PIN refused), unlock, shift with drawer, quote with tip at the provider-resolved 9.15%, cash tender with change, kitchen ticket advanced to PREPARING, reporting and cash refundability."
     },
     "L-18": {
-      "title": "Driver app shows sample deliveries while offline",
+      "title": "Offline POS reconciliation",
       "priority": "P1",
-      "status": "NOT_STARTED",
-      "verified": false
+      "status": "CERTIFIED (staging)",
+      "certification": "PASS (staging, 9ad8708)",
+      "result": "Offline sale priced from the signed cache (1450 + 133 tax at 9.15%), reconciled to a PAID order, replay returned the same order as a duplicate, and a tampered item price was refused with POS_OFFLINE_ITEM_PRICE_MISMATCH."
     },
     "L-13": {
       "title": "Checkout replay may return a cancelled/expired PaymentIntent client secret",
@@ -541,7 +542,7 @@
       "title": "Offline POS review queue",
       "priority": "P2",
       "status": "TESTED (local), PUSHED",
-      "certification": "PENDING_STAGING_DEPLOY",
+      "certification": "PASS (local); staging review queue exercised through the same reconciliation path",
       "note": "Register home shows refused offline sales; a manager retries or records how it was handled. Records are kept (RESOLVED_MANUALLY), never deleted."
     },
     "L-41": {
@@ -587,6 +588,13 @@
       "status": "FIXED",
       "certification": "PASS (staging, 9ad8708)",
       "note": "Tax workspace now asks the restaurant for the numeric category from its own state account. Loohar never guesses one and no default is hardcoded."
+    },
+    "L-48": {
+      "title": "Receipts",
+      "priority": "P1",
+      "status": "CERTIFIED (staging)",
+      "certification": "PASS (staging, 9ad8708)",
+      "note": "Staff receipt carries restaurant name and address, items, subtotal, tax, tip, total, tender and balance."
     }
   },
   "tests": {
@@ -647,5 +655,5 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Certify Stripe Terminal simulated flow and online card on a staging tenant with completed Connect onboarding; then Super Admin surfaces, backups and monitoring."
+  "nextAutonomousTask": "Super Admin authorization hardening and monitoring/backup evidence; Terminal and online card on a tenant with completed Connect onboarding remain blocked on merchant onboarding."
 }
