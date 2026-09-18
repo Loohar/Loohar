@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T11:45:00Z",
+  "updatedAt": "2026-09-18T12:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -15,8 +15,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "9ad8708f3ffded557368b8a3a7c84362ff7efcb1",
-      "apiVerifiedAt": "2026-09-18T06:15:00Z",
+      "apiSha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
+      "apiVerifiedAt": "2026-09-18T12:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
       "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
@@ -34,7 +34,7 @@
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "9ad8708f3ffded557368b8a3a7c84362ff7efcb1",
+      "sha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
       "chain": [
@@ -247,6 +247,11 @@
           "sha": "9ad8708",
           "item": "L-46/L-47",
           "summary": "signup stores a tax-usable address; restaurants can supply their Colorado tax category"
+        },
+        {
+          "sha": "4f69015",
+          "item": "L-50",
+          "summary": "adversarial Super Admin authorization tests"
         }
       ],
       "deployedToStaging": true
@@ -602,10 +607,17 @@
       "status": "BLOCKED (owner, 2 minutes)",
       "note": "Stripe's hosted onboarding runs an anti-automation challenge ('Challenge expired') on the phone step. Claude does not attempt to bypass external security controls, so a human must complete the test-mode onboarding once for a development tenant. Everything after that (card payments, Terminal simulated readers, refunds on staging) is automated.",
       "ownerAction": "Open the one-time Stripe TEST onboarding link Claude provides for tenant pilot-cert-01fcb4 (connected account acct_1UH5PS0odCEx5ZnL) and click through with the test-data shortcuts. It is Stripe test mode: no real identity, bank details or money."
+    },
+    "L-50": {
+      "title": "Super Admin authorization hardening",
+      "priority": "P0",
+      "status": "TESTED (local), STAGED",
+      "certification": "PASS (local, real routes and auth)",
+      "note": "Platform screens refuse anonymous, owner and cashier callers; owners cannot suspend/rename/delete tenants; impersonation is short-lived, refresh-free, audited and cannot change the borrowed account's security; MFA reset refuses self and platform-owner targets and records actor plus reason; suspended tenants lose access and survive reactivation."
     }
   },
   "tests": {
-    "candidateSha": "9ad8708",
+    "candidateSha": "4f69015",
     "ranAt": "2026-09-17",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -629,7 +641,8 @@
       "test:pos-cash-drawer-setup-db": "PASS (6)",
       "test:pos-tips-db": "PASS (4)",
       "test:pilot-onboarding-db": "PASS (6)",
-      "test:pilot-tenant-isolation-db": "PASS (5)"
+      "test:pilot-tenant-isolation-db": "PASS (5)",
+      "test:super-admin-authz-db": "PASS (5)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
