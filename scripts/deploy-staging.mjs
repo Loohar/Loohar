@@ -42,6 +42,23 @@ async function deployedSha() {
   return { sha: payload.commitSha || "", service: payload.serviceName || "", environment: payload.environment || "" };
 }
 
+// `--check` reports whether the stored credential is usable, describing its shape only. It never
+// prints the value.
+if (process.argv.includes("--check")) {
+  const stored = credentials();
+  const hookValue = stored.RENDER_STAGING_DEPLOY_HOOK || "";
+  const keyValue = stored.RENDER_API_KEY || stored.RENDER_STAGING_API_KEY || "";
+  if (!hookValue && !keyValue) fail(`no value is stored. ${CREDENTIAL_FILE} has the key but no credential after the "=".`);
+  if (hookValue && !/^https:\/\/api\.render\.com\/deploy\/srv-[A-Za-z0-9]+/.test(hookValue)) {
+    const looksLikeShell = /printf|chmod|staging\.env|PASTE/i.test(hookValue);
+    fail(looksLikeShell
+      ? "the stored value is shell text, not a deploy hook URL. Copy the hook URL from Render and write only that URL."
+      : "the stored value is not a Render deploy hook URL (expected https://api.render.com/deploy/srv-...).");
+  }
+  console.log(hookValue ? "PASS: a Render staging deploy hook is stored and structurally valid." : "PASS: a Render API key is stored; the service will be checked by name at deploy time.");
+  process.exit(0);
+}
+
 const targetSha = (process.argv[2] || execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" })).trim();
 if (!/^[0-9a-f]{40}$/.test(targetSha)) fail("pass the full 40-character commit SHA to deploy.");
 
