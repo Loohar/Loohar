@@ -23,8 +23,8 @@ support.
 
 ## 2. Repositories, worktrees and branches
 
-Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out as **32
-worktrees** under `/Users/rudrabishwokarma/Documents/`.
+Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out as **35 worktrees** (the primary checkout plus 34 linked) under
+`/Users/rudrabishwokarma/Documents/` as of 2026-09-19.
 
 | Path | Purpose |
 | --- | --- |
@@ -78,8 +78,8 @@ Browser (loohar.com, tenant sites, staff PWA, driver PWA)
 (`prj_v8vjmqvV81R0O3pF6Tt3pFG9VtSQ`), scope `subashsunar-8870s-projects`
 (`team_rWuRxAnjPlpBAk3uSjvgDNpX`), Vite, `live: false`, every deployment `target: null` (preview
 only). `ssoProtection` is enabled for all except custom domains, so `/version.json` answers 302 to
-an unauthenticated fetch. Deployment record for the current candidate is
-`dpl_G2h93En9zjS4X1MeGst8RNs1BZvM`.
+an unauthenticated fetch. Deployment record for the current candidate `9256ce6` is
+`dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t` (previous candidate `4f69015`: `dpl_G2h93En9zjS4X1MeGst8RNs1BZvM`).
 
 **Account identities.** The owner's Vercel account is `subash.sunar@loohar.com`; it belongs to **no
 Vercel team**. `subashsunar00@gmail.com` is the owner's Claude login and is not a Vercel identity.
