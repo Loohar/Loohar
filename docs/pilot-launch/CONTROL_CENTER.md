@@ -111,7 +111,7 @@ fixed in `bf7430a` with tests that fail on the previous commit.
 | Blocker | Minimum owner action |
 | --- | --- |
 | Privileged staging evidence | Run `node scripts/staging-privileged-evidence.mjs` with a staging owner account — unblocks MFA, KDS, POS and reporting certification plus the simulated Terminal sale |
-| Staging web identity | Signed in to Vercel, open the preview `/version.json` and confirm `97d4d02` + staging API target, or grant the loohar team read access |
+| Staging web identity | Authorize the Vercel MCP OAuth flow signed in as `subash.sunar@loohar.com` (the account on the loohar team). Corrected 2026-09-19: the earlier note asked for a team invite for `subashsunar00@gmail.com`, which is the owner's Claude login, not a Vercel identity — the loohar scope had never actually been queried as the owner. |
 | Staging evidence accounts | Create staging-only privileged accounts yourself (never share passwords in chat) for MFA/refund/KDS/POS evidence |
 | POS card-present | Buy a Stripe Terminal reader and run the on-site acceptance in `docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md` (the simulated workstream is done) |
 | Delivery zones | Choose a geocoding provider; until then Starter pilot is pickup-only |

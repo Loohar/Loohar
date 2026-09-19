@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-18T12:30:00Z",
+  "updatedAt": "2026-09-19T06:50:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -19,11 +19,12 @@
       "apiVerifiedAt": "2026-09-18T12:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "UNKNOWN",
-      "webShaBlocker": "Vercel SSO protection on team loohar; local Vercel CLI account cannot access the loohar scope",
+      "webShaBlocker": "CORRECTED 2026-09-19: the earlier record blamed a missing loohar team invite for subashsunar00@gmail.com. That is the owner's Claude account, not their Vercel account. The Vercel identity that owns the loohar team is subash.sunar@loohar.com. No Vercel CLI and no stored Vercel auth exist on this machine, so the scope was never actually queried as the owner. Reauthenticating as subash.sunar@loohar.com (Vercel MCP OAuth) is the open action.",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
       "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
-      "onlineCardCheckout": "CERTIFIED at eaeff30 with a real Stripe TEST payment including a tip (order 688130, 4982 reconciled end to end)"
+      "onlineCardCheckout": "CERTIFIED at eaeff30 with a real Stripe TEST payment including a tip (order 688130, 4982 reconciled end to end)",
+      "webShaBlockerOwnerAction": "Owner authorizes the Vercel MCP OAuth flow in a browser signed in as subash.sunar@loohar.com; Claude then reads the staging preview deployment and records the web SHA."
     }
   },
   "git": {
@@ -664,7 +665,7 @@
   },
   "humanActionsRequired": [
     "Complete Stripe TEST-mode Connect onboarding once for the development tenant (link provided in chat; single use, expires in ~15 minutes \u2014 ask for a fresh one if it lapses). This unblocks card, Terminal simulated and refund certification on staging.",
-    "Vercel: the loohar team still does not appear for account subashsunar00@gmail.com (id 8wWiOB1OmIwz0nuyMYQeVmzS) \u2014 the invite needs to be created and accepted before the staging web SHA can be verified",
+    "Vercel: authorize the Vercel MCP OAuth flow while signed in as subash.sunar@loohar.com (the account that owns the loohar team). The previously recorded 'create a team invite for subashsunar00@gmail.com' action was wrong \u2014 that gmail address is the owner's Claude login, not a Vercel identity.",
     "Render/Supabase: only the staging deploy hook is present on this machine; a read-only Render API key and Supabase project credentials would let Claude verify logs, backups and PITR itself",
     "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
     "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
@@ -674,5 +675,14 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Super Admin authorization hardening and monitoring/backup evidence; Terminal and online card on a tenant with completed Connect onboarding remain blocked on merchant onboarding."
+  "nextAutonomousTask": "Super Admin authorization hardening and monitoring/backup evidence; Terminal and online card on a tenant with completed Connect onboarding remain blocked on merchant onboarding.",
+  "corrections": [
+    {
+      "date": "2026-09-19",
+      "item": "staging web SHA verification",
+      "wrong": "Recorded as blocked on a missing loohar Vercel team invite for subashsunar00@gmail.com.",
+      "right": "subashsunar00@gmail.com is the owner's Claude account. The Vercel account is subash.sunar@loohar.com. The loohar scope had never been queried as the owner, and no Vercel CLI or stored auth is present on this machine.",
+      "source": "owner, 2026-09-19"
+    }
+  ]
 }
