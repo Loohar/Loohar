@@ -1,0 +1,95 @@
+# Release gates for every pushed Loohar commit.
+#
+# Until this workflow existed, every gate ran only on one workstation, so no claim about a SHA could
+# be checked independently. This runs the same gates on a clean machine for every branch.
+#
+# It needs no secrets: the database suites run against a disposable Postgres container, and the
+# browser render gate serves the built bundle locally with every API call answered from fixtures.
+# A skipped gate counts as a failure here, because a skip that reports green is how a white-screen
+# regression reaches staging.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: loohar
+          POSTGRES_DB: loohar_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U loohar"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      LOOHAR_TEST_DATABASE_URL: postgresql://loohar@127.0.0.1:5432/loohar_test
+      LOOHAR_REQUIRE_BROWSER_GATE: "1"
+      VITE_API_URL: https://loohar-api-staging.onrender.com
+      VITE_REALTIME_URL: https://loohar-api-staging.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the browser for the render gate
+        run: npx playwright install --with-deps chromium
+
+      - name: Prisma generate, validate and migrate the disposable database
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql://loohar@127.0.0.1:5432/loohar_test
+          DIRECT_URL: postgresql://loohar@127.0.0.1:5432/loohar_test
+        run: |
+          npx prisma generate
+          npx prisma validate
+          npx prisma migrate deploy
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Security scan
+        run: npm run security:scan
+
+      - name: Build
+        run: npm run build
+
+      - name: Test suite (includes the browser render gate)
+        run: npm test
+
+      - name: Database suites (a skip is a failure)
+        shell: bash
+        run: |
+          set -uo pipefail
+          suites=$(node -e 'const s=require("./package.json").scripts;console.log(Object.keys(s).filter(k=>/^test:.*-db$/.test(k)).join(" "))')
+          failed=0
+          for suite in $suites; do
+            out=$(npm run -s "$suite" 2>&1); rc=$?
+            if [ $rc -ne 0 ]; then echo "$out"; echo "::error::$suite failed"; failed=1; continue; fi
+            if echo "$out" | grep -q "SKIP"; then echo "$out"; echo "::error::$suite skipped, which is not allowed in CI"; failed=1; continue; fi
+            echo "PASS $suite $(echo "$out" | grep -E '^# pass ' || true)"
+          done
+          exit $failed

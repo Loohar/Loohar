@@ -14,6 +14,17 @@ import { after, before, test } from "node:test";
 
 const DIST = resolve("apps/web/dist");
 
+// On a workstation without a browser this gate skips, but a skipped render gate would let CI report
+// green on code that white-screens. CI sets LOOHAR_REQUIRE_BROWSER_GATE=1 so a skip becomes a failure.
+function skipOrFail(reason) {
+  if (process.env.LOOHAR_REQUIRE_BROWSER_GATE === "1") {
+    console.error(`web surface smoke test: required but could not run: ${reason}`);
+    process.exit(1);
+  }
+  console.log(`SKIP web surface smoke test: ${reason}`);
+  process.exit(0);
+}
+
 // A stale bundle would let this gate pass on code that no longer exists, so rebuild when any source
 // file is newer than the build.
 function newestSourceMtime(directory) {
@@ -44,16 +55,14 @@ if (builtAt < sourceAt) {
   }
 }
 if (!existsSync(join(DIST, "index.html"))) {
-  console.log("SKIP web surface smoke test: apps/web could not be built.");
-  process.exit(0);
+  skipOrFail("apps/web could not be built.");
 }
 
 let chromium;
 try {
   ({ chromium } = await import("playwright"));
 } catch {
-  console.log("SKIP web surface smoke test: playwright is not installed.");
-  process.exit(0);
+  skipOrFail("playwright is not installed.");
 }
 
 const CONTENT_TYPES = {
