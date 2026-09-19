@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T08:05:00Z",
+  "updatedAt": "2026-09-19T19:10:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -12,20 +12,21 @@
       "verifiedAt": "2026-09-19T07:34:00Z",
       "frozen": true,
       "changeRequiresOwnerApproval": true,
-      "verifiedHow": "Live /version (API) and /version.json (web, build 2026-09-02T16:58:56.705Z)"
+      "verifiedHow": "Live /version (API) and /version.json (web, build 2026-09-02T16:58:56.705Z)",
+      "renderDeploy": "dep-dac5o9710e5c73bc0dd0 (live since 2026-09-02, unchanged 2026-09-19)"
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
-      "apiVerifiedAt": "2026-09-19T07:34:00Z",
+      "apiSha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
+      "apiVerifiedAt": "2026-09-19T19:05:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
-      "webSha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
+      "webSha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
       "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
       "onlineCardCheckout": "CERTIFIED at eaeff30 with a real Stripe TEST payment including a tip (order 688130, 4982 reconciled end to end)",
-      "webShaVerifiedAt": "2026-09-19T07:05:00Z",
-      "webShaEvidence": "Vercel deployment dpl_G2h93En9zjS4X1MeGst8RNs1BZvM, project loohar-kds-staging (prj_v8vjmqvV81R0O3pF6Tt3pFG9VtSQ), branch release/loohar-pilot-rc-v01, githubCommitSha 4f690151a7d21a049bf9b025f360a3d52bb7ee89, state READY, created 2026-09-18T17:36:59Z, ready 2026-09-18T17:37:14Z. Read through the Vercel API as subash.sunar@loohar.com. Web SHA MATCHES the staging API SHA.",
+      "webShaVerifiedAt": "2026-09-19T19:06:00Z",
+      "webShaEvidence": "Vercel dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t, project loohar-kds-staging, branch release/loohar-pilot-rc-v01, READY (Vercel build record; runtime /version.json still behind SSO)",
       "webShaEvidenceLimitation": "This is Vercel's authoritative build record, not a runtime fetch. A GET of the deployment's /version.json still returns 302 because project ssoProtection is enabled (deploymentType all_except_custom_domains), and creating a protection-bypass share link returns 403 in this OAuth scope. Runtime confirmation of the served bundle and its API target is still open.",
       "webProject": {
         "name": "loohar-kds-staging",
@@ -38,20 +39,21 @@
         "ssoProtection": "enabled, all_except_custom_domains"
       },
       "webUrlRecordedPreviously": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
-      "webUrlDiscrepancy": "OPEN QUESTION for the owner. The previously recorded staging web URL carries the team slug 'loohar', but list_teams for subash.sunar@loohar.com returns zero teams and the only visible project is loohar-kds-staging under the personal scope. Either the 'loohar' team belongs to a different account, or that URL is stale. The SHA above is verified for loohar-kds-staging, which is the deployment this account can actually see and which tracks release/loohar-pilot-rc-v01."
+      "webUrlDiscrepancy": "OPEN QUESTION for the owner. The previously recorded staging web URL carries the team slug 'loohar', but list_teams for subash.sunar@loohar.com returns zero teams and the only visible project is loohar-kds-staging under the personal scope. Either the 'loohar' team belongs to a different account, or that URL is stale. The SHA above is verified for loohar-kds-staging, which is the deployment this account can actually see and which tracks release/loohar-pilot-rc-v01.",
+      "apiDeploy": "dep-dandpdbbc2fs73e2lihg (deploy_hook, live 2026-09-19T19:04:55Z)"
     }
   },
   "git": {
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
-      "branch": "fix/launch-review3-fixes-v01",
-      "sha": "bf7430a0ccb847ad45ffff55071f1a236fc76704"
+      "branch": "release/loohar-pilot-rc-v01",
+      "sha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
+      "sha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
       "pushed": true,
-      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-reporting-v01",
+      "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
         {
           "sha": "2d8500792d6a650ef179270f95b5cba2797fa157",
@@ -269,7 +271,8 @@
           "summary": "adversarial Super Admin authorization tests"
         }
       ],
-      "deployedToStaging": true
+      "deployedToStaging": true,
+      "worktreeNote": "Dedicated RC worktree created 2026-09-19. Earlier records named SaaS_Platform-reporting-v01 as the RC worktree, but it is checked out on feat/launch-basic-reporting-v01; no local release branch existed and the RC was only ever updated by refspec push."
     },
     "frozenBranches": [
       {
@@ -362,8 +365,28 @@
     "L-11": {
       "title": "Monitoring, alerting, backup/restore proof, runbooks",
       "priority": "P0",
-      "status": "BLOCKED",
-      "blocker": "Needs owner access to Render/Supabase/alerting accounts"
+      "status": "PARTIAL",
+      "blocker": "Supabase MCP re-authentication for the backup/PITR half",
+      "certification": "PARTIAL (staging+production read evidence 2026-09-19)",
+      "evidence": [
+        "Render service health, plan, region, health-check path read for both services",
+        "Deploy history read: production live dep-dac5o9710e5c73bc0dd0 at 0526862 with four deactivated rollback targets; staging history matches the certification chain",
+        "Production 24h metrics: 1 instance, ~110 MB of 512 MB, CPU ~0, ~20 requests all 2xx except one 404; zero error-level logs in 31 h",
+        "Staging error logs traced to handled webhook-ledger duplicates (fixed in 470f2e8)",
+        "/health answers 503 when its live schema query fails (verified in code), so outages are status-detectable",
+        "Uptime monitor probe logic run against live services with a negative control"
+      ],
+      "done": [
+        "470f2e8 log noise fix",
+        "c3159af CI on every push",
+        "9256ce6 uptime alerting workflow + docs/operations/RUNBOOKS.md"
+      ],
+      "remaining": [
+        "Supabase backup/PITR configuration and a staging restore drill (needs Supabase re-auth)",
+        "Uptime monitor activates only when merged to main (release step)",
+        "Confirm Render deploy-failure notification recipients",
+        "CI result for c3159af/9256ce6 not yet observed (gh CLI not installed)"
+      ]
     },
     "L-12": {
       "title": "API CORS allowlist always merges production origins (staging API accepts loohar.com)",
@@ -629,11 +652,31 @@
       "status": "TESTED (local), STAGED",
       "certification": "PASS (local, real routes and auth)",
       "note": "Platform screens refuse anonymous, owner and cashier callers; owners cannot suspend/rename/delete tenants; impersonation is short-lived, refresh-free, audited and cannot change the borrowed account's security; MFA reset refuses self and platform-owner targets and records actor plus reason; suspended tenants lose access and survive reactivation."
+    },
+    "L-51": {
+      "title": "Handled unique-constraint collisions logged as prisma:error (alerting noise)",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "470f2e8",
+      "certification": "PASS (local runtime DB test; fails on previous commit); deployed to staging at 9256ce6"
+    },
+    "L-52": {
+      "title": "No CI; browser render gate could skip and report green",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "c3159af",
+      "certification": "Workflow pushed; first remote run not yet observed"
+    },
+    "L-53": {
+      "title": "loohar-api-staging tracks the frozen national-tax branch",
+      "priority": "P2",
+      "status": "OPEN",
+      "note": "Needs a Render service-settings change"
     }
   },
   "tests": {
-    "candidateSha": "4f69015",
-    "ranAt": "2026-09-17",
+    "candidateSha": "9256ce6",
+    "ranAt": "2026-09-19",
     "npmTest": "PASS",
     "lint": "PASS",
     "build": "PASS (staging VITE_API_URL)",
@@ -657,7 +700,8 @@
       "test:pos-tips-db": "PASS (4)",
       "test:pilot-onboarding-db": "PASS (6)",
       "test:pilot-tenant-isolation-db": "PASS (5)",
-      "test:super-admin-authz-db": "PASS (5)"
+      "test:super-admin-authz-db": "PASS (5)",
+      "test:prisma-log-noise (runtime)": "PASS (5)"
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
@@ -666,7 +710,8 @@
       "d6a3fc3 \u2192 fixed in bf7430a",
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
-    "browserSurfaceSmoke": "PASS (8 surfaces, no runtime errors)"
+    "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
+    "dbSuitesAllOnSharedDb": "18 suites, 138 tests + schema drift, 0 skips (2026-09-19)"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -689,7 +734,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Super Admin authorization hardening and monitoring/backup evidence; Terminal and online card on a tenant with completed Connect onboarding remain blocked on merchant onboarding.",
+  "nextAutonomousTask": "Financial-correctness P2 register (L-13 dead PaymentIntent replay, L-20 stale PENDING refunds, L-21 drawer race, L-28 coupon limit race), downloadable POS/Driver app feasibility and build, documentation sync.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -792,5 +837,21 @@
       "Development_Book/LOOHAR_DEVELOPMENT_BOOK.pdf is byte-identical to the archived c5347da edition \u2014 the current Development Book PDF is stale.",
       "Evidence/README.md claims no UI evidence exists although 8 MFA screenshots are archived."
     ]
+  },
+  "render": {
+    "identity": "subashsunar00@gmail.com (OAuth via official Render Claude Code plugin 0.2.2, user scope)",
+    "workspace": "My Workspace tea-d9813qurnols73an40fg (the workspace named Loohar tea-d981471kh4rs73dpnmdg is empty)",
+    "production": "loohar-api srv-d9839fuq1p3s73fn8v8g, oregon, starter, 1 instance, branch main, autoDeploy off, preDeploy prisma:deploy:safe, healthCheck /health",
+    "staging": "loohar-api-staging srv-d9n15gh42hec73emor9g, oregon, starter, 1 instance, autoDeploy off, healthCheck /health",
+    "hazard": "loohar-api-staging tracks branch feature/loohar-national-tax-provider-v01 (frozen). Exact-SHA deploys are correct; a dashboard Deploy latest commit would ship national-tax code. Repoint to release/loohar-pilot-rc-v01 (service settings; not available through the MCP tools)."
+  },
+  "supabase": {
+    "organization": "Loohar tvsrfqkbwikvlfxxxfye",
+    "projects": {
+      "mgqeamdtcqhhcqqnyinb": "Loohar, us-east-2, created 2026-07-04 \u2014 inferred PRODUCTION",
+      "ilazzxrscfoccvholchi": "loohar-enterprise-pos-staging, us-west-2, created 2026-08-03 \u2014 inferred STAGING"
+    },
+    "identificationStatus": "INFERRED, not confirmed. A read-only migration query to confirm was blocked by the local permission classifier; owner to confirm the staging Render DATABASE_URL host.",
+    "mcp": "configured with read_only=true; disconnected after plugin reload 2026-09-19 \u2014 needs owner re-auth via /mcp"
   }
 }

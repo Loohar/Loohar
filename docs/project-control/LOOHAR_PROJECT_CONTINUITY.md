@@ -4,7 +4,7 @@
 memory. It contains no secrets. Where it disagrees with the code, the code is authoritative and
 this file is stale — check `git log` and `.pilot/state.json` first.
 
-**Last verified:** 2026-09-19 (production, staging API and staging web identity all re-read live).
+**Last verified:** 2026-09-19 19:06 UTC (production, staging API and staging web identity re-read live; Render state read through the Render API).
 
 ---
 
@@ -29,7 +29,8 @@ worktrees** under `/Users/rudrabishwokarma/Documents/`.
 | Path | Purpose |
 | --- | --- |
 | `SaaS_Platform` | Primary checkout. **Currently on the frozen national-tax branch — do not edit here.** |
-| `SaaS_Platform-reporting-v01` | Release-candidate worktree (`release/loohar-pilot-rc-v01`) |
+| `SaaS_Platform-pilot-rc` | **Release-candidate worktree** (`release/loohar-pilot-rc-v01`, tracking origin). Created 2026-09-19. |
+| `SaaS_Platform-reporting-v01` | On `feat/launch-basic-reporting-v01`. Earlier records called this the RC worktree; it never was, and the RC was only updated by refspec push. Do not integrate here. |
 | `SaaS_Platform-pilot-control-v01` | Control/documentation worktree (`chore/loohar-pilot-control-v01`) |
 | `SaaS_Platform-<feature>` | One worktree per fix/feature branch |
 
@@ -46,7 +47,7 @@ worktrees** under `/Users/rudrabishwokarma/Documents/`.
 | Branch | SHA | Meaning |
 | --- | --- | --- |
 | `main` | `0526862` | Production baseline |
-| `release/loohar-pilot-rc-v01` | `4f69015` | Release candidate; 42 commits ahead of main; 103 files, +10,839/−987 |
+| `release/loohar-pilot-rc-v01` | `9256ce6` | Release candidate (45 commits ahead of main). Previous: `4f69015` |
 | `chore/loohar-pilot-control-v01` | control docs | `.pilot/state.json`, `docs/pilot-launch/`, `docs/project-control/` |
 
 Recovery tags: `recovery/2026-09-19-production-baseline`, `recovery/2026-09-19-staging-candidate`,
@@ -70,8 +71,8 @@ Browser (loohar.com, tenant sites, staff PWA, driver PWA)
 | --- | --- | --- | --- |
 | Production | API `https://loohar-api.onrender.com` | `0526862bceb2dc3a483de96561755052076df060` | 2026-09-19 live |
 | Production | Web `https://loohar.com` | `0526862bceb2dc3a483de96561755052076df060` (build 2026-09-02) | 2026-09-19 live |
-| Staging | API `https://loohar-api-staging.onrender.com` | `4f690151a7d21a049bf9b025f360a3d52bb7ee89` | 2026-09-19 live, `/health` ok, schema 0 issues |
-| Staging | Web (Vercel) | `4f690151a7d21a049bf9b025f360a3d52bb7ee89` | 2026-09-19 via Vercel API |
+| Staging | API `https://loohar-api-staging.onrender.com` | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19 live, Render deploy `dep-dandpdbbc2fs73e2lihg`, `/health` ok, schema 0 issues |
+| Staging | Web (Vercel) | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19, Vercel `dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t` READY |
 
 **Staging web project:** Vercel project `loohar-kds-staging`
 (`prj_v8vjmqvV81R0O3pF6Tt3pFG9VtSQ`), scope `subashsunar-8870s-projects`
@@ -83,6 +84,12 @@ an unauthenticated fetch. Deployment record for the current candidate is
 **Account identities.** The owner's Vercel account is `subash.sunar@loohar.com`; it belongs to **no
 Vercel team**. `subashsunar00@gmail.com` is the owner's Claude login and is not a Vercel identity.
 Do not confuse them — an earlier blocker was misdiagnosed that way.
+
+**Render.** Identity `subashsunar00@gmail.com` (unlike Vercel, the gmail address *is* the Render account), connected by OAuth through the official Render Claude Code plugin. Services are in **"My Workspace" `tea-d9813qurnols73an40fg`**; the workspace named "Loohar" is empty. Production `loohar-api` `srv-d9839fuq1p3s73fn8v8g`, staging `loohar-api-staging` `srv-d9n15gh42hec73emor9g`, both Oregon, starter, one instance, auto-deploy off. **Hazard:** staging tracks the frozen national-tax branch; only ever deploy it by exact SHA.
+
+**Supabase.** Organization "Loohar". Project `mgqeamdtcqhhcqqnyinb` ("Loohar", us-east-2) is inferred production; `ilazzxrscfoccvholchi` ("loohar-enterprise-pos-staging", us-west-2) is inferred staging. The mapping is **not yet confirmed** against each service's `DATABASE_URL` host. The Supabase MCP is configured `read_only=true`.
+
+**CI.** `.github/workflows/ci.yml` runs every gate on every push with a disposable Postgres; a skipped gate fails. `.github/workflows/uptime.yml` probes both APIs every 10 minutes and opens an `incident` issue, active once on `main`. Runbooks: `docs/operations/RUNBOOKS.md`.
 
 **Staging deploy credential** lives outside Git at `~/.loohar/staging.env`. Never print, echo, log,
 commit, document or transmit it. `scripts/deploy-staging.mjs` reads it, refuses any target that is
