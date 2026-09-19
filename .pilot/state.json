@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T07:45:00Z",
+  "updatedAt": "2026-09-19T08:05:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -9,14 +9,15 @@
       "webUrl": "https://loohar.com",
       "apiSha": "0526862bceb2dc3a483de96561755052076df060",
       "webSha": "0526862bceb2dc3a483de96561755052076df060",
-      "verifiedAt": "2026-09-17T10:00:00Z",
+      "verifiedAt": "2026-09-19T07:34:00Z",
       "frozen": true,
-      "changeRequiresOwnerApproval": true
+      "changeRequiresOwnerApproval": true,
+      "verifiedHow": "Live /version (API) and /version.json (web, build 2026-09-02T16:58:56.705Z)"
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
       "apiSha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
-      "apiVerifiedAt": "2026-09-18T12:25:00Z",
+      "apiVerifiedAt": "2026-09-19T07:34:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -754,7 +755,42 @@
         "Development Book Edition 0.2 \u2014 2026-09-17, candidate c5347da",
         "~/Documents/Loohar/Evidence/README.md \u2014 says 'No UI evidence captured yet' although 8 MFA screenshots are archived"
       ],
-      "direction": "All drift UNDERSTATES readiness. No document overclaims, which is the safe direction, but an owner reading these would conclude the pilot is further behind than it is."
+      "direction": "All drift UNDERSTATES readiness. No document overclaims, which is the safe direction, but an owner reading these would conclude the pilot is further behind than it is.",
+      "resolved2026_09_19": [
+        "RELEASE_STATE.md refreshed to 4f69015 with verified environment identity and release history",
+        "PILOT_CRITICAL_PATH.md refreshed: steps 2, 3, 4 and 7 corrected from BLOCKED/NOT STARTED to their real state",
+        "FEATURE_MATRIX.md corrected: the 'nothing is STAGING CERTIFIED yet' claim removed"
+      ],
+      "stillStale": [
+        "docs/pilot-launch/ARCHITECTURE_CURRENT.md \u2014 written at 1d30522",
+        "docs/pilot-launch/SECURITY_MODEL.md \u2014 written at c5347da",
+        "Development Book Edition 0.2 \u2014 c5347da, outside Git"
+      ]
     }
+  },
+  "recovery2026_09_19": {
+    "landmarkShas": "All 24 owner-supplied landmark SHAs resolved to full SHAs and confirmed reachable from origin. None missing.",
+    "worktrees": "32 worktrees, every one clean: no staged, unstaged or untracked files.",
+    "localOnlyCommitsBefore": 22,
+    "localOnlyCommitsAfter": 0,
+    "backedUpThisSession": [
+      "chore/loohar-pilot-control-v01 \u2014 20 commits, first push to origin, now tracking",
+      "fix/launch-order-payment-public-safety-v01 \u2014 1336e09, pre-rebase original of L-01 (2d85007 in RC)",
+      "feature/stripe-payment-certification \u2014 85e0fb5, superseded Stripe certification work"
+    ],
+    "tags": [
+      "recovery/2026-09-19-production-baseline",
+      "recovery/2026-09-19-staging-candidate",
+      "recovery/2026-09-19-control-state"
+    ],
+    "workGenuinelyLost": "NONE",
+    "blockedOperations": [
+      "Bulk copy of ~/Documents/Loohar into docs/project-record/ was denied by the local permission classifier (Sensitive-Source Provenance). The archive remains outside Git; docs/project-control/EVIDENCE_MANIFEST.md describes it with SHA-256 checksums instead."
+    ],
+    "archiveAnomalies": [
+      "Evidence/security/authz-tests-c5347da.md and Evidence/kds/kds-and-lifecycle-c5347da.md are byte-identical (7c1a90d168539ef1) \u2014 one is a mis-copy, so either the authorization or the KDS evidence for c5347da is missing.",
+      "Development_Book/LOOHAR_DEVELOPMENT_BOOK.pdf is byte-identical to the archived c5347da edition \u2014 the current Development Book PDF is stale.",
+      "Evidence/README.md claims no UI evidence exists although 8 MFA screenshots are archived."
+    ]
   }
 }

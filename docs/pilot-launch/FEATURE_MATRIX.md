@@ -1,8 +1,15 @@
 # Feature Matrix — Pilot View
 
-Evidence date 2026-09-17. Source: code review of `47fa9cc`/`48c27e9` (UI + API) and test suites.
+Evidence date 2026-09-19. Source: release candidate `4f69015` and `.pilot/state.json`.
 "Code status" reflects what the code contains; "Certified" requires staging runtime evidence.
-Nothing in this table is STAGING CERTIFIED yet.
+
+**Correction (2026-09-19):** the previous edition stated "Nothing in this table is STAGING
+CERTIFIED yet." That is no longer true and understated readiness. Fifteen items now carry
+SHA-tied staging runtime evidence — online card checkout with a tip, checkout idempotency, the
+Prisma checkout defect, POS cashier workflow, offline POS reconciliation, privileged MFA,
+storefront checkout and modifiers, reporting and daily reconciliation, receipts, register tips,
+customer payment state and both Colorado tax onboarding fixes. Per-item certification state with
+proof SHAs is authoritative in `.pilot/state.json`, not in this table.
 
 Legend: Available · Partial · Planned · Blocked. Verified = confirmed by direct code check in
 the control program; Reported = from the manual-drafting code review, not yet independently
