@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T19:10:00Z",
+  "updatedAt": "2026-09-19T20:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,10 +17,10 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
-      "apiVerifiedAt": "2026-09-19T19:05:00Z",
+      "apiSha": "402c4a71f8831c794c7b9a5148061d82c56a422c",
+      "apiVerifiedAt": "2026-09-19T19:55:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
-      "webSha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
+      "webSha": "09e91ab (Vercel builds per push; 402c4a7 is docs-only over 09e91ab)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
       "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
@@ -40,18 +40,19 @@
       },
       "webUrlRecordedPreviously": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webUrlDiscrepancy": "OPEN QUESTION for the owner. The previously recorded staging web URL carries the team slug 'loohar', but list_teams for subash.sunar@loohar.com returns zero teams and the only visible project is loohar-kds-staging under the personal scope. Either the 'loohar' team belongs to a different account, or that URL is stale. The SHA above is verified for loohar-kds-staging, which is the deployment this account can actually see and which tracks release/loohar-pilot-rc-v01.",
-      "apiDeploy": "dep-dandpdbbc2fs73e2lihg (deploy_hook, live 2026-09-19T19:04:55Z)"
+      "apiDeploy": "dep-dandpdbbc2fs73e2lihg (deploy_hook, live 2026-09-19T19:04:55Z)",
+      "nativeAppOrigins": "ALLOW_NATIVE_APP_ORIGINS=true set 2026-09-19 (merge, not replace)"
     }
   },
   "git": {
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "4f690151a7d21a049bf9b025f360a3d52bb7ee89"
+      "sha": "9256ce67c73ae71245faee3ad9921e6ac98978f5"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "9256ce67c73ae71245faee3ad9921e6ac98978f5",
+      "sha": "402c4a71f8831c794c7b9a5148061d82c56a422c",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -285,7 +286,16 @@
       "branch": "chore/loohar-pilot-control-v01",
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-control-v01"
     },
-    "releaseCandidateBranch": "release/loohar-pilot-rc-v01"
+    "releaseCandidateBranch": "release/loohar-pilot-rc-v01",
+    "candidateChain2026_09_19": [
+      "470f2e8 log noise",
+      "c3159af CI",
+      "9256ce6 uptime+runbooks",
+      "d0dbbb7 qs/morgan advisories",
+      "5eb6093 native apps + native CORS",
+      "09e91ab merge",
+      "402c4a7 app docs"
+    ]
   },
   "items": {
     "L-01": {
@@ -669,9 +679,56 @@
     },
     "L-53": {
       "title": "loohar-api-staging tracks the frozen national-tax branch",
+      "priority": "P1",
+      "status": "OPEN \u2014 MATERIALIZED 2026-09-19",
+      "note": "Caused the incident above. Repointing the branch needs the Render dashboard or a Render API key (MCP has no service-settings tool)."
+    },
+    "L-54": {
+      "title": "Malformed entry in staging CORS_ORIGINS (\"https://web_origin=https\")",
+      "priority": "P3",
+      "status": "OPEN",
+      "note": "A WEB_ORIGIN=... assignment was pasted into the list. Harmless but wrong."
+    },
+    "L-55": {
+      "title": "RC staging web preview origin not in staging CORS allowlist",
+      "priority": "P1",
+      "status": "OPEN",
+      "evidence": "Preflight from https://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app to staging API \u2192 403 (2026-09-19)",
+      "impact": "Browser acceptance testing of the RC staging web may be blocked unless it uses a same-origin rewrite.",
+      "blocker": "Changing staging CORS_ORIGINS via MCP would redeploy the frozen branch (L-53); append the exact origin (never first) once the branch is repointed."
+    },
+    "L-56": {
+      "title": "Staging database schema is a superset of the RC (two national-tax migrations applied in August)",
       "priority": "P2",
       "status": "OPEN",
-      "note": "Needs a Render service-settings change"
+      "note": "Additive only. Staging certification runs against extra columns production will not have; migration certification for release must use a production-like schema (the CI disposable DB does)."
+    },
+    "L-57": {
+      "title": "Dependency advisories: qs DoS / array-limit bypass, morgan log forging",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "d0dbbb7",
+      "certification": "npm audit 0 on d0dbbb7; 18 DB suites + render gate pass; deployed to staging"
+    },
+    "L-58": {
+      "title": "Native POS and Driver apps",
+      "priority": "P1",
+      "status": "PARTIAL",
+      "done": [
+        "Capacitor 8.5.2 shells, com.loohar.pos and com.loohar.driver (5eb6093)",
+        "Native-origin CORS (exact two origins, flag-gated) with a production-mode boot test",
+        "Keychain/Keystore token storage, fail-closed",
+        "Safe-area fix for sticky headers",
+        "iOS simulator builds, install, launch, \"Live API Connected\" on staging (screenshots in ~/Documents/Loohar/Evidence/native-apps)"
+      ],
+      "remaining": [
+        "Android build (owner: SDK licence)",
+        "Signed device/TestFlight/Play builds (owner: Apple/Google accounts)",
+        "Sign-in \u2192 register \u2192 sale inside the app on staging",
+        "Printing in the apps unverified",
+        "Production ALLOW_NATIVE_APP_ORIGINS at release"
+      ],
+      "docs": "docs/mobile/NATIVE_APPS.md"
     }
   },
   "tests": {
@@ -723,18 +780,19 @@
     ]
   },
   "humanActionsRequired": [
-    "Complete Stripe TEST-mode Connect onboarding once for the development tenant (link provided in chat; single use, expires in ~15 minutes \u2014 ask for a fresh one if it lapses). This unblocks card, Terminal simulated and refund certification on staging.",
-    "Vercel: confirm which deployment is the real staging web. Claude is authenticated as subash.sunar@loohar.com and verified loohar-kds-staging at 4f69015, but that account is in no Vercel team, so a 'loohar'-team project (if one exists) remains invisible. Separately, runtime /version.json evidence needs either a protection-bypass secret or a brief SSO toggle on the staging project \u2014 Claude will not change a protection setting without a decision.",
-    "Render/Supabase: only the staging deploy hook is present on this machine; a read-only Render API key and Supabase project credentials would let Claude verify logs, backups and PITR itself",
-    "Buy a Stripe Terminal reader and run docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md",
-    "Geocoding provider decision for delivery-zone verification (pilot is pickup-only on Starter)",
-    "Decide the Colorado product/service category guidance shown to restaurants"
+    "Supabase: re-authenticate the Supabase MCP (/mcp \u2192 supabase). Unblocks backup/PITR evidence (L-11) and the staging/production project mapping.",
+    "Render: repoint loohar-api-staging from feature/loohar-national-tax-provider-v01 to release/loohar-pilot-rc-v01 (Settings \u2192 Build & Deploy \u2192 Branch), or put a Render API key in ~/.loohar/render.env so Claude can do it. Unblocks safe staging env changes (L-53, L-55).",
+    "Android: accept the Android SDK licence once (docs/mobile/NATIVE_APPS.md \u00a79).",
+    "Apple Developer Program and Google Play Console accounts for signed app builds and store release.",
+    "Stripe TEST-mode Connect onboarding for a staging tenant (card, Terminal and refund certification).",
+    "Physical Stripe Terminal reader for card-present acceptance.",
+    "Geocoding provider decision (delivery zones); Colorado category guidance decision."
   ],
   "approvals": {
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Financial-correctness P2 register (L-13 dead PaymentIntent replay, L-20 stale PENDING refunds, L-21 drawer race, L-28 coupon limit race), downloadable POS/Driver app feasibility and build, documentation sync.",
+  "nextAutonomousTask": "Financial P2 register (L-13, L-20, L-21, L-28); Development Book update for 2026-09-19 milestones; driver-branded sign-in; in-app staging sale certification.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -853,5 +911,16 @@
     },
     "identificationStatus": "INFERRED, not confirmed. A read-only migration query to confirm was blocked by the local permission classifier; owner to confirm the staging Render DATABASE_URL host.",
     "mcp": "configured with read_only=true; disconnected after plugin reload 2026-09-19 \u2014 needs owner re-auth via /mcp"
-  }
+  },
+  "incidents": [
+    {
+      "date": "2026-09-19T19:42Z",
+      "severity": "LOW (staging only, no data or schema change)",
+      "what": "Setting ALLOW_NATIVE_APP_ORIGINS on loohar-api-staging through the Render MCP tool triggered an automatic redeploy of the service branch HEAD, which is the frozen national-tax branch (1e0562b). Staging served national-tax code for about three minutes.",
+      "impact": "Build log: \"No pending migrations to apply\" \u2014 the two national-tax migrations were already applied to staging in August. No schema or data change. Production untouched (0526862).",
+      "recovery": "Redeployed the RC by exact SHA with scripts/deploy-staging.mjs (09e91ab), health ok.",
+      "rootCause": "L-53 (staging tracks the frozen branch) was known and recorded an hour earlier; the side effect of the env-var tool (auto-redeploy of branch HEAD) was not checked before use.",
+      "prevention": "Do not change staging env vars through the Render MCP until the service branch is repointed to release/loohar-pilot-rc-v01; after any env change, immediately redeploy the RC by exact SHA."
+    }
+  ]
 }

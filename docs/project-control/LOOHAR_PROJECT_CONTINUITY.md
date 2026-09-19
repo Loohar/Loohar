@@ -47,7 +47,7 @@ Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out
 | Branch | SHA | Meaning |
 | --- | --- | --- |
 | `main` | `0526862` | Production baseline |
-| `release/loohar-pilot-rc-v01` | `9256ce6` | Release candidate (45 commits ahead of main). Previous: `4f69015` |
+| `release/loohar-pilot-rc-v01` | `402c4a7` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
 | `chore/loohar-pilot-control-v01` | control docs | `.pilot/state.json`, `docs/pilot-launch/`, `docs/project-control/` |
 
 Recovery tags: `recovery/2026-09-19-production-baseline`, `recovery/2026-09-19-staging-candidate`,
@@ -71,7 +71,7 @@ Browser (loohar.com, tenant sites, staff PWA, driver PWA)
 | --- | --- | --- | --- |
 | Production | API `https://loohar-api.onrender.com` | `0526862bceb2dc3a483de96561755052076df060` | 2026-09-19 live |
 | Production | Web `https://loohar.com` | `0526862bceb2dc3a483de96561755052076df060` (build 2026-09-02) | 2026-09-19 live |
-| Staging | API `https://loohar-api-staging.onrender.com` | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19 live, Render deploy `dep-dandpdbbc2fs73e2lihg`, `/health` ok, schema 0 issues |
+| Staging | API `https://loohar-api-staging.onrender.com` | `402c4a71f8831c794c7b9a5148061d82c56a422c` | 2026-09-19 live, `/health` ok, schema 0 issues, `ALLOW_NATIVE_APP_ORIGINS=true` |
 | Staging | Web (Vercel) | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19, Vercel `dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t` READY |
 
 **Staging web project:** Vercel project `loohar-kds-staging`
@@ -88,6 +88,10 @@ Do not confuse them — an earlier blocker was misdiagnosed that way.
 **Render.** Identity `subashsunar00@gmail.com` (unlike Vercel, the gmail address *is* the Render account), connected by OAuth through the official Render Claude Code plugin. Services are in **"My Workspace" `tea-d9813qurnols73an40fg`**; the workspace named "Loohar" is empty. Production `loohar-api` `srv-d9839fuq1p3s73fn8v8g`, staging `loohar-api-staging` `srv-d9n15gh42hec73emor9g`, both Oregon, starter, one instance, auto-deploy off. **Hazard:** staging tracks the frozen national-tax branch; only ever deploy it by exact SHA.
 
 **Supabase.** Organization "Loohar". Project `mgqeamdtcqhhcqqnyinb` ("Loohar", us-east-2) is inferred production; `ilazzxrscfoccvholchi` ("loohar-enterprise-pos-staging", us-west-2) is inferred staging. The mapping is **not yet confirmed** against each service's `DATABASE_URL` host. The Supabase MCP is configured `read_only=true`.
+
+**Native apps.** Loohar POS (`com.loohar.pos`) and Loohar Driver (`com.loohar.driver`) are Capacitor shells in `apps/mobile/*` around the same web build. See `docs/mobile/NATIVE_APPS.md`. iOS simulator builds verified against staging. Android and signed store builds are owner-gated.
+
+**⚠ Render env changes redeploy the service branch HEAD.** Until `loohar-api-staging` tracks `release/loohar-pilot-rc-v01`, any env-var change through the Render tools deploys the frozen national-tax branch (it happened on 2026-09-19). After any env change, immediately redeploy the RC by exact SHA.
 
 **CI.** `.github/workflows/ci.yml` runs every gate on every push with a disposable Postgres; a skipped gate fails. `.github/workflows/uptime.yml` probes both APIs every 10 minutes and opens an `incident` issue, active once on `main`. Runbooks: `docs/operations/RUNBOOKS.md`.
 
