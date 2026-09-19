@@ -31,6 +31,12 @@ export function errorHandler(error, req, res, next) {
     return res.status(400).json({ error: "Validation failed", details: error.flatten() });
   }
   if (error.code === "P2002") {
+    // Prisma's own log demotes unique violations because most are handled idempotency collisions;
+    // one that reaches this handler was not handled, so it stays visible. The route pattern is
+    // logged rather than the URL, which can carry tracking or receipt tokens.
+    const route = req.route?.path ? `${req.baseUrl || ""}${req.route.path}` : req.baseUrl || "unmatched";
+    const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : error.meta?.target || "unknown";
+    console.warn("Unhandled unique constraint violation.", { method: req.method, route, target });
     return res.status(409).json({ error: "Unique constraint violation", details: error.meta });
   }
   if (["P1000", "P1001", "P1002", "P1017"].includes(error.code)) {

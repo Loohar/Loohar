@@ -1,10 +1,18 @@
 import { PrismaClient } from "@prisma/client";
+import { emitPrismaErrorLog } from "../utils/prismaLogFilter.js";
 
 const globalForPrisma = globalThis;
 
-export const prisma = globalForPrisma.looharPrisma || new PrismaClient({
-  log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"]
-});
+function createPrismaClient() {
+  if (process.env.NODE_ENV === "development") {
+    return new PrismaClient({ log: ["query", "error", "warn"] });
+  }
+  const client = new PrismaClient({ log: [{ emit: "event", level: "error" }] });
+  client.$on("error", (event) => emitPrismaErrorLog(event));
+  return client;
+}
+
+export const prisma = globalForPrisma.looharPrisma || createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.looharPrisma = prisma;
