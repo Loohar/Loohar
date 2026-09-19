@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T07:05:00Z",
+  "updatedAt": "2026-09-19T07:20:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -703,5 +703,28 @@
       "resolved": "Verified as 4f690151a7d21a049bf9b025f360a3d52bb7ee89 from Vercel's deployment record, matching the staging API. The prior record left it UNKNOWN.",
       "residual": "Runtime fetch of the served bundle is still blocked by SSO protection; and no 'loohar' Vercel team is visible to the owner's Vercel account."
     }
-  ]
+  ],
+  "launchTarget": {
+    "stated": "end of September 2026 (owner, 2026-09-19)",
+    "daysRemainingAtRecord": 11,
+    "scope": "pilot launch, Restaurant #1",
+    "assessment": "Engineering is substantially complete; the critical path is owner-side access and evidence, not code.",
+    "hardGates": [
+      "L-11 monitoring/alerting/backup+PITR proof/runbooks \u2014 P0, cannot start without Render/Supabase access",
+      "Stripe Connect onboarding for a real merchant \u2014 blocks card, Terminal and refund certification",
+      "Physical Stripe Terminal acceptance \u2014 card-present is certified simulated only",
+      "Production deploy prerequisites: MFA_ENCRYPTION_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_WEBHOOK_SECRET, additive migrations, web deployed with or before API"
+    ]
+  },
+  "inventoryAudit2026_09_19": {
+    "allWorktreesClean": true,
+    "lostWork": "NONE",
+    "rcAheadOfMain": 42,
+    "rcDiffVsMain": "103 files, +10839 / -987",
+    "supersededDuplicates": [
+      "1336e09 on fix/launch-order-payment-public-safety-v01 is the pre-rebase original of 2d85007 (L-01), which IS in the RC \u2014 identical change, not missing work",
+      "85e0fb5 on feature/stripe-payment-certification predates the RC line"
+    ],
+    "continuityRisk": "chore/loohar-pilot-control-v01 has 18 commits and NO REMOTE. Every control document, certification record and blocker history exists only on this machine. A push was attempted 2026-09-19 and denied by the local tooling; owner action needed."
+  }
 }
