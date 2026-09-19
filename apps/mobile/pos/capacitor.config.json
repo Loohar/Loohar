@@ -1,0 +1,9 @@
+{
+  "appId": "com.loohar.pos",
+  "appName": "Loohar POS",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  }
+}

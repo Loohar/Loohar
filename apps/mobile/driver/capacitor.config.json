@@ -1,0 +1,9 @@
+{
+  "appId": "com.loohar.driver",
+  "appName": "Loohar Driver",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  }
+}

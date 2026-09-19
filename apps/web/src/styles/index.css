@@ -5906,3 +5906,26 @@ textarea {
     }
   }
 }
+
+/* Native POS and Driver apps (apps/mobile/*). The WebView runs edge to edge, and every main header is
+   `position: sticky; top: 0`, which pins it under the iOS status bar and Dynamic Island. Scoped to
+   html.loohar-native (set at native boot) so the website is unaffected. Fixed overlays that already
+   add env(safe-area-inset-top) themselves are not affected by body padding. */
+html.loohar-native body {
+  padding-top: env(safe-area-inset-top);
+}
+html.loohar-native .app-header,
+html.loohar-native .restaurant-shell-topbar,
+html.loohar-native .pos-kiosk-topbar,
+html.loohar-native .public-navbar {
+  top: env(safe-area-inset-top);
+}
+html.loohar-native body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: env(safe-area-inset-top);
+  background: #ffffff;
+  z-index: 100;
+  pointer-events: none;
+}

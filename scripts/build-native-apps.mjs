@@ -1,0 +1,69 @@
+// Builds the Loohar web bundle for the native POS and/or Driver app and syncs it into that app's
+// Capacitor project (apps/mobile/<app>). The apps are the web product in a native shell: same
+// screens, same API, same server-computed money.
+//
+//   node scripts/build-native-apps.mjs --app pos|driver|all --env staging|production
+//
+// Inside the app the page origin is capacitor://localhost (iOS) or https://localhost (Android), so
+// every API, health and realtime endpoint must be absolute. A relative "/health" would resolve to the
+// app itself and the POS would believe the API is offline. The API must also run with
+// ALLOW_NATIVE_APP_ORIGINS=true (see apps/api/src/config/corsPolicy.js).
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+const ENVIRONMENTS = {
+  staging: "https://loohar-api-staging.onrender.com",
+  production: "https://loohar-api.onrender.com"
+};
+const APPS = ["pos", "driver"];
+
+function argument(name, fallback) {
+  const index = process.argv.indexOf(`--${name}`);
+  return index >= 0 ? process.argv[index + 1] : fallback;
+}
+
+const environment = argument("env", "staging");
+const selected = argument("app", "all");
+const apiOrigin = ENVIRONMENTS[environment];
+if (!apiOrigin) {
+  console.error(`Unknown --env ${environment}. Use one of: ${Object.keys(ENVIRONMENTS).join(", ")}.`);
+  process.exit(1);
+}
+const apps = selected === "all" ? APPS : [selected];
+if (!apps.every((app) => APPS.includes(app))) {
+  console.error(`Unknown --app ${selected}. Use pos, driver or all.`);
+  process.exit(1);
+}
+
+const root = resolve(import.meta.dirname, "..");
+
+function run(command, args, options) {
+  const result = spawnSync(command, args, { stdio: "inherit", ...options });
+  if (result.status !== 0) {
+    console.error(`${command} ${args.join(" ")} failed.`);
+    process.exit(result.status || 1);
+  }
+}
+
+for (const app of apps) {
+  const appDir = join(root, "apps/mobile", app);
+  const outDir = join(appDir, "www");
+  console.log(`\n== Loohar ${app} (${environment}: ${apiOrigin}) ==`);
+  run("npm", ["run", "build", "--workspace", "apps/web", "--", "--outDir", outDir, "--emptyOutDir"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      VITE_NATIVE_APP: app,
+      VITE_API_URL: `${apiOrigin}/api`,
+      VITE_API_HEALTH_URL: `${apiOrigin}/health`,
+      VITE_REALTIME_URL: apiOrigin
+    }
+  });
+  const platforms = ["ios", "android"].filter((platform) => existsSync(join(appDir, platform)));
+  if (platforms.length) {
+    run("npx", ["cap", "sync"], { cwd: appDir });
+  } else {
+    console.log(`No native platforms in apps/mobile/${app} yet; web bundle written to ${outDir}.`);
+  }
+}

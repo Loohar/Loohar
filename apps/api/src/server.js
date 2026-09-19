@@ -30,97 +30,17 @@ import { refreshSchemaCompatibility, schemaCompatibilitySnapshot } from "./utils
 import { apiDeploymentMetadata } from "./utils/deploymentMetadata.js";
 import { buildHealthPayload } from "./utils/healthPayload.js";
 import { configureTrustProxy } from "./config/trustProxy.js";
-import { productionOriginAllowlist, tenantRootDomain } from "./config/urls.js";
+import { createCorsPolicy } from "./config/corsPolicy.js";
+import { tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
-import { RESERVED_PLATFORM_SLUGS } from "../../shared/reservedSlugs.js";
 
 const app = express();
 configureTrustProxy(app);
-const isProduction = process.env.NODE_ENV === "production";
 
-function splitOriginConfig(value = "") {
-  return String(value).split(",").map((origin) => origin.trim()).filter(Boolean);
-}
-
-function normalizeCorsOrigin(origin = "") {
-  const trimmed = String(origin || "").trim().replace(/\/+$/, "");
-  if (!trimmed || trimmed === "*") return trimmed;
-  const hasProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
-  const withProtocol = hasProtocol
-    ? trimmed
-    : /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(trimmed)
-      ? `http://${trimmed}`
-      : `https://${trimmed}`;
-  try {
-    const url = new URL(withProtocol);
-    if (!["http:", "https:"].includes(url.protocol)) return "";
-    return url.origin;
-  } catch {
-    return "";
-  }
-}
-
-function configuredCorsOriginSources() {
-  return [
-    process.env.CORS_ORIGINS,
-    process.env.CORS_ORIGIN,
-    process.env.WEB_ORIGIN,
-    process.env.APP_URL,
-    process.env.PUBLIC_APP_URL,
-    process.env.PLATFORM_URL,
-    process.env.PLATFORM_WEBSITE_URL,
-    process.env.ADMIN_URL,
-    process.env.DRIVER_APP_URL,
-    process.env.PUBLIC_DRIVER_APP_URL,
-    process.env.PUBLIC_SITE_FALLBACK_URL,
-    process.env.PUBLIC_SITE_URL,
-    process.env.PUBLIC_SITE_ORIGIN
-  ];
-}
-
-const localDevHosts = new Set(["localhost", ["127", "0", "0", "1"].join("."), "::1"]);
-const allowLocalCors = !isProduction || process.env.ALLOW_LOCAL_CORS === "true";
-function isLocalDevOrigin(origin = "") {
-  try {
-    const url = new URL(origin);
-    return ["http:", "https:"].includes(url.protocol) && localDevHosts.has(url.hostname);
-  } catch {
-    return false;
-  }
-}
-
-const rawCorsOrigins = configuredCorsOriginSources().flatMap(splitOriginConfig);
-const configuredCorsOrigins = [...new Set([
-  ...(rawCorsOrigins.length ? rawCorsOrigins : productionOriginAllowlist()),
-  ...productionOriginAllowlist()
-].map(normalizeCorsOrigin).filter((origin) => origin && (!isProduction || allowLocalCors || !isLocalDevOrigin(origin))))];
-if (isProduction && configuredCorsOrigins.length === 0) {
-  throw new Error("CORS origins are required in production. Set CORS_ORIGINS, WEB_ORIGIN, or APP_URL to explicit Loohar domains before starting the API.");
-}
-if (isProduction && configuredCorsOrigins.includes("*")) {
-  throw new Error("Wildcard CORS is not allowed in production. Set CORS_ORIGINS to explicit Loohar domains.");
-}
-const reservedCorsSubdomains = new Set(RESERVED_PLATFORM_SLUGS.filter((slug) => !slug.includes(".")));
-const allowTenantSubdomainCors = process.env.ALLOW_TENANT_SUBDOMAIN_CORS === "true";
-function isTenantSubdomainOrigin(origin = "") {
-  if (!allowTenantSubdomainCors) return false;
-  try {
-    const url = new URL(origin);
-    const rootDomain = tenantRootDomain();
-    if (url.protocol !== "https:" || !url.hostname.endsWith(`.${rootDomain}`)) return false;
-    const subdomain = url.hostname.slice(0, -(rootDomain.length + 1));
-    return Boolean(subdomain) && !subdomain.includes(".") && !reservedCorsSubdomains.has(subdomain);
-  } catch {
-    return false;
-  }
-}
+// CORS policy lives in config/corsPolicy.js so it can be exercised directly by tests.
+const corsPolicy = createCorsPolicy(process.env);
 function isCorsOriginAllowed(origin = "") {
-  const normalizedOrigin = normalizeCorsOrigin(origin);
-  return !origin ||
-    configuredCorsOrigins.includes(normalizedOrigin) ||
-    isTenantSubdomainOrigin(normalizedOrigin) ||
-    (!isProduction && configuredCorsOrigins.includes("*")) ||
-    (allowLocalCors && isLocalDevOrigin(normalizedOrigin));
+  return corsPolicy.isCorsOriginAllowed(origin);
 }
 const corsOptions = {
   origin(origin, callback) {
@@ -221,9 +141,10 @@ const port = Number(process.env.PORT || 5001);
 await refreshSchemaCompatibility({ force: true });
 server.listen(port, () => {
   console.log(`API listening on port ${port}`);
-  console.log("CORS allowed origins:", configuredCorsOrigins.join(", "));
-  console.log("CORS tenant subdomains:", allowTenantSubdomainCors ? `enabled for *.${tenantRootDomain()}` : "disabled");
-  console.log("CORS local development:", allowLocalCors ? "enabled" : "disabled");
+  console.log("CORS allowed origins:", corsPolicy.configuredCorsOrigins.join(", "));
+  console.log("CORS tenant subdomains:", corsPolicy.allowTenantSubdomainCors ? `enabled for *.${tenantRootDomain()}` : "disabled");
+  console.log("CORS local development:", corsPolicy.allowLocalCors ? "enabled" : "disabled");
+  console.log("CORS native apps:", corsPolicy.allowNativeAppOrigins ? "enabled" : "disabled");
 });
 
 async function shutdown(signal) {
