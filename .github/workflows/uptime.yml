@@ -1,0 +1,105 @@
+# External uptime monitor for the Loohar API.
+#
+# Render restarts an instance that fails its /health check, but nothing told a person that
+# production was down or had lost its database. /health answers 503 when the schema check (a live
+# database query, refreshed every 15 s) fails, so a status check here catches an outage of the API or
+# of its database.
+#
+# On failure this opens (or comments on) an issue labelled `incident`, which emails repository
+# watchers. On recovery it closes the issue. It uses only the built-in GITHUB_TOKEN.
+#
+# GitHub runs scheduled workflows only from the default branch, so this monitor becomes active when
+# it reaches `main`. It can also be run by hand from the Actions tab. GitHub pauses schedules after
+# 60 days without repository activity.
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: production
+            api: https://loohar-api.onrender.com
+          - environment: staging
+            api: https://loohar-api-staging.onrender.com
+    steps:
+      - name: Probe /health and /version
+        id: probe
+        shell: bash
+        run: |
+          set -uo pipefail
+          result="healthy"; detail=""
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o health.json -w '%{http_code}' --max-time 20 "${{ matrix.api }}/health" || echo "000")
+            if [ "$code" = "200" ] && jq -e '.ok == true and .schema.ok == true' health.json >/dev/null 2>&1; then
+              result="healthy"; detail="HTTP 200, schema ok"; break
+            fi
+            result="unhealthy"
+            detail="HTTP $code; ok=$(jq -r '.ok // "n/a"' health.json 2>/dev/null); schema.ok=$(jq -r '.schema.ok // "n/a"' health.json 2>/dev/null); issues=$(jq -c '.schema.issues // []' health.json 2>/dev/null)"
+            sleep 20
+          done
+          sha=$(curl -sS --max-time 20 "${{ matrix.api }}/version" | jq -r '.commitSha // "unknown"' 2>/dev/null || echo unknown)
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          echo "detail=$detail" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.environment }}: $result ($detail) at $sha"
+
+      - name: Open or update the incident
+        if: steps.probe.outputs.result == 'unhealthy'
+        uses: actions/github-script@v7
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          API: ${{ matrix.api }}
+          DETAIL: ${{ steps.probe.outputs.detail }}
+          SHA: ${{ steps.probe.outputs.sha }}
+        with:
+          script: |
+            const title = `Uptime: ${process.env.ENVIRONMENT} API unhealthy`;
+            const body = [
+              `**${process.env.ENVIRONMENT}** \`${process.env.API}/health\` failed three probes 20 s apart.`,
+              ``,
+              `- Detail: ${process.env.DETAIL}`,
+              `- Serving SHA: \`${process.env.SHA}\``,
+              `- Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              ``,
+              `Runbook: docs/operations/RUNBOOKS.md`
+            ].join("\n");
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: "open", labels: "incident", per_page: 50 });
+            const existing = open.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ ...context.repo, title, body, labels: ["incident", process.env.ENVIRONMENT] });
+            }
+            core.setFailed(title);
+
+      - name: Close a resolved incident
+        if: steps.probe.outputs.result == 'healthy'
+        uses: actions/github-script@v7
+        env:
+          ENVIRONMENT: ${{ matrix.environment }}
+          SHA: ${{ steps.probe.outputs.sha }}
+        with:
+          script: |
+            const title = `Uptime: ${process.env.ENVIRONMENT} API unhealthy`;
+            const { data: open } = await github.rest.issues.listForRepo({ ...context.repo, state: "open", labels: "incident", per_page: 50 });
+            for (const issue of open.filter((candidate) => candidate.title === title)) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: issue.number, body: `Recovered: /health is 200 with schema ok, serving \`${process.env.SHA}\`.` });
+              await github.rest.issues.update({ ...context.repo, issue_number: issue.number, state: "closed" });
+            }
