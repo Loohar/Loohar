@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T07:20:00Z",
+  "updatedAt": "2026-09-19T07:45:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -726,5 +726,35 @@
       "85e0fb5 on feature/stripe-payment-certification predates the RC line"
     ],
     "continuityRisk": "chore/loohar-pilot-control-v01 has 18 commits and NO REMOTE. Every control document, certification record and blocker history exists only on this machine. A push was attempted 2026-09-19 and denied by the local tooling; owner action needed."
+  },
+  "fullProjectAudit2026_09_19": {
+    "scope": "Every worktree, branch, document in the repo, and the external ~/Documents/Loohar archive.",
+    "codebase": {
+      "apiSrc": "71 files, 22,282 lines; 17 routes, 26 services, 5 modules, 5 middleware",
+      "webSrc": "35 files, 20,019 lines",
+      "webMonolith": "apps/web/src/App.jsx is 15,934 lines \u2014 80% of the web codebase in one file. Maintenance and review risk; not a launch blocker.",
+      "prisma": "68 models, 34 migrations",
+      "tests": "220+ npm test scripts, 140 files in scripts/"
+    },
+    "externalDocsArchive": {
+      "path": "/Users/rudrabishwokarma/Documents/Loohar",
+      "files": 45,
+      "contents": "Development Book (md+pdf, 3 archived candidate editions), 4 manuals (Restaurant Owner, Platform Admin, Employee POS, Driver) each md+pdf, Evidence archive (checkout, kds, mfa, onboarding, payments incl. raw JSON, pos, releases, security, staging, 8 MFA screenshots), brand renderer, Architecture/Security/Release_History copies",
+      "RISK": "NOT under git, no remote, and `tmutil latestbackup` reports the Time Machine destination cannot be mounted. This archive exists on exactly one machine with no working backup."
+    },
+    "documentationDrift": {
+      "severity": "HIGH for launch communication, not for engineering truth",
+      "current": ".pilot/state.json (updated 2026-09-18, now 2026-09-19) is the only current record",
+      "stale": [
+        "docs/pilot-launch/PILOT_CRITICAL_PATH.md \u2014 shows step 2 BLOCKED and step 4 NOT STARTED; both are actually done (staging deployed, L-01C PASS)",
+        "docs/pilot-launch/FEATURE_MATRIX.md \u2014 states 'Nothing in this table is STAGING CERTIFIED yet'; 15 items are now certified on staging",
+        "docs/pilot-launch/RELEASE_STATE.md \u2014 staging API 4c48815 and candidate c5347da; both superseded by 4f69015",
+        "docs/pilot-launch/ARCHITECTURE_CURRENT.md \u2014 written at 1d30522",
+        "docs/pilot-launch/SECURITY_MODEL.md \u2014 written at c5347da",
+        "Development Book Edition 0.2 \u2014 2026-09-17, candidate c5347da",
+        "~/Documents/Loohar/Evidence/README.md \u2014 says 'No UI evidence captured yet' although 8 MFA screenshots are archived"
+      ],
+      "direction": "All drift UNDERSTATES readiness. No document overclaims, which is the safe direction, but an owner reading these would conclude the pilot is further behind than it is."
+    }
   }
 }
