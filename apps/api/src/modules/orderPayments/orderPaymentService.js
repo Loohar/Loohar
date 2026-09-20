@@ -20,6 +20,7 @@ import {
   normalizeCheckoutIdempotencyKey,
   normalizeRefundIdempotencyKey,
   orderPaymentIntentIdempotencyKey,
+  orderPaymentIntentReplacementIdempotencyKey,
   orderRefundIdempotencyKey,
   refundIdempotencyKeyHash
 } from "./checkoutIdempotency.js";
@@ -443,7 +444,7 @@ export async function createMerchantOnboardingLink({ user }) {
   return { onboardingUrl: link.url, merchantAccount };
 }
 
-async function createStripePaymentIntent({ quote, order, payment, merchant }) {
+async function createStripePaymentIntent({ quote, order, payment, merchant, idempotencyKey }) {
   assertStripeConnectConfigured();
   const feeParams = quote.platformFeeCents > 0 ? { application_fee_amount: quote.platformFeeCents } : {};
   const body = stripeForm({
@@ -463,8 +464,86 @@ async function createStripePaymentIntent({ quote, order, payment, merchant }) {
     path: "/payment_intents",
     body,
     stripeAccount: merchant.stripeAccountId,
-    idempotencyKey: orderPaymentIntentIdempotencyKey(payment.id)
+    idempotencyKey: idempotencyKey || orderPaymentIntentIdempotencyKey(payment.id)
   });
+}
+
+// A replay hands the customer the stored client secret. Stripe may have cancelled that PaymentIntent
+// since (cancelling an order cancels it, and Stripe cancels some intents that are never confirmed),
+// or the payment row's amount may no longer match it. Confirming a dead intent is impossible and the
+// customer only sees an opaque Stripe error, so check the intent before handing it back.
+//
+// Money is never re-created here: a replacement is made only for an intent that has no money
+// attached, and only while the payment row is still awaiting payment.
+const REPLACEABLE_PAYMENT_STATUSES = new Set(["REQUIRES_PAYMENT_METHOD", "REQUIRES_CONFIRMATION", "FAILED"]);
+const INTENT_STATUSES_WITH_MONEY = new Set(["processing", "succeeded", "requires_capture"]);
+
+async function refreshReplayPaymentIntent({ order, payment }) {
+  if (!payment.providerPaymentIntentId || !REPLACEABLE_PAYMENT_STATUSES.has(payment.status)) return { payment };
+  const merchant = await prisma.restaurantMerchantAccount.findUnique({
+    where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } }
+  });
+  if (!merchant?.stripeAccountId) return { payment };
+
+  let intent;
+  try {
+    intent = await stripeRequest({
+      secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+      path: `/payment_intents/${payment.providerPaymentIntentId}`,
+      method: "GET",
+      stripeAccount: merchant.stripeAccountId
+    });
+  } catch {
+    // Stripe unreachable: fall back to the stored secret rather than failing the replay.
+    return { payment };
+  }
+
+  // The customer already paid, or payment is in flight. Never offer a secret to confirm again; the
+  // webhook settles the order.
+  if (INTENT_STATUSES_WITH_MONEY.has(intent.status)) return { payment, suppressClientSecret: true };
+
+  const amountMatches = Number(intent.amount) === Number(payment.totalCents);
+  if (intent.status !== "canceled" && amountMatches) return { payment };
+
+  // A live intent for the wrong amount must be closed before its replacement is created, so a
+  // customer holding the old secret cannot pay the wrong total.
+  if (intent.status !== "canceled") {
+    try {
+      await stripeRequest({
+        secretKey: process.env.STRIPE_CONNECT_SECRET_KEY,
+        path: `/payment_intents/${intent.id}/cancel`,
+        body: stripeForm({}),
+        stripeAccount: merchant.stripeAccountId
+      });
+    } catch {
+      return { payment };
+    }
+  }
+
+  const replacement = await createStripePaymentIntent({
+    quote: paymentIntentAmounts(payment),
+    order,
+    payment,
+    merchant,
+    idempotencyKey: orderPaymentIntentReplacementIdempotencyKey(payment.id, intent.id)
+  });
+  const updated = await prisma.restaurantOrderPayment.update({
+    where: { id: payment.id },
+    data: {
+      status: replacement.status === "requires_confirmation" ? "REQUIRES_CONFIRMATION" : "REQUIRES_PAYMENT_METHOD",
+      providerPaymentIntentId: replacement.id,
+      providerClientSecret: replacement.client_secret || null
+    }
+  });
+  await recordAudit({
+    actorUserId: null,
+    restaurantId: payment.restaurantId,
+    action: "order_payment.intent.replaced",
+    entityType: "RestaurantOrderPayment",
+    entityId: payment.id,
+    metadata: { replacedIntentId: intent.id, replacedIntentStatus: intent.status, replacementIntentId: replacement.id, totalCents: payment.totalCents }
+  });
+  return { payment: updated };
 }
 
 // PaymentIntent amounts always come from the persisted server-side payment row so the
@@ -507,7 +586,7 @@ async function attachPaymentIntent({ order, payment, merchant }) {
 
 // Anonymous checkout callers get the same limited order and payment views as order tracking, not the
 // raw rows (which carry tenant settings, idempotency hashes and quote internals).
-function checkoutResponse({ order, payment, trackingToken, idempotentReplay, stripeAccountId }) {
+function checkoutResponse({ order, payment, trackingToken, idempotentReplay, stripeAccountId, suppressClientSecret = false }) {
   const limitedOrder = limitedTrackingOrder(order);
   return {
     order: { ...limitedOrder, totalCents: limitedOrder.totals?.totalCents ?? null },
@@ -516,7 +595,7 @@ function checkoutResponse({ order, payment, trackingToken, idempotentReplay, str
     // Direct charges live on the restaurant's connected account; Stripe.js must be initialised with it
     // to confirm the PaymentIntent. The account id is an identifier, not a credential.
     stripeAccountId: stripeAccountId || null,
-    clientSecret: payment.providerClientSecret || null,
+    clientSecret: suppressClientSecret ? null : (payment.providerClientSecret || null),
     tracking: trackingToken ? { token: trackingToken, ...customerTrackingUrls(order, trackingToken) } : null,
     checkout: { idempotentReplay }
   };
@@ -545,13 +624,15 @@ async function replayCheckout({ existing, keyHash, requestHash }) {
       throw error;
     }
   }
+  const refreshed = await refreshReplayPaymentIntent({ order, payment });
+  payment = refreshed.payment;
   const replayMerchant = await prisma.restaurantMerchantAccount.findUnique({
     where: { restaurantId_provider: { restaurantId: payment.restaurantId, provider: "STRIPE_CONNECT" } },
     select: { stripeAccountId: true, status: true }
   });
   // Without the connected account the client cannot confirm the PaymentIntent; fail visibly instead.
   if (payment.providerClientSecret && !replayMerchant?.stripeAccountId) throw merchantNotReadyError(replayMerchant);
-  return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true, stripeAccountId: replayMerchant?.stripeAccountId });
+  return checkoutResponse({ order, payment, trackingToken, idempotentReplay: true, stripeAccountId: replayMerchant?.stripeAccountId, suppressClientSecret: refreshed.suppressClientSecret });
 }
 
 export async function createOrderPayment({ body, idempotencyKey }) {

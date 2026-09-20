@@ -45,7 +45,7 @@ const customerStatusSection = sectionBetween(customerRoutes, "export async funct
 
 assertCheck(orderWorkflow.includes("createTrackingToken") && orderWorkflow.includes("hashToken") && orderWorkflow.includes("trackingTokenHash"), "Tracking tokens are server-generated and hash-stored");
 assertCheck(orderPaymentService.includes("trackingTokenHash: hashToken(initialTrackingToken)") && orderPaymentService.includes("tracking: trackingToken ? { token: trackingToken, ...customerTrackingUrls(order, trackingToken) } : null") && orderPaymentService.includes("trackingToken: initialTrackingToken"), "Checkout creation stores a hashed token and returns the one-time customer token");
-assertCheck(orderPaymentService.includes("providerClientSecret: intent.client_secret || null") && orderPaymentService.includes("clientSecret: payment.providerClientSecret || null"), "Checkout creation still returns the Stripe one-time client secret");
+assertCheck(orderPaymentService.includes("providerClientSecret: intent.client_secret || null") && orderPaymentService.includes("clientSecret: suppressClientSecret ? null : (payment.providerClientSecret || null)"), "Checkout creation still returns the Stripe one-time client secret");
 
 assertCheck(orderPaymentRoutes.includes("publicStatusForOrder") && orderPaymentRoutes.includes("publicReceiptForOrder"), "Public order-payment routes use token-gated public handlers");
 assertCheck(orderPaymentRoutes.includes("authenticateAccessToken") && orderPaymentRoutes.includes("statusForOrder({ orderId: req.params.orderId, user: access.user })"), "Authenticated restaurant status access goes through bearer auth");

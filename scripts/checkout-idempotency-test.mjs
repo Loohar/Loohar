@@ -87,7 +87,8 @@ assertCheck(schema.includes("checkoutIdempotencyKeyHash String?            @uniq
 assertCheck(migration.includes('ADD COLUMN IF NOT EXISTS "checkoutIdempotencyKeyHash" TEXT') && migration.includes('CREATE UNIQUE INDEX IF NOT EXISTS "RestaurantOrderPayment_checkoutIdempotencyKeyHash_key"'), "Migration is additive with a unique index");
 assertCheck(!/DROP|DELETE|UPDATE /i.test(migration), "Migration does not drop, delete, or rewrite data");
 assertCheck(orderService.includes("checkoutIdempotencyKeyHash: keyHash,") && orderService.includes("checkoutRequestHash: requestHash,"), "Key hash is written in the same transaction as the order and payment");
-assertCheck(orderService.includes("idempotencyKey: orderPaymentIntentIdempotencyKey(payment.id)"), "PaymentIntent creation sends a Stripe idempotency key");
+assertCheck(orderService.includes("idempotencyKey: idempotencyKey || orderPaymentIntentIdempotencyKey(payment.id)"), "PaymentIntent creation sends a Stripe idempotency key, defaulting to the per-payment key");
+assertCheck(orderService.includes("orderPaymentIntentReplacementIdempotencyKey(payment.id, intent.id)"), "A replacement PaymentIntent uses its own key derived from the intent it replaces (L-13)");
 assertCheck(orderService.includes("createStripePaymentIntent({ quote: paymentIntentAmounts(payment), order, payment, merchant })"), "PaymentIntent amounts come from the persisted server-side payment row");
 assertCheck(orderService.includes("if (existing.checkoutRequestHash !== requestHash) throw checkoutKeyReusedError();"), "Reusing a key for a different cart is rejected");
 assertCheck(orderService.includes("if (isStripeIdempotencyInProgress(error)) throw checkoutInProgressError();"), "Concurrent Stripe idempotency conflicts do not cancel the order");

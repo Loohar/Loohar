@@ -85,6 +85,13 @@ export function orderPaymentIntentIdempotencyKey(paymentId = "") {
   return `loohar:order-payment-intent:v1:${paymentId}`;
 }
 
+// A replacement for a dead PaymentIntent needs its own Stripe idempotency key, or Stripe returns the
+// dead one again. Deriving it from the intent being replaced keeps it deterministic: two concurrent
+// replays of the same dead intent produce the same key, so Stripe returns one replacement, not two.
+export function orderPaymentIntentReplacementIdempotencyKey(paymentId = "", replacedIntentId = "") {
+  return `loohar:order-payment-intent:v1:${paymentId}:replaces:${replacedIntentId}`;
+}
+
 function uniqueTargets(error) {
   const target = error?.meta?.target;
   if (Array.isArray(target)) return target.map(String);
