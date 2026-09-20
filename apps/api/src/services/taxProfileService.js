@@ -33,12 +33,6 @@ function providerEvent(event, metadata = {}) {
   console.info(JSON.stringify({ event, ...metadata }));
 }
 
-function date(value) {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 function profileShape(profile) {
   if (!profile) return null;
   return {

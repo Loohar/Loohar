@@ -191,22 +191,6 @@ router.use("/:restaurantId/reports", featureGuard(FEATURE.REPORTS));
 router.use("/:restaurantId/analytics", featureGuard(FEATURE.ANALYTICS));
 router.use("/:restaurantId/locations", featureGuard(FEATURE.BASIC_SETTINGS));
 
-function centsTotal(orders = []) {
-  return orders.reduce((sum, order) => sum + (order.totalCents || 0), 0);
-}
-
-function segmentForCustomer(customer) {
-  const totalOrders = customer.orders?.length || 0;
-  const lifetimeSpend = centsTotal(customer.orders);
-  const lastOrder = customer.orders?.[0]?.createdAt ? new Date(customer.orders[0].createdAt) : null;
-  const daysSinceLastOrder = lastOrder ? (Date.now() - lastOrder.getTime()) / 86_400_000 : Infinity;
-  if (totalOrders === 0) return "NEW_CUSTOMER";
-  if (lifetimeSpend >= 50000 || totalOrders >= 10) return "VIP_CUSTOMER";
-  if (daysSinceLastOrder > 90) return "INACTIVE_CUSTOMER";
-  if (daysSinceLastOrder > 45) return "AT_RISK_CUSTOMER";
-  return "ACTIVE_CUSTOMER";
-}
-
 function permissionsForRole(role) {
   const permissions = {
     TENANT_OWNER: ["all"],

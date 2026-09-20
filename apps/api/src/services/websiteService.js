@@ -10,13 +10,6 @@ const DEFAULT_GALLERY_IMAGES = [
   { imageUrl: "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80", altText: "Prepared restaurant dish", category: "food" },
   { imageUrl: "https://images.unsplash.com/photo-1559339352-11d035aa65de?auto=format&fit=crop&w=1200&q=80", altText: "Restaurant bar", category: "interior" }
 ];
-const DEFAULT_MENU_IMAGES = [
-  "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=900&q=80"
-];
-
 function hasImageUrl(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
