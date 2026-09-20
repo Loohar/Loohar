@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-20T06:10:00Z",
+  "updatedAt": "2026-09-20T07:15:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "fd318666e27143875c54a365e1d02c27e78c0a9a",
-      "apiVerifiedAt": "2026-09-20T06:05:00Z",
+      "apiSha": "3b2af70e272f1a36a2229a6413083522096fb134",
+      "apiVerifiedAt": "2026-09-20T07:10:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "796e83032a735d59a337419dc2a1da6f4aaaffd1"
+      "sha": "fd318666e27143875c54a365e1d02c27e78c0a9a"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "fd318666e27143875c54a365e1d02c27e78c0a9a",
+      "sha": "3b2af70e272f1a36a2229a6413083522096fb134",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -300,6 +300,12 @@
       "4029d39 driver SPM pin",
       "796e830 EXTRA_CORS_ORIGINS",
       "fd31866 checkout replay PaymentIntent (L-13)"
+    ],
+    "candidateChain2026_09_20": [
+      "e9cae3a API linting + dead code removal (L-59)",
+      "43bfb40 drawer creation race (L-21)",
+      "a765a83 coupon usage limit (L-28)",
+      "3b2af70 refund mirroring + stale pending sweep (L-20)"
     ]
   },
   "items": {
@@ -459,13 +465,19 @@
     },
     "L-20": {
       "title": "Stale PENDING refund sweep and dashboard-created refunds not mirrored",
-      "priority": "P2",
-      "status": "NOT_STARTED"
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "3b2af70",
+      "certification": "PASS (local, real database, real webhook handler and sweep): 6 cases; 3 fail on the previous commit with refund_not_found.",
+      "note": "Dashboard/provider refunds are mirrored from the provider object and audited requiresReview; refunds stuck PENDING are resolved against Stripe by npm run refunds:sweep, which never guesses a refund with no provider id. Runbook section 6a."
     },
     "L-21": {
       "title": "Concurrent main-terminal registration can create two drawers; concurrent checkout.session.completed after lease expiry",
-      "priority": "P2",
-      "status": "NOT_STARTED"
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "43bfb40",
+      "certification": "PASS (local, real database): 4 concurrency cases; 3 fail on the previous commit. Verified 15 consecutive runs with no flakes after a second defect (null clobber) was found and fixed.",
+      "note": "Drawer is created only after the device row exists and attached under an optimistic condition; the losing caller deletes its empty drawer. The race-prone ensureDeviceCashDrawer helper was removed."
     },
     "L-22": {
       "title": "Privileged-role MFA",
@@ -514,7 +526,11 @@
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
       "priority": "P2",
-      "status": "OPEN"
+      "status": "PARTIAL \u2014 coupon usage limit FIXED",
+      "sha": "a765a83",
+      "certification": "PASS (local, real database): 6 cases. Measured 25 concurrent redemptions on a coupon limited to 10: previously redeemedCount reached 25, now capped at 10.",
+      "remaining": "The other L-28 low findings are untouched: SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needing an unexpired access token.",
+      "knownLimitation": "The window between pricing a quote and settling the payment is not a reservation, so more orders can be placed with a coupon than the limit allows. Those settle (the customer already paid) and are flagged coupon.redeemed_beyond_limit for review. A true reservation is the proper fix and was not attempted."
     },
     "L-29": {
       "title": "Web checkout cannot confirm direct-charge PaymentIntents (Stripe.js missing stripeAccount)",
@@ -743,13 +759,15 @@
     "L-59": {
       "title": "apps/api has no real linting (its lint script is `node --check src/server.js`)",
       "priority": "P2",
-      "status": "OPEN",
+      "status": "FIXED",
       "evidence": "A missing import in orderPaymentService.js passed `npm run lint` on 2026-09-20; it would have thrown a ReferenceError on the checkout replay path. Caught by running the code, not by lint.",
-      "note": "apps/web has proper ESLint. Adding ESLint to apps/api would catch undefined identifiers across 71 files."
+      "note": "apps/web has proper ESLint. Adding ESLint to apps/api would catch undefined identifiers across 71 files.",
+      "sha": "e9cae3a",
+      "certification": "PASS \u2014 eslint no-undef/no-unused-vars across apps/api; demonstrated that node --check passes an undefined identifier while eslint catches it. Removed 4 pieces of dead code including a stale duplicate of segmentForCustomer."
     }
   },
   "tests": {
-    "candidateSha": "fd31866",
+    "candidateSha": "3b2af70",
     "ranAt": "2026-09-20",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -785,7 +803,7 @@
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
     "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
-    "dbSuitesAllOnSharedDb": "19 suites, 144 tests, 0 skips"
+    "dbSuitesAllOnSharedDb": "22 suites, 160 tests, 0 skips"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -809,7 +827,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "L-20 stale PENDING refunds, L-21 drawer creation race, L-28 coupon usage-limit race, L-59 API linting; in-app staging sale certification; driver-branded sign-in.",
+  "nextAutonomousTask": "Re-certify the pilot workflow on staging at the current RC (fresh tenant through signup, MFA, tax, menu, POS device, shift, cash sale, KDS, reporting), then in-app certification of a sale through the native POS app.",
   "corrections": [
     {
       "date": "2026-09-19",

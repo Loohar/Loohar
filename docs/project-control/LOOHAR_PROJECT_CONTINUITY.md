@@ -47,7 +47,7 @@ Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out
 | Branch | SHA | Meaning |
 | --- | --- | --- |
 | `main` | `0526862` | Production baseline |
-| `release/loohar-pilot-rc-v01` | `fd31866` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
+| `release/loohar-pilot-rc-v01` | `3b2af70` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
 | `chore/loohar-pilot-control-v01` | control docs | `.pilot/state.json`, `docs/pilot-launch/`, `docs/project-control/` |
 
 Recovery tags: `recovery/2026-09-19-production-baseline`, `recovery/2026-09-19-staging-candidate`,
@@ -71,7 +71,7 @@ Browser (loohar.com, tenant sites, staff PWA, driver PWA)
 | --- | --- | --- | --- |
 | Production | API `https://loohar-api.onrender.com` | `0526862bceb2dc3a483de96561755052076df060` | 2026-09-19 live |
 | Production | Web `https://loohar.com` | `0526862bceb2dc3a483de96561755052076df060` (build 2026-09-02) | 2026-09-19 live |
-| Staging | API `https://loohar-api-staging.onrender.com` | `fd318666e27143875c54a365e1d02c27e78c0a9a` | 2026-09-20 live, `/health` ok, schema 0 issues, `ALLOW_NATIVE_APP_ORIGINS=true`, `EXTRA_CORS_ORIGINS` set |
+| Staging | API `https://loohar-api-staging.onrender.com` | `3b2af70e272f1a36a2229a6413083522096fb134` | 2026-09-20 live, `/health` ok, schema 0 issues, `ALLOW_NATIVE_APP_ORIGINS=true`, `EXTRA_CORS_ORIGINS` set |
 | Staging | Web (Vercel) | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19, Vercel `dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t` READY |
 
 **Staging web project:** Vercel project `loohar-kds-staging`
