@@ -23,6 +23,13 @@ const api = (() => {
   return value;
 })();
 
+// --as-native-app sends every request with the origin the packaged apps actually use
+// (capacitor://localhost on iOS, https://localhost on Android). Before the native CORS fix the API
+// refused that origin outright, so running the whole workflow this way certifies the app's network
+// contract end to end, not just that the app launches.
+const nativeOriginIndex = process.argv.indexOf("--as-native-app");
+const nativeOrigin = nativeOriginIndex >= 0 ? (process.argv[nativeOriginIndex + 1] || "capacitor://localhost") : "";
+
 const run = `${Date.now().toString(36)}${crypto.randomInt(100, 999)}`;
 const password = `Lh!${crypto.randomBytes(12).toString("base64url")}9z`;
 const steps = [];
@@ -41,6 +48,7 @@ async function call(path, { method = "GET", body, token = accessToken, posToken,
       ...(body ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(posToken ? { "x-loohar-pos-session": posToken } : {}),
+      ...(nativeOrigin ? { Origin: nativeOrigin } : {}),
       ...headers
     },
     ...(body ? { body: JSON.stringify(body) } : {})
@@ -63,6 +71,17 @@ async function freshTotpFor(secret, usedStep) {
 }
 
 async function main() {
+  if (nativeOrigin) {
+    // Fail fast and clearly if the API refuses the app's origin: every later step would fail too.
+    const preflight = await fetch(`${api}/api/auth/login`, {
+      method: "OPTIONS",
+      headers: { Origin: nativeOrigin, "Access-Control-Request-Method": "POST" }
+    });
+    assert.equal(preflight.status, 204, `the API refused the native app origin ${nativeOrigin} with ${preflight.status}; the app cannot call it at all`);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), nativeOrigin);
+    record("API accepts the native app origin", nativeOrigin);
+  }
+
   // 1. A restaurant signs itself up through the public flow.
   const email = `pilot-${run}@example.test`;
   const slug = `pilot-cert-${run}`;
@@ -303,7 +322,7 @@ async function main() {
 }
 
 main().then((context) => {
-  console.log(`\n${steps.length} steps passed. Tenant ${context.slug} on staging.`);
+  console.log(`\n${steps.length} steps passed${nativeOrigin ? ` as the native app (origin ${nativeOrigin})` : ""}. Tenant ${context.slug} on staging.`);
   process.exit(0);
 }).catch((error) => {
   console.error(`\nFAIL  ${error.message}`);

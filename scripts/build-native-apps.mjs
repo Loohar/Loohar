@@ -8,7 +8,7 @@
 // every API, health and realtime endpoint must be absolute. A relative "/health" would resolve to the
 // app itself and the POS would believe the API is offline. The API must also run with
 // ALLOW_NATIVE_APP_ORIGINS=true (see apps/api/src/config/corsPolicy.js).
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -38,6 +38,19 @@ if (!apps.every((app) => APPS.includes(app))) {
 
 const root = resolve(import.meta.dirname, "..");
 
+// An installed app must be able to say which commit produced it. Nothing in a local native build
+// sets the CI variables the version writer looks for, so every bundle recorded "unknown" and an
+// artifact could not be tied back to a SHA.
+function commitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+const sha = commitSha();
+if (!sha) console.warn("Warning: the git commit could not be read, so this build will not record its SHA.");
+
 function run(command, args, options) {
   const result = spawnSync(command, args, { stdio: "inherit", ...options });
   if (result.status !== 0) {
@@ -49,12 +62,14 @@ function run(command, args, options) {
 for (const app of apps) {
   const appDir = join(root, "apps/mobile", app);
   const outDir = join(appDir, "www");
-  console.log(`\n== Loohar ${app} (${environment}: ${apiOrigin}) ==`);
+  console.log(`\n== Loohar ${app} (${environment}: ${apiOrigin}) at ${sha ? sha.slice(0, 12) : "unknown commit"} ==`);
   run("npm", ["run", "build", "--workspace", "apps/web", "--", "--outDir", outDir, "--emptyOutDir"], {
     cwd: root,
     env: {
       ...process.env,
       VITE_NATIVE_APP: app,
+      GIT_COMMIT_SHA: sha,
+      LOOHAR_BUILD_ENVIRONMENT: environment,
       VITE_API_URL: `${apiOrigin}/api`,
       VITE_API_HEALTH_URL: `${apiOrigin}/health`,
       VITE_REALTIME_URL: apiOrigin

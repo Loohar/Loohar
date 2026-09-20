@@ -27,7 +27,7 @@ export function resolveWebDeploymentMetadata(env = process.env, { buildTime = ne
   return {
     service: "web",
     serviceName: "web",
-    environment: safeMetadataValue(firstStringValue(env, ["VERCEL_ENV", "NODE_ENV"])),
+    environment: safeMetadataValue(firstStringValue(env, ["LOOHAR_BUILD_ENVIRONMENT", "VERCEL_ENV", "NODE_ENV"])),
     commitSha: safeCommitSha(firstStringValue(env, ["VERCEL_GIT_COMMIT_SHA", "GIT_COMMIT_SHA", "COMMIT_SHA", "SOURCE_VERSION", "GITHUB_SHA"])),
     buildTime: safeMetadataValue(firstStringValue(env, ["BUILD_TIME"]) || buildTime)
   };
