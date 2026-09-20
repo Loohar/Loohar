@@ -8,6 +8,10 @@ this file is stale — check `git log` and `.pilot/state.json` first.
 
 ---
 
+> **Read `LOOHAR_OPERATING_DIRECTIVE.md` first.** It records the owner's standing instructions:
+> what Loohar is, the 0% Loohar transaction fee principle, the priority order, and why nothing is
+> merged to main yet.
+
 ## 1. What Loohar is
 
 A multi-tenant restaurant SaaS, point-of-sale and restaurant operating platform. One deployment
