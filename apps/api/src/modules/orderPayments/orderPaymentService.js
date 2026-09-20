@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { prisma } from "../../config/prisma.js";
 import { recordAudit } from "../../services/auditService.js";
+import { redeemCouponOnce } from "../../services/couponRedemption.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../../services/notificationService.js";
 import { buildReceiptPayload, customerTrackingUrls, findOrderForTracking, hashToken, issueOrderTrackingToken, limitedTrackingOrder, receiptOrderInclude, trackingExpiresAt } from "../../services/orderWorkflowService.js";
 import { emitOrderUpdate } from "../../services/realtimeService.js";
@@ -848,19 +849,28 @@ export async function markOrderPaymentPaid({ payment, providerChargeId }) {
       include: { restaurant: true, customer: true, items: true, statusHistory: true }
     });
     await issueLoyaltyPoints(order, tx);
+    let couponRedemption = null;
     if (order.couponCode) {
-      await tx.coupon.updateMany({
-        where: { restaurantId: order.restaurantId, code: order.couponCode },
-        data: { redeemedCount: { increment: 1 } }
-      });
+      couponRedemption = await redeemCouponOnce(tx, { restaurantId: order.restaurantId, code: order.couponCode });
     }
     const updatedPayment = await tx.restaurantOrderPayment.findUnique({
       where: { id: payment.id },
       include: { order: { include: { restaurant: true, customer: true, items: true, statusHistory: true } } }
     });
-    return { payment: updatedPayment, order };
+    return { payment: updatedPayment, order, couponRedemption };
   });
   if (!settled) return { ignored: true, reason: "payment_already_settled" };
+  // The customer already paid with the discount applied, so the payment stands. An exhausted coupon
+  // is a business problem to review, not a reason to lose the money (L-28).
+  if (settled.couponRedemption && !settled.couponRedemption.redeemed) {
+    await recordAudit({
+      restaurantId: payment.restaurantId,
+      action: "coupon.redeemed_beyond_limit",
+      entityType: "Order",
+      entityId: payment.orderId,
+      metadata: { reason: settled.couponRedemption.reason, usageLimit: settled.couponRedemption.usageLimit ?? null, redeemedCount: settled.couponRedemption.redeemedCount ?? null, requiresReview: true }
+    });
+  }
   if (settled.unexpectedOrderStatus) {
     await recordAudit({ restaurantId: payment.restaurantId, action: "order_payment.paid_on_closed_order", entityType: "RestaurantOrderPayment", entityId: payment.id, metadata: { orderStatus: settled.unexpectedOrderStatus, requiresReview: true } });
     return { reviewRequired: true, reason: "order_not_awaiting_payment", orderStatus: settled.unexpectedOrderStatus };

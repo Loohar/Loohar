@@ -6,6 +6,7 @@ import { recordAudit } from "../services/auditService.js";
 import { normalizeStripeEvent } from "../services/paymentService.js";
 import { notifyNewOrderAlert, notifyOrderConfirmation } from "../services/notificationService.js";
 import { emitOrderUpdate } from "../services/realtimeService.js";
+import { redeemCouponOnce } from "../services/couponRedemption.js";
 
 const router = Router();
 
@@ -53,10 +54,8 @@ async function markPaymentPaid({ payment, providerPaymentId, stripePaymentIntent
     });
     await issueLoyaltyPoints({ order, client: tx });
     if (order.couponCode) {
-      await tx.coupon.updateMany({
-        where: { restaurantId: order.restaurantId, code: order.couponCode },
-        data: { redeemedCount: { increment: 1 } }
-      });
+      // Capped, conditional redemption: never push a coupon past its usage limit (L-28).
+      await redeemCouponOnce(tx, { restaurantId: order.restaurantId, code: order.couponCode });
     }
     const updatedPayment = await tx.payment.findUnique({
       where: { id: payment.id },
