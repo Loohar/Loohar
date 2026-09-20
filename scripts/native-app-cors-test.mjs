@@ -71,6 +71,19 @@ test("tenant subdomains and local development keep their previous rules", () => 
   assert.equal(development.isCorsOriginAllowed("capacitor://localhost"), false, "native origins need the explicit flag everywhere");
 });
 
+test("EXTRA_CORS_ORIGINS adds exact origins without touching the configured list", () => {
+  const preview = "https://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app";
+  const policy = createCorsPolicy({ ...PRODUCTION, EXTRA_CORS_ORIGINS: `${preview}, https://second.example` });
+  assert.equal(policy.isCorsOriginAllowed(preview), true);
+  assert.equal(policy.isCorsOriginAllowed("https://second.example"), true);
+  assert.equal(policy.isCorsOriginAllowed("https://loohar.com"), true, "CORS_ORIGINS is still honoured");
+  assert.equal(policy.isCorsOriginAllowed("https://evil.example"), false);
+  assert.equal(policy.isCorsOriginAllowed("http://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app"), false, "http is a different origin");
+  assert.equal(policy.isCorsOriginAllowed(`${preview}.evil.example`), false, "no suffix matching");
+  // The production wildcard guard applies to this source too.
+  assert.throws(() => createCorsPolicy({ NODE_ENV: "production", CORS_ORIGINS: "https://loohar.com", EXTRA_CORS_ORIGINS: "*" }), /Wildcard CORS is not allowed/);
+});
+
 const databaseUrl = process.env.LOOHAR_TEST_DATABASE_URL || "";
 
 async function bootApi(extraEnv) {

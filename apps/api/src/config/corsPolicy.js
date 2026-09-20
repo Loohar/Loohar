@@ -33,9 +33,14 @@ export function normalizeCorsOrigin(origin = "") {
   }
 }
 
+// EXTRA_CORS_ORIGINS is an additive source. CORS_ORIGINS is a single value that cannot be appended
+// to without reading it first, and rewriting it wholesale risks dropping an origin that is already
+// serving someone. Origins listed here go through exactly the same normalisation, exact-match and
+// production wildcard checks as every other source; it widens nothing on its own.
 function configuredCorsOriginSources(env) {
   return [
     env.CORS_ORIGINS,
+    env.EXTRA_CORS_ORIGINS,
     env.CORS_ORIGIN,
     env.WEB_ORIGIN,
     env.APP_URL,
