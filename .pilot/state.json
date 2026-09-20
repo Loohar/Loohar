@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-20T07:15:00Z",
+  "updatedAt": "2026-09-20T07:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "fd318666e27143875c54a365e1d02c27e78c0a9a"
+      "sha": "3b2af70e272f1a36a2229a6413083522096fb134"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "3b2af70e272f1a36a2229a6413083522096fb134",
+      "sha": "9a2cc8814a6a58332e288508ca882d48a1c89ad5",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -477,7 +477,8 @@
       "status": "FIXED",
       "sha": "43bfb40",
       "certification": "PASS (local, real database): 4 concurrency cases; 3 fail on the previous commit. Verified 15 consecutive runs with no flakes after a second defect (null clobber) was found and fixed.",
-      "note": "Drawer is created only after the device row exists and attached under an optimistic condition; the losing caller deletes its empty drawer. The race-prone ensureDeviceCashDrawer helper was removed."
+      "note": "Drawer is created only after the device row exists and attached under an optimistic condition; the losing caller deletes its empty drawer. The race-prone ensureDeviceCashDrawer helper was removed.",
+      "stagingCertification": "PASS (staging 3b2af70): registering a main terminal produced exactly one drawer."
     },
     "L-22": {
       "title": "Privileged-role MFA",
@@ -631,8 +632,10 @@
     "L-42": {
       "title": "Pilot onboarding certification (signup to first sale)",
       "priority": "P0",
-      "status": "TESTED (local), PUSHED",
-      "note": "Public signup provisions a Starter restaurant with owner and location; selling is refused until the tenant's own tax profile is verified; online checkout is refused until Stripe onboarding, then charges menu price + that restaurant's tax on its connected account."
+      "status": "RE-CERTIFIED",
+      "note": "Public signup provisions a Starter restaurant with owner and location; selling is refused until the tenant's own tax profile is verified; online checkout is refused until Stripe onboarding, then charges menu price + that restaurant's tax on its connected account.",
+      "certification": "PASS (staging, 3b2af70, 2026-09-20): 19 of 19 steps from public signup to a reconciled cash sale. Subtotal 2900, tax 265 at 9.15%, total 3465, collected 3465. Reproducible via npm run certify:pilot:staging (committed 9a2cc88).",
+      "evidence": "~/Documents/Loohar/Evidence/pilot/STAGING_PILOT_CERTIFICATION-3b2af70.md"
     },
     "L-43": {
       "title": "Stripe Connect onboarding certification",
@@ -764,10 +767,18 @@
       "note": "apps/web has proper ESLint. Adding ESLint to apps/api would catch undefined identifiers across 71 files.",
       "sha": "e9cae3a",
       "certification": "PASS \u2014 eslint no-undef/no-unused-vars across apps/api; demonstrated that node --check passes an undefined identifier while eslint catches it. Removed 4 pieces of dead code including a stale duplicate of segmentForCustomer."
+    },
+    "L-60": {
+      "title": "A rejected Colorado tax category is reported as \"TTR authentication failed\"",
+      "priority": "P2",
+      "status": "OPEN",
+      "evidence": "During staging certification, productServiceId values 1, 2 and 3 returned 502 TAX_PROVIDER_AUTH_FAILED while 10 succeeded; the live provider also answers 401/403 intermittently for a value that worked moments earlier.",
+      "impact": "A restaurant entering a category its state account does not cover, or hitting a provider blip, is told its credentials failed and will chase the wrong problem. Support would investigate Loohar credentials instead of the category or the provider.",
+      "note": "taxDomain maps any provider 401/403 to TAX_PROVIDER_AUTH_FAILED. When a productServiceId was supplied, that case should be reported distinctly and the provider status logged."
     }
   },
   "tests": {
-    "candidateSha": "3b2af70",
+    "candidateSha": "9a2cc88",
     "ranAt": "2026-09-20",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -827,7 +838,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Re-certify the pilot workflow on staging at the current RC (fresh tenant through signup, MFA, tax, menu, POS device, shift, cash sale, KDS, reporting), then in-app certification of a sale through the native POS app.",
+  "nextAutonomousTask": "Fix L-60 tax error mapping; certify a sale inside the native POS app against staging; then Super Admin and delivery/driver certification.",
   "corrections": [
     {
       "date": "2026-09-19",
