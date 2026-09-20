@@ -266,7 +266,8 @@
     "test:refund-reconciliation-db": "node --test scripts/refund-reconciliation-db-test.mjs",
     "refunds:sweep": "node scripts/refunds-sweep.mjs",
     "certify:pilot:staging": "node scripts/certify-pilot-staging.mjs",
-    "build:android": "node scripts/build-android-apps.mjs"
+    "build:android": "node scripts/build-android-apps.mjs",
+    "test:pos-closed-shift-cash-db": "node --test scripts/pos-closed-shift-cash-db-test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

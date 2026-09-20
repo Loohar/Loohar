@@ -1407,7 +1407,10 @@ export function cashSettlementAmounts(orderTotalCents, tenderedCents = null, alr
   };
 }
 
-async function settleCashOrderTransaction({
+// Exported so the drawer-balance rules can be exercised directly against a database. The live cash
+// path and offline reconciliation both go through it, and the closed-shift case is only reachable
+// through offline reconciliation, which the POS itself can never produce on demand.
+export async function settleCashOrderTransaction({
   tx,
   restaurantId,
   user,
@@ -1504,10 +1507,19 @@ async function settleCashOrderTransaction({
   timing.cashLedgerMs = Date.now() - ledgerStartedAt;
 
   const drawerBalanceStartedAt = Date.now();
-  await tx.cashDrawer.update({
-    where: { id: cashDrawer.id },
-    data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
-  });
+  // A drawer's balance becomes the counted cash when its shift closes. An offline cash sale can
+  // arrive after that: the sale happened during the shift, so the notes were physically in the
+  // drawer when the cashier counted it, and incrementing the counted balance now would push the
+  // system above what was actually counted. The sale and its ledger entry are still recorded,
+  // because the money is real; the counted balance is left alone and the caller flags it, since the
+  // closed shift's variance was computed without this sale.
+  const settledAfterShiftClose = Boolean(shift.closedAt) || shift.status === "CLOSED";
+  if (!settledAfterShiftClose) {
+    await tx.cashDrawer.update({
+      where: { id: cashDrawer.id },
+      data: { currentBalanceCents: { increment: settlement.cashAppliedCents } }
+    });
+  }
   timing.drawerBalanceMs = Date.now() - drawerBalanceStartedAt;
 
   const receiptStartedAt = Date.now();
@@ -1533,7 +1545,7 @@ async function settleCashOrderTransaction({
     }
   });
   timing.receiptMs = Date.now() - receiptStartedAt;
-  return { payment, orderPayment, ledger, receipt };
+  return { payment, orderPayment, ledger, receipt, settledAfterShiftClose };
 }
 
 async function runCashPostCommitTasks({ restaurantId, user, device, cashDrawer, shift, order, paymentId, settlement }) {
@@ -2338,6 +2350,26 @@ export async function reconcilePosOfflineCashTransaction({
       throw posOfflineError("Offline reconciliation is still processing. Retry shortly.", "POS_OFFLINE_SYNC_IN_PROGRESS", 409);
     }
     duplicate = true;
+  }
+  // The sale happened inside its shift but arrived after that shift was closed and counted, so the
+  // closing count and variance were computed without it. The money is recorded either way; a person
+  // has to see that the closed shift's numbers no longer tell the whole story.
+  if (canonical?.settledAfterShiftClose && !duplicate) {
+    await recordAudit({
+      actorUserId: user.id,
+      restaurantId,
+      action: "pos.offline_cash.settled_after_shift_close",
+      entityType: "EmployeeShift",
+      entityId: settlementShift.id,
+      metadata: {
+        cashDrawerId: cashDrawer.id,
+        amountCents: canonical.ledger?.amountCents ?? null,
+        orderId: canonical.order?.id ?? null,
+        reconciliationId: reconciliation?.id ?? null,
+        note: "Counted drawer balance left unchanged; the closed shift's variance predates this sale.",
+        requiresReview: true
+      }
+    }).catch(() => {});
   }
   await dispatchPosOfflinePostCommit({
     reconciliation,
