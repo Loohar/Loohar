@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-20T13:10:00Z",
+  "updatedAt": "2026-09-20T14:10:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "ba06e2241aafb4ca4b5c5d6dc97e611ac77a53e7",
-      "apiVerifiedAt": "2026-09-20T13:05:00Z",
+      "apiSha": "0f93841868449f7473e4c6fc75621bd4369523e7",
+      "apiVerifiedAt": "2026-09-20T14:05:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "3dd26e5a37d23aad81c3d835aa3c895c94f59118"
+      "sha": "ba06e2241aafb4ca4b5c5d6dc97e611ac77a53e7"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "ba06e2241aafb4ca4b5c5d6dc97e611ac77a53e7",
+      "sha": "0f93841868449f7473e4c6fc75621bd4369523e7",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -527,10 +527,10 @@
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
       "priority": "P2",
-      "status": "PARTIAL \u2014 coupon usage limit FIXED",
+      "status": "PARTIAL \u2014 coupon limit and offline-cash-into-closed-shift both FIXED",
       "sha": "a765a83",
       "certification": "PASS (local, real database): 6 cases. Measured 25 concurrent redemptions on a coupon limited to 10: previously redeemedCount reached 25, now capped at 10.",
-      "remaining": "The other L-28 low findings are untouched: SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needing an unexpired access token.",
+      "remaining": "SVG upload blocklist, checkout customer record by email, logout needing an unexpired access token.",
       "knownLimitation": "The window between pricing a quote and settling the payment is not a reservation, so more orders can be placed with a coupon than the limit allows. Those settle (the customer already paid) and are flagged coupon.redeemed_beyond_limit for review. A true reservation is the proper fix and was not attempted."
     },
     "L-29": {
@@ -807,10 +807,17 @@
       "status": "DESIGNED \u2014 NOT STARTED",
       "sha": "ba06e22",
       "note": "docs/pos/LOOHAR_POS_DEVICE_DEPLOYMENT_MANUAL.md: Device Owner provisioning, lock-task kiosk, enrolment and register binding, updates and rollback, health. Separates OEM-only items (boot logo, printer and reader SDKs, customer display, OTA) from Loohar software, with a procurement questionnaire. No hardware tested."
+    },
+    "L-65": {
+      "title": "Offline cash reconciled after its shift closed rewrote the counted drawer balance",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "0f93841",
+      "certification": "PASS (local, real database): a drawer counted at 10000 became 12000 before the fix and stands at 10000 after, with the sale, ledger and receipt still recorded and the shift flagged pos.offline_cash.settled_after_shift_close for review. Fails on the previous commit."
     }
   },
   "tests": {
-    "candidateSha": "9a2cc88",
+    "candidateSha": "0f93841",
     "ranAt": "2026-09-20",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -846,7 +853,7 @@
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
     "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
-    "dbSuitesAllOnSharedDb": "22 suites, 160 tests, 0 skips"
+    "dbSuitesAllOnSharedDb": "23 suites, 163 tests, 0 skips"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -870,7 +877,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Add an XCUITest target so the apps can be driven through their real UI; expand staging certification to online ordering and offline POS reconnect; Supabase backup evidence when re-authenticated.",
+  "nextAutonomousTask": "Remaining L-28 items (SVG upload blocklist, checkout customer by email, logout token); XCUITest target for real app UI automation; expand staging certification to online ordering and offline reconnect.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1018,5 +1025,6 @@
     "posDevice": "DESIGNED, NOT STARTED",
     "uiAutomation": "NOT DONE \u2014 needs an XCUITest target or Appium",
     "published": "Nothing signed, submitted or published"
-  }
+  },
+  "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md \u2014 owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering."
 }
