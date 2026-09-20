@@ -102,6 +102,31 @@ verifies it. The credential lives in `~/.loohar/staging.env` and is never printe
   dashboard once the cause is fixed.
 - Staging's platform-billing webhook has no secret configured, so it answers 503 by design (L-36).
 
+## 6a. Refunds that disagree with Stripe
+
+Two ways Loohar and Stripe can drift apart, both addressed but both worth checking during the pilot.
+
+**A refund raised in the Stripe dashboard.** Loohar now mirrors it when the webhook arrives, records
+it as `refund.mirrored_from_provider` with `requiresReview`, and counts it against the refundable
+balance. Review those audit entries: a refund nobody made in Loohar means someone acted directly in
+Stripe, and the order's own record will not explain why.
+
+**A refund stuck PENDING.** A refund stays PENDING until a terminal webhook arrives, and the
+refundable balance reserves PENDING as well as succeeded amounts, so a stuck row silently blocks
+refunding that money again. Resolve them against the provider:
+
+```
+npm run refunds:sweep -- --older-than-minutes 15
+```
+
+It is read-only against Stripe and writes only a refund row's own status, only while still PENDING,
+so a webhook arriving at the same time always wins. It moves no money and creates no refunds. Exit
+code 2 means some refunds need a person: those have no provider refund id, so Stripe may or may not
+have received the original request. **Do not re-issue those blindly** — check the refund in the
+Stripe dashboard first, because the customer may already have been refunded.
+
+Run it after any period of webhook delivery failure, and before trusting a day's reconciliation.
+
 ## 7. Known configuration hazards
 
 - **`loohar-api-staging` tracks branch `feature/loohar-national-tax-provider-v01`** (the frozen

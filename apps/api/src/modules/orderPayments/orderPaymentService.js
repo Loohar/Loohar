@@ -980,6 +980,40 @@ function isDefiniteStripeRejection(error) {
   return status >= 400 && status < 500 && status !== 409 && status !== 429;
 }
 
+// Records a refund the provider already performed and Loohar did not create. Idempotent: a
+// redelivery of the same provider refund hits the unique providerRefundId and is acknowledged.
+async function mirrorProviderRefund({ payment, object }) {
+  const amountCents = Number(object.amount || 0);
+  if (!Number.isInteger(amountCents) || amountCents <= 0) return { ignored: true, reason: "refund_without_amount" };
+  const providerRefundId = object.id;
+  if (!providerRefundId) return { ignored: true, reason: "refund_without_id" };
+  try {
+    const mirrored = await prisma.restaurantRefund.create({
+      data: {
+        restaurantId: payment.restaurantId,
+        orderPaymentId: payment.id,
+        provider: payment.provider,
+        providerRefundId,
+        amountCents,
+        reason: object.reason ? String(object.reason).slice(0, 200) : "provider_initiated",
+        requestedByUserId: null,
+        ...refundStatusFromProvider(object.status)
+      }
+    });
+    await recordAudit({
+      restaurantId: payment.restaurantId,
+      action: "refund.mirrored_from_provider",
+      entityType: "RestaurantRefund",
+      entityId: mirrored.id,
+      metadata: { providerRefundId, amountCents, status: mirrored.status, orderPaymentId: payment.id, requiresReview: true }
+    });
+    return { refundMirrored: true, refundId: mirrored.id };
+  } catch (error) {
+    if (isUniqueConflictOn(error, "providerRefundId")) return { ignored: true, reason: "refund_already_mirrored" };
+    throw error;
+  }
+}
+
 function refundStatusFromProvider(providerStatus) {
   if (providerStatus === "succeeded") return { status: "SUCCEEDED", processedAt: new Date() };
   if (providerStatus === "failed") return { status: "FAILED", processedAt: new Date() };
@@ -1191,7 +1225,12 @@ async function applyStripeConnectEvent({ eventType, object, accountObject, accou
         OR: [{ providerRefundId: object.id }, ...(object.metadata?.restaurantRefundId ? [{ id: object.metadata.restaurantRefundId }] : [])]
       }
     });
-    if (!restaurantRefund) return { received: true, ignored: true, reason: "refund_not_found" };
+    // A refund raised outside Loohar (the Stripe dashboard, or a provider-side reversal) used to be
+    // dropped here as refund_not_found. The money had already left the merchant account while Loohar
+    // still counted it as refundable and reported it as collected, so the balance a restaurant sees
+    // disagreed with the provider (L-20). Mirror it instead. This records only what the provider has
+    // already done; it never moves money.
+    if (!restaurantRefund) return { received: true, ...(await mirrorProviderRefund({ payment, object })) };
     await prisma.restaurantRefund.update({
       where: { id: restaurantRefund.id },
       data: { providerRefundId: restaurantRefund.providerRefundId || object.id, ...refundStatusFromProvider(object.status) }
