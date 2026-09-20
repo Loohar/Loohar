@@ -47,7 +47,7 @@ Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out
 | Branch | SHA | Meaning |
 | --- | --- | --- |
 | `main` | `0526862` | Production baseline |
-| `release/loohar-pilot-rc-v01` | `3dd26e5` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
+| `release/loohar-pilot-rc-v01` | `ba06e22` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
 | `chore/loohar-pilot-control-v01` | control docs | `.pilot/state.json`, `docs/pilot-launch/`, `docs/project-control/` |
 
 Recovery tags: `recovery/2026-09-19-production-baseline`, `recovery/2026-09-19-staging-candidate`,
