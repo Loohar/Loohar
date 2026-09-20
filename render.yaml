@@ -9,7 +9,10 @@ services:
     preDeployCommand: npm run prisma:deploy:safe
     startCommand: npm run start
     healthCheckPath: /health
-    autoDeploy: true
+    # Production deploys are owner-approved by exact SHA, never triggered by a push to main. The
+    # live service has auto-deploy off; this file said true, so a Blueprint re-sync would silently
+    # have turned production auto-deploy back on.
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production

@@ -414,7 +414,19 @@ export function createColoradoTtrLookup({ fetchImpl = globalThis.fetch, endpoint
       });
     }
     if (providerResponse.status === 401 || providerResponse.status === 403) {
-      throw new TaxServiceError("TTR authentication failed.", { status: 502, code: "TAX_PROVIDER_AUTH_FAILED" });
+      // The provider answers 401/403 for more than bad credentials: observed on 2026-09-20, it also
+      // refuses some product/service categories, and it refuses intermittently for a category that
+      // worked moments earlier. Reporting all of that as "authentication failed" sent a restaurant
+      // looking at Loohar's credentials instead of its category or a provider blip (L-60). The code
+      // stays the same so existing handling is unchanged; the message and details now say what a
+      // reader can actually act on.
+      const withCategory = productServiceId !== undefined && productServiceId !== null;
+      throw new TaxServiceError(
+        withCategory
+          ? "The tax provider refused this request. This usually means the product or service category is not covered by the account, or the provider is temporarily refusing requests. Check the category against your state account and try again."
+          : "The tax provider refused this request. This usually means the provider credentials are not accepted, or the provider is temporarily refusing requests.",
+        { status: 502, code: "TAX_PROVIDER_AUTH_FAILED", details: { providerStatus: providerResponse.status, categorySupplied: withCategory } }
+      );
     }
     if (providerResponse.status === 429) {
       throw new TaxServiceError("TTR rate limit reached.", { status: 503, code: "TAX_PROVIDER_RATE_LIMITED" });

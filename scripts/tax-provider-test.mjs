@@ -141,6 +141,34 @@ for (const [status, expectedCode] of [
   );
 }
 
+// L-60: a provider refusal must not read as "your credentials are wrong" when a category was sent.
+// The provider answers 401/403 for an uncovered category, and intermittently for one that worked a
+// moment earlier, so the message has to point at the category and at transience, not at credentials.
+for (const status of [401, 403]) {
+  const refusingLookup = createColoradoTtrLookup({ fetchImpl: async () => ({ ok: false, status }) });
+
+  await assert.rejects(
+    () => refusingLookup({ apiKey: "transport-test-key", address, productServiceId: 10, signal: new AbortController().signal }),
+    (error) => {
+      assert.equal(error.code, "TAX_PROVIDER_AUTH_FAILED", "the code is unchanged so existing handling still works");
+      assert.equal(error.details.categorySupplied, true);
+      assert.equal(error.details.providerStatus, status);
+      assert.match(error.message, /category/i, "a refusal with a category must mention the category");
+      assert.doesNotMatch(error.message, /authentication failed/i);
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => refusingLookup({ apiKey: "transport-test-key", address, signal: new AbortController().signal }),
+    (error) => {
+      assert.equal(error.details.categorySupplied, false);
+      assert.match(error.message, /credentials/i, "with no category, credentials are the likely cause");
+      return true;
+    }
+  );
+}
+
 const malformedLookup = createColoradoTtrLookup({
   fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ address: "incomplete" }) })
 });
