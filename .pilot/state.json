@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T20:00:00Z",
+  "updatedAt": "2026-09-20T05:45:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,10 +17,10 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "402c4a71f8831c794c7b9a5148061d82c56a422c",
-      "apiVerifiedAt": "2026-09-19T19:55:00Z",
+      "apiSha": "796e83032a735d59a337419dc2a1da6f4aaaffd1",
+      "apiVerifiedAt": "2026-09-20T05:42:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
-      "webSha": "09e91ab (Vercel builds per push; 402c4a7 is docs-only over 09e91ab)",
+      "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
       "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
@@ -41,18 +41,20 @@
       "webUrlRecordedPreviously": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webUrlDiscrepancy": "OPEN QUESTION for the owner. The previously recorded staging web URL carries the team slug 'loohar', but list_teams for subash.sunar@loohar.com returns zero teams and the only visible project is loohar-kds-staging under the personal scope. Either the 'loohar' team belongs to a different account, or that URL is stale. The SHA above is verified for loohar-kds-staging, which is the deployment this account can actually see and which tracks release/loohar-pilot-rc-v01.",
       "apiDeploy": "dep-dandpdbbc2fs73e2lihg (deploy_hook, live 2026-09-19T19:04:55Z)",
-      "nativeAppOrigins": "ALLOW_NATIVE_APP_ORIGINS=true set 2026-09-19 (merge, not replace)"
+      "nativeAppOrigins": "ALLOW_NATIVE_APP_ORIGINS=true set 2026-09-19 (merge, not replace)",
+      "branchTracked": "release/loohar-pilot-rc-v01 (owner repointed 2026-09-20T05:32Z; autoDeploy still off)",
+      "extraCorsOrigins": "EXTRA_CORS_ORIGINS set to the RC staging web branch alias (2026-09-20)"
     }
   },
   "git": {
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "9256ce67c73ae71245faee3ad9921e6ac98978f5"
+      "sha": "402c4a71f8831c794c7b9a5148061d82c56a422c"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "402c4a71f8831c794c7b9a5148061d82c56a422c",
+      "sha": "796e83032a735d59a337419dc2a1da6f4aaaffd1",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -294,7 +296,9 @@
       "d0dbbb7 qs/morgan advisories",
       "5eb6093 native apps + native CORS",
       "09e91ab merge",
-      "402c4a7 app docs"
+      "402c4a7 app docs",
+      "4029d39 driver SPM pin",
+      "796e830 EXTRA_CORS_ORIGINS"
     ]
   },
   "items": {
@@ -392,10 +396,10 @@
         "9256ce6 uptime alerting workflow + docs/operations/RUNBOOKS.md"
       ],
       "remaining": [
-        "Supabase backup/PITR configuration and a staging restore drill (needs Supabase re-auth)",
         "Uptime monitor activates only when merged to main (release step)",
         "Confirm Render deploy-failure notification recipients",
-        "CI result for c3159af/9256ce6 not yet observed (gh CLI not installed)"
+        "CI result for c3159af/9256ce6 not yet observed (gh CLI not installed)",
+        "Supabase backup/PITR and a staging restore drill (needs the Supabase MCP re-authenticated)"
       ]
     },
     "L-12": {
@@ -680,8 +684,8 @@
     "L-53": {
       "title": "loohar-api-staging tracks the frozen national-tax branch",
       "priority": "P1",
-      "status": "OPEN \u2014 MATERIALIZED 2026-09-19",
-      "note": "Caused the incident above. Repointing the branch needs the Render dashboard or a Render API key (MCP has no service-settings tool)."
+      "status": "RESOLVED 2026-09-20",
+      "note": "Owner repointed loohar-api-staging to release/loohar-pilot-rc-v01; verified through the Render API. Auto-deploy stays off. A Render env change now redeploys the validated RC head, which was confirmed when EXTRA_CORS_ORIGINS was set and 796e830 built."
     },
     "L-54": {
       "title": "Malformed entry in staging CORS_ORIGINS (\"https://web_origin=https\")",
@@ -692,10 +696,12 @@
     "L-55": {
       "title": "RC staging web preview origin not in staging CORS allowlist",
       "priority": "P1",
-      "status": "OPEN",
+      "status": "FIXED",
       "evidence": "Preflight from https://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app to staging API \u2192 403 (2026-09-19)",
       "impact": "Browser acceptance testing of the RC staging web may be blocked unless it uses a same-origin rewrite.",
-      "blocker": "Changing staging CORS_ORIGINS via MCP would redeploy the frozen branch (L-53); append the exact origin (never first) once the branch is repointed."
+      "blocker": "Changing staging CORS_ORIGINS via MCP would redeploy the frozen branch (L-53); append the exact origin (never first) once the branch is repointed.",
+      "sha": "796e830",
+      "certification": "PASS (staging 2026-09-20): RC preview origin preflight 204 (was 403); capacitor://localhost, https://localhost and https://loohar.com 204; a suffix-extended lookalike and an unknown origin 403; production unchanged."
     },
     "L-56": {
       "title": "Staging database schema is a superset of the RC (two national-tax migrations applied in August)",
@@ -792,7 +798,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Financial P2 register (L-13, L-20, L-21, L-28); Development Book update for 2026-09-19 milestones; driver-branded sign-in; in-app staging sale certification.",
+  "nextAutonomousTask": "Financial P2 register (L-13 dead PaymentIntent replay, L-20 stale PENDING refunds, L-21 drawer race, L-28 coupon limit race); Development Book milestone entry; driver-branded sign-in; in-app staging sale certification.",
   "corrections": [
     {
       "date": "2026-09-19",
