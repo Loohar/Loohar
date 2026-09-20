@@ -259,7 +259,8 @@
     "test:prisma-log-noise": "node --test scripts/prisma-log-noise-test.mjs",
     "test:native-app-cors": "node --test scripts/native-app-cors-test.mjs",
     "build:native": "node scripts/build-native-apps.mjs",
-    "test:checkout-replay-intent-db": "node --experimental-test-module-mocks --test scripts/checkout-replay-intent-db-test.mjs"
+    "test:checkout-replay-intent-db": "node --experimental-test-module-mocks --test scripts/checkout-replay-intent-db-test.mjs",
+    "test:pos-drawer-race-db": "node --experimental-test-module-mocks --test scripts/pos-drawer-race-db-test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

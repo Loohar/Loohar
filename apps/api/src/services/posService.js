@@ -577,12 +577,15 @@ async function resolveRestaurantCashDrawer(client, { restaurantId, cashDrawerId,
   return drawer;
 }
 
-// Each main terminal gets its own drawer unless a manager explicitly assigns a shared one.
-async function ensureDeviceCashDrawer(client, { restaurantId, locationId = null, existingDrawerId = null, deviceName = "Main terminal" }) {
-  if (existingDrawerId) {
-    const existing = await client.cashDrawer.findFirst({ where: { id: existingDrawerId, restaurantId, active: true } });
-    if (existing && (!existing.locationId || !locationId || existing.locationId === locationId)) return existing;
-  }
+// A drawer the device may keep: same tenant, still active, and not pinned to another location.
+async function usableDeviceCashDrawer(client, { restaurantId, existingDrawerId = null, locationId = null }) {
+  if (!existingDrawerId) return null;
+  const existing = await client.cashDrawer.findFirst({ where: { id: existingDrawerId, restaurantId, active: true } });
+  if (existing && (!existing.locationId || !locationId || existing.locationId === locationId)) return existing;
+  return null;
+}
+
+function createDeviceCashDrawer(client, { restaurantId, locationId = null, deviceName = "Main terminal" }) {
   return client.cashDrawer.create({
     data: {
       restaurantId,
@@ -592,6 +595,25 @@ async function ensureDeviceCashDrawer(client, { restaurantId, locationId = null,
       currentBalanceCents: 0
     }
   });
+}
+
+// Two callers registering or promoting the same terminal at once each created a drawer before
+// racing for the device row, so the loser left an orphan drawer that no device pointed at: a cash
+// accountability row with no owner (L-21). The device row is the serialization point, being unique
+// on restaurant and fingerprint. Attach with an optimistic condition on the drawer this caller read,
+// and if another caller already attached one, drop the drawer just created. It is brand new, has a
+// zero balance, no sessions and no ledger entries, and nothing else knows its id.
+async function attachDeviceCashDrawer(client, { device, restaurantId, locationId = null, deviceName }) {
+  const drawer = await createDeviceCashDrawer(client, { restaurantId, locationId, deviceName });
+  const claimed = await client.posDevice.updateMany({
+    where: { id: device.id, restaurantId, cashDrawerId: device.cashDrawerId ?? null },
+    data: { cashDrawerId: drawer.id }
+  });
+  if (claimed.count === 1) return drawer;
+  const winner = await client.posDevice.findFirst({ where: { id: device.id, restaurantId }, select: { cashDrawerId: true } });
+  await client.cashDrawer.delete({ where: { id: drawer.id } });
+  if (!winner?.cashDrawerId) return null;
+  return client.cashDrawer.findFirst({ where: { id: winner.cashDrawerId, restaurantId } });
 }
 
 export async function currentShift({ restaurantId, userId, deviceId = null }) {
@@ -2588,7 +2610,7 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
     ? null
     : body?.cashDrawerId
       ? await resolveRestaurantCashDrawer(prisma, { restaurantId, cashDrawerId: body.cashDrawerId, locationId })
-      : await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId: existingDevice?.cashDrawerId, deviceName: body?.name });
+      : await usableDeviceCashDrawer(prisma, { restaurantId, existingDrawerId: existingDevice?.cashDrawerId, locationId });
   const data = {
     restaurantId,
     locationId,
@@ -2597,15 +2619,25 @@ export async function registerPosDevice({ restaurantId, user, body, fingerprint 
     deviceFingerprintHash: fingerprintHash,
     status: body?.status || "ACTIVE",
     cardPaymentsEnabled: Boolean(body?.cardPaymentsEnabled),
-    cashDrawerId: cashDrawer?.id || null,
+    // Never write null over a drawer this caller simply did not resolve: a concurrent registration
+    // of the same terminal may have attached one between the two reads above, and clobbering it
+    // orphaned that drawer (L-21). undefined leaves the column untouched on update, and defaults to
+    // null on create. Only a device that is not a main terminal clears its drawer.
+    cashDrawerId: deviceType === "MAIN_TERMINAL" ? (cashDrawer?.id ?? undefined) : null,
     registeredByUserId: user.id,
     lastSeenAt: new Date(),
     settingsJson: safeJson(body?.settings, {})
   };
   const existing = await prisma.posDevice.findFirst({ where: { restaurantId, deviceFingerprintHash: fingerprintHash } });
-  const device = await writeWithinDeviceEntitlement({ restaurantId, previous: existing, next: data }, (client) => (existing
+  let device = await writeWithinDeviceEntitlement({ restaurantId, previous: existing, next: data }, (client) => (existing
     ? client.posDevice.update({ where: { id: existing.id }, data })
     : client.posDevice.create({ data })));
+  // A drawer is created only once the device row exists, so concurrent registrations of the same
+  // terminal cannot each leave one behind (L-21).
+  if (deviceType === "MAIN_TERMINAL" && !device.cashDrawerId) {
+    const attached = await attachDeviceCashDrawer(prisma, { device, restaurantId, locationId, deviceName: body?.name });
+    if (attached) device = { ...device, cashDrawerId: attached.id };
+  }
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
@@ -2629,6 +2661,7 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
   const locationChanged = locationId !== device.locationId;
   const typeChanged = deviceType !== device.deviceType;
   let cashDrawerId = device.cashDrawerId;
+  let drawerNeeded = false;
   if (deviceType !== "MAIN_TERMINAL") {
     cashDrawerId = null;
   } else if (body?.cashDrawerId) {
@@ -2636,7 +2669,11 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
   } else if (body?.status !== "REVOKED" && (!device.cashDrawerId || locationChanged || typeChanged || body?.cashDrawerId === null)) {
     // Status or name changes leave the drawer alone, so a lost terminal can always be revoked.
     const existingDrawerId = locationChanged || body?.cashDrawerId === null ? null : device.cashDrawerId;
-    cashDrawerId = (await ensureDeviceCashDrawer(prisma, { restaurantId, locationId, existingDrawerId, deviceName: body?.name || device.name })).id;
+    const usable = await usableDeviceCashDrawer(prisma, { restaurantId, existingDrawerId, locationId });
+    // Same reasoning as registration: leave the column alone when no drawer was resolved here, and
+    // let the conditional attach below decide.
+    cashDrawerId = usable?.id ?? undefined;
+    drawerNeeded = !usable;
   }
   const next = { deviceType, status: body?.status || device.status };
   const updated = await writeWithinDeviceEntitlement({ restaurantId, previous: device, next }, (client) => client.posDevice.update({
@@ -2651,6 +2688,13 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
       revokedAt: body?.status === "REVOKED" ? new Date() : undefined
     }
   }));
+  // Same as registration: the drawer is created after the device row is written, under an optimistic
+  // condition, so concurrent promotions of one terminal cannot each leave a drawer behind (L-21).
+  let deviceWithDrawer = updated;
+  if (drawerNeeded) {
+    const attached = await attachDeviceCashDrawer(prisma, { device: { id: device.id, cashDrawerId: device.cashDrawerId ?? null }, restaurantId, locationId, deviceName: body?.name || device.name });
+    if (attached) deviceWithDrawer = { ...updated, cashDrawerId: attached.id };
+  }
   await recordAudit({
     actorUserId: user.id,
     restaurantId,
@@ -2659,7 +2703,7 @@ export async function updatePosDevice({ restaurantId, user, deviceId, body }) {
     entityId: updated.id,
     metadata: { status: updated.status, deviceType: updated.deviceType }
   });
-  return updated;
+  return deviceWithDrawer;
 }
 
 export async function setKioskMode({ restaurantId, user, deviceId, enabled, exitPin }) {
