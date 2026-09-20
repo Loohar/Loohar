@@ -7,7 +7,8 @@
     "apps/api",
     "apps/web",
     "apps/mobile/pos",
-    "apps/mobile/driver"
+    "apps/mobile/driver",
+    "apps/mobile/restaurant"
   ],
   "scripts": {
     "dev": "node scripts/run-scripts.mjs --parallel dev:api dev:web",

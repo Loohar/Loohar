@@ -4,7 +4,7 @@
 // tenancy is decided on the device.
 export const NATIVE_APP = String(import.meta.env.VITE_NATIVE_APP || "").trim();
 
-const START_PATHS = Object.freeze({ pos: "/restaurant/pos", driver: "/driver" });
+const START_PATHS = Object.freeze({ pos: "/restaurant/pos", driver: "/driver", restaurant: "/restaurant" });
 
 // True only inside the packaged app. A native build opened in an ordinary browser behaves like the web.
 export function isNativeApp() {

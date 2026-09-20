@@ -16,7 +16,7 @@ const ENVIRONMENTS = {
   staging: "https://loohar-api-staging.onrender.com",
   production: "https://loohar-api.onrender.com"
 };
-const APPS = ["pos", "driver"];
+const APPS = ["pos", "driver", "restaurant"];
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);

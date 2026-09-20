@@ -1,0 +1,9 @@
+{
+  "appId": "com.loohar.restaurant",
+  "appName": "Loohar Restaurant",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "hostname": "localhost"
+  }
+}

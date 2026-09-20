@@ -1,0 +1,20 @@
+{
+  "name": "@loohar/mobile-restaurant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Loohar Restaurant native app: a Capacitor shell around the Loohar web build (VITE_NATIVE_APP=restaurant).",
+  "scripts": {
+    "sync": "cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.0",
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}
