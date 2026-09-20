@@ -7,9 +7,9 @@ blockers are not hidden. Anything marked PASS has executable evidence tied to a 
 
 | | SHA | Note |
 | --- | --- | --- |
-| **Release candidate** | `9a2cc8814a6a58332e288508ca882d48a1c89ad5` | `release/loohar-pilot-rc-v01`, 57 commits ahead of main |
+| **Release candidate** | `3dd26e5a37d23aad81c3d835aa3c895c94f59118` | `release/loohar-pilot-rc-v01`, 60 commits ahead of main |
 | **Main** | `0526862bceb2dc3a483de96561755052076df060` | Unchanged; identical to production |
-| **Staging API** | `9a2cc88` | Healthy, schema 0 issues |
+| **Staging API** | `3dd26e5` | Healthy, schema 0 issues |
 | **Staging web** | `402c4a7` | Vercel skips builds for commits that touch no web code |
 | **Production API** | `0526862` | Untouched throughout |
 | **Production web** | `0526862` | Untouched throughout |
@@ -59,10 +59,10 @@ Database suites: **22 suites, 160 tests, zero skips.**
 | Physical card-present | **BLOCKED** | Needs a Terminal reader (owner) |
 | Android apps | **BLOCKED** | Android SDK licence not accepted (owner) |
 | Signed iOS builds / TestFlight | **BLOCKED** | Apple Developer account (owner) |
-| Restaurant mobile app | **NOT STARTED** | Next native workstream |
+| Restaurant mobile app | **PASS (simulator)** | `com.loohar.restaurant` builds, launches, reaches staging |
 | POS device platform | **NOT STARTED** | Needs hardware decisions |
 | Delivery zones | **BLOCKED** | Needs a geocoding provider decision (owner) |
-| Tax error mapping (L-60) | **OPEN** | A rejected category reads as "TTR authentication failed" |
+| Tax error mapping (L-60) | **PASS** | Fixed in `7072a3b` |
 
 ## What can I install today?
 

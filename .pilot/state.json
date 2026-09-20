@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-20T07:30:00Z",
+  "updatedAt": "2026-09-20T12:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "3b2af70e272f1a36a2229a6413083522096fb134",
-      "apiVerifiedAt": "2026-09-20T07:10:00Z",
+      "apiSha": "3dd26e5a37d23aad81c3d835aa3c895c94f59118",
+      "apiVerifiedAt": "2026-09-20T12:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "3b2af70e272f1a36a2229a6413083522096fb134"
+      "sha": "9a2cc8814a6a58332e288508ca882d48a1c89ad5"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "9a2cc8814a6a58332e288508ca882d48a1c89ad5",
+      "sha": "3dd26e5a37d23aad81c3d835aa3c895c94f59118",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -634,7 +634,7 @@
       "priority": "P0",
       "status": "RE-CERTIFIED",
       "note": "Public signup provisions a Starter restaurant with owner and location; selling is refused until the tenant's own tax profile is verified; online checkout is refused until Stripe onboarding, then charges menu price + that restaurant's tax on its connected account.",
-      "certification": "PASS (staging, 3b2af70, 2026-09-20): 19 of 19 steps from public signup to a reconciled cash sale. Subtotal 2900, tax 265 at 9.15%, total 3465, collected 3465. Reproducible via npm run certify:pilot:staging (committed 9a2cc88).",
+      "certification": "PASS (staging, re-run at 3dd26e5, 2026-09-20): 19 of 19 steps.",
       "evidence": "~/Documents/Loohar/Evidence/pilot/STAGING_PILOT_CERTIFICATION-3b2af70.md"
     },
     "L-43": {
@@ -748,7 +748,8 @@
         "Native-origin CORS (exact two origins, flag-gated) with a production-mode boot test",
         "Keychain/Keystore token storage, fail-closed",
         "Safe-area fix for sticky headers",
-        "iOS simulator builds, install, launch, \"Live API Connected\" on staging (screenshots in ~/Documents/Loohar/Evidence/native-apps)"
+        "iOS simulator builds, install, launch, \"Live API Connected\" on staging (screenshots in ~/Documents/Loohar/Evidence/native-apps)",
+        "Loohar Restaurant app (com.loohar.restaurant) added and simulator-certified at 3dd26e5"
       ],
       "remaining": [
         "Android build (owner: SDK licence)",
@@ -771,10 +772,19 @@
     "L-60": {
       "title": "A rejected Colorado tax category is reported as \"TTR authentication failed\"",
       "priority": "P2",
-      "status": "OPEN",
+      "status": "FIXED",
       "evidence": "During staging certification, productServiceId values 1, 2 and 3 returned 502 TAX_PROVIDER_AUTH_FAILED while 10 succeeded; the live provider also answers 401/403 intermittently for a value that worked moments earlier.",
       "impact": "A restaurant entering a category its state account does not cover, or hitting a provider blip, is told its credentials failed and will chase the wrong problem. Support would investigate Loohar credentials instead of the category or the provider.",
-      "note": "taxDomain maps any provider 401/403 to TAX_PROVIDER_AUTH_FAILED. When a productServiceId was supplied, that case should be reported distinctly and the provider status logged."
+      "note": "taxDomain maps any provider 401/403 to TAX_PROVIDER_AUTH_FAILED. When a productServiceId was supplied, that case should be reported distinctly and the provider status logged.",
+      "sha": "7072a3b",
+      "certification": "PASS (local): a refusal with a category names the category, one without points at credentials, details carry the provider status; fails on the previous commit."
+    },
+    "L-61": {
+      "title": "render.yaml declared autoDeploy: true for the production API while the live service has it off",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "7072a3b",
+      "note": "A Blueprint re-sync would have re-enabled automatic production deploys from main. The file now matches the live setting."
     }
   },
   "tests": {
@@ -838,7 +848,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Fix L-60 tax error mapping; certify a sale inside the native POS app against staging; then Super Admin and delivery/driver certification.",
+  "nextAutonomousTask": "Certify a sale inside the native POS app against staging; expand the staging certification to online ordering and refunds where not owner-blocked; POS device platform documentation.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -972,5 +982,18 @@
   "documentation": {
     "developmentBook": "Chapter 25 appended 2026-09-20 covering recovery, L-11, dependency advisories, native apps, the staging incident, CORS and L-13. Chapters 1-24 remain at c5347da and are marked as such.",
     "backedUpCopy": "docs/project-record/DEVELOPMENT_BOOK_CH25_2026-09.md (authored in-repo; the external book is still outside Git)"
+  },
+  "mainMergeGate": {
+    "status": "BLOCKED",
+    "reason": "main is identical to live production (0526862) and the RC is 57+ commits ahead. Render production API auto-deploy is off (verified), but loohar.com is served by a Vercel project this account cannot enumerate, and Vercel deploys production from the production branch by default. Merging could publish the web to production while the API stayed behind.",
+    "engineeringGates": "All passing at this candidate",
+    "ownerAction": "OWNER_ACTIONS.md item 1"
+  },
+  "nativeApps": {
+    "pos": "iOS SIMULATOR CERTIFIED; Android SOURCE READY",
+    "driver": "iOS SIMULATOR CERTIFIED; Android SOURCE READY",
+    "restaurant": "iOS SIMULATOR CERTIFIED; Android SOURCE READY",
+    "posDevice": "NOT STARTED",
+    "published": "Nothing signed, submitted or published"
   }
 }
