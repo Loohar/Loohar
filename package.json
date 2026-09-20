@@ -263,7 +263,8 @@
     "test:pos-drawer-race-db": "node --experimental-test-module-mocks --test scripts/pos-drawer-race-db-test.mjs",
     "test:coupon-usage-limit-db": "node --test scripts/coupon-usage-limit-db-test.mjs",
     "test:refund-reconciliation-db": "node --test scripts/refund-reconciliation-db-test.mjs",
-    "refunds:sweep": "node scripts/refunds-sweep.mjs"
+    "refunds:sweep": "node scripts/refunds-sweep.mjs",
+    "certify:pilot:staging": "node scripts/certify-pilot-staging.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"
