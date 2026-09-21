@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21T12:05:00Z",
+  "updatedAt": "2026-09-21T19:45:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -20,7 +20,7 @@
       "apiSha": "8ec80c14e16820d2ae005978cc689751557dd136",
       "apiVerifiedAt": "2026-09-21T12:00:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
-      "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
+      "webSha": "402c4a7 — Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
       "autoDeploy": "Claude deploys staging directly with scripts/deploy-staging.mjs (Render deploy hook held outside the repo); the tool verifies the target service, waits for the exact SHA and checks production is unchanged",
       "databaseSeparateFromProduction": true,
@@ -522,7 +522,7 @@
       "status": "TESTED (local), PUSHED",
       "certification": "PASS (local, 19 tests); staging simulated sale BLOCKED on Stripe Connect onboarding for a test tenant",
       "note": "Simulated-reader workstream complete: connection tokens, reader pairing/removal, card-present collection with webhook settlement, register card tender UI. Physical acceptance is an owner step (docs/pos/STRIPE_TERMINAL_PHYSICAL_ACCEPTANCE.md).",
-      "reviewFindings": "2 critical (stale PaymentIntent after a total change; cash settling an order with a live card payment), 1 high (on-reader tipping), 1 high (settled payment reset), plus medium/low \u2014 all fixed in bf7430a with tests"
+      "reviewFindings": "2 critical (stale PaymentIntent after a total change; cash settling an order with a live card payment), 1 high (on-reader tipping), 1 high (settled payment reset), plus medium/low — all fixed in bf7430a with tests"
     },
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
@@ -601,7 +601,7 @@
       "title": "POS register tips",
       "priority": "P0",
       "status": "TESTED (local), PUSHED",
-      "certification": "PASS (staging, 9ad8708) \u2014 register tip 300 charged and reported separately",
+      "certification": "PASS (staging, 9ad8708) — register tip 300 charged and reported separately",
       "note": "Tips were impossible in store before this. Server-verified, capped, untaxed, recorded as restaurant tips; reporting separates restaurant and driver tips."
     },
     "L-38": {
@@ -721,7 +721,7 @@
       "title": "RC staging web preview origin not in staging CORS allowlist",
       "priority": "P1",
       "status": "FIXED",
-      "evidence": "Preflight from https://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app to staging API \u2192 403 (2026-09-19)",
+      "evidence": "Preflight from https://loohar-kds-staging-git-releas-6d6149-subashsunar-8870s-projects.vercel.app to staging API → 403 (2026-09-19)",
       "impact": "Browser acceptance testing of the RC staging web may be blocked unless it uses a same-origin rewrite.",
       "blocker": "Changing staging CORS_ORIGINS via MCP would redeploy the frozen branch (L-53); append the exact origin (never first) once the branch is repointed.",
       "sha": "796e830",
@@ -750,17 +750,17 @@
         "Keychain/Keystore token storage, fail-closed",
         "Safe-area fix for sticky headers",
         "iOS simulator builds, install, launch, \"Live API Connected\" on staging (screenshots in ~/Documents/Loohar/Evidence/native-apps)",
-        "Loohar Restaurant app (com.loohar.restaurant) added and simulator-certified at 3dd26e5"
+        "Loohar Restaurant app (com.loohar.restaurant) added and simulator-certified at 3dd26e5",
+        "Android debug APKs built and UI-certified on an emulator at 3001f9e (18/18 across all three apps)"
       ],
       "remaining": [
-        "Android build (owner: SDK licence)",
         "Signed device/TestFlight/Play builds (owner: Apple/Google accounts)",
-        "Sign-in \u2192 register \u2192 sale inside the app on staging",
+        "Sign-in → register → sale inside the app on staging",
         "Printing in the apps unverified",
         "Production ALLOW_NATIVE_APP_ORIGINS at release"
       ],
       "docs": "docs/mobile/NATIVE_APPS.md",
-      "certification": "UI automation PASS: 9 of 9 XCUITest cases across POS, Driver and Restaurant on an iOS Simulator at 1361cc6 (npm run test:native-ui). Native network contract PASS 20/20 from both app origins. Physical device and Android remain owner-blocked."
+      "certification": "UI automation PASS on both platforms at 3001f9e: iOS 9/9 XCUITest on a Simulator (npm run test:native-ui) and Android 18/18 on a Pixel 7 / Android 16 emulator (npm run test:android-ui). Each app launches, routes to its own sign-in screen, accepts typing into a masked password field, and shows its own live-API indicator reading Connected from a real request to staging. Native network contract PASS 20/20 from both app origins. The Android suite is negative-controlled with emulator airplane mode. Physical hardware on either platform and any store-signed build remain owner-blocked, and neither suite covers a signed-in workflow yet."
     },
     "L-59": {
       "title": "apps/api has no real linting (its lint script is `node --check src/server.js`)",
@@ -769,7 +769,7 @@
       "evidence": "A missing import in orderPaymentService.js passed `npm run lint` on 2026-09-20; it would have thrown a ReferenceError on the checkout replay path. Caught by running the code, not by lint.",
       "note": "apps/web has proper ESLint. Adding ESLint to apps/api would catch undefined identifiers across 71 files.",
       "sha": "e9cae3a",
-      "certification": "PASS \u2014 eslint no-undef/no-unused-vars across apps/api; demonstrated that node --check passes an undefined identifier while eslint catches it. Removed 4 pieces of dead code including a stale duplicate of segmentForCustomer."
+      "certification": "PASS — eslint no-undef/no-unused-vars across apps/api; demonstrated that node --check passes an undefined identifier while eslint catches it. Removed 4 pieces of dead code including a stale duplicate of segmentForCustomer."
     },
     "L-60": {
       "title": "A rejected Colorado tax category is reported as \"TTR authentication failed\"",
@@ -798,14 +798,14 @@
     "L-63": {
       "title": "Android APK/AAB build pipeline",
       "priority": "P1",
-      "status": "READY \u2014 BLOCKED on the owner licence",
-      "sha": "4d2374d",
-      "note": "scripts/build-android-apps.mjs finds the JDK and SDK and stops with the exact sdkmanager commands. Exits 2 today. The same command builds APKs once the licence is accepted."
+      "status": "DONE for debug APKs — release AAB still owner-blocked",
+      "sha": "3001f9e",
+      "note": "Owner accepted all 7 Android SDK licences on 2026-09-21. platform-tools, platforms;android-36 and build-tools;36.0.0 installed. npm run build:android -- --app all --env staging produces three 5.9MB debug APKs, verified distinct by SHA-256, package id and label, each carrying commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. A release AAB is still refused without a Google Play upload keystore, so an unsigned artifact cannot be mistaken for a releasable one."
     },
     "L-64": {
       "title": "POS device platform",
       "priority": "P2",
-      "status": "DESIGNED \u2014 NOT STARTED",
+      "status": "DESIGNED — NOT STARTED",
       "sha": "ba06e22",
       "note": "docs/pos/LOOHAR_POS_DEVICE_DEPLOYMENT_MANUAL.md: Device Owner provisioning, lock-task kiosk, enrolment and register binding, updates and rollback, health. Separates OEM-only items (boot logo, printer and reader SDKs, customer display, OTA) from Loohar software, with a procurement questionnaire. No hardware tested."
     },
@@ -836,6 +836,13 @@
       "status": "FIXED",
       "sha": "1361cc6",
       "certification": "PASS (local, real database): no overwrite of an existing customer, no read-back in the checkout response, records stay per restaurant, the account case is audited, ordinary returning guests are not flagged. The audit case fails on the previous commit."
+    },
+    "L-69": {
+      "title": "Android UI certification",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "3001f9e",
+      "note": "scripts/test-android-ui.mjs installs each debug APK on an emulator, launches it and asserts against the live DOM read over the Chrome DevTools Protocol. uiautomator dump was not usable: Chromium builds the accessibility tree only when an accessibility service is attached, so a dump of a Capacitor app contains the WebView node and no text. Two further Android quirks are handled: adb shell monkey reports success without starting a Capacitor activity, so the suite uses an explicit am start -W and checks for a live pid; and the emulator image must be arm64-v8a on Apple Silicon. 18/18 at 3001f9e. Negative control: emulator airplane mode failed the live-API check, so the suite can fail."
     }
   },
   "tests": {
@@ -869,9 +876,9 @@
     },
     "newSuitesProvenFailingBeforeFix": true,
     "adversarialReviews": [
-      "8d427c5 \u2192 fixed in f8614e7",
-      "aba7638 \u2192 fixed in 97d4d02",
-      "d6a3fc3 \u2192 fixed in bf7430a",
+      "8d427c5 → fixed in f8614e7",
+      "aba7638 → fixed in 97d4d02",
+      "d6a3fc3 → fixed in bf7430a",
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
     "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
@@ -887,9 +894,7 @@
     ]
   },
   "humanActionsRequired": [
-    "Supabase: re-authenticate the Supabase MCP (/mcp \u2192 supabase). Unblocks backup/PITR evidence (L-11) and the staging/production project mapping.",
-    "Render: repoint loohar-api-staging from feature/loohar-national-tax-provider-v01 to release/loohar-pilot-rc-v01 (Settings \u2192 Build & Deploy \u2192 Branch), or put a Render API key in ~/.loohar/render.env so Claude can do it. Unblocks safe staging env changes (L-53, L-55).",
-    "Android: accept the Android SDK licence once (docs/mobile/NATIVE_APPS.md \u00a79).",
+    "Supabase: re-authenticate the Supabase MCP (/mcp → supabase). Unblocks backup/PITR evidence (L-11) and the staging/production project mapping.",
     "Apple Developer Program and Google Play Console accounts for signed app builds and store release.",
     "Stripe TEST-mode Connect onboarding for a staging tenant (card, Terminal and refund certification).",
     "Physical Stripe Terminal reader for card-present acceptance.",
@@ -899,7 +904,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Extend the UI suite to a signed-in workflow using a certification tenant; expand staging certification to online ordering and offline reconnect.",
+  "nextAutonomousTask": "Extend both UI suites to a signed-in workflow using a certification tenant; expand staging certification to online ordering and offline POS reconnect.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -921,9 +926,9 @@
     "scope": "pilot launch, Restaurant #1",
     "assessment": "Engineering is substantially complete; the critical path is owner-side access and evidence, not code.",
     "hardGates": [
-      "L-11 monitoring/alerting/backup+PITR proof/runbooks \u2014 P0, cannot start without Render/Supabase access",
-      "Stripe Connect onboarding for a real merchant \u2014 blocks card, Terminal and refund certification",
-      "Physical Stripe Terminal acceptance \u2014 card-present is certified simulated only",
+      "L-11 monitoring/alerting/backup+PITR proof/runbooks — P0, cannot start without Render/Supabase access",
+      "Stripe Connect onboarding for a real merchant — blocks card, Terminal and refund certification",
+      "Physical Stripe Terminal acceptance — card-present is certified simulated only",
       "Production deploy prerequisites: MFA_ENCRYPTION_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_WEBHOOK_SECRET, additive migrations, web deployed with or before API"
     ]
   },
@@ -933,7 +938,7 @@
     "rcAheadOfMain": 42,
     "rcDiffVsMain": "103 files, +10839 / -987",
     "supersededDuplicates": [
-      "1336e09 on fix/launch-order-payment-public-safety-v01 is the pre-rebase original of 2d85007 (L-01), which IS in the RC \u2014 identical change, not missing work",
+      "1336e09 on fix/launch-order-payment-public-safety-v01 is the pre-rebase original of 2d85007 (L-01), which IS in the RC — identical change, not missing work",
       "85e0fb5 on feature/stripe-payment-certification predates the RC line"
     ],
     "continuityRisk": "chore/loohar-pilot-control-v01 has 18 commits and NO REMOTE. Every control document, certification record and blocker history exists only on this machine. A push was attempted 2026-09-19 and denied by the local tooling; owner action needed."
@@ -943,7 +948,7 @@
     "codebase": {
       "apiSrc": "71 files, 22,282 lines; 17 routes, 26 services, 5 modules, 5 middleware",
       "webSrc": "35 files, 20,019 lines",
-      "webMonolith": "apps/web/src/App.jsx is 15,934 lines \u2014 80% of the web codebase in one file. Maintenance and review risk; not a launch blocker.",
+      "webMonolith": "apps/web/src/App.jsx is 15,934 lines — 80% of the web codebase in one file. Maintenance and review risk; not a launch blocker.",
       "prisma": "68 models, 34 migrations",
       "tests": "220+ npm test scripts, 140 files in scripts/"
     },
@@ -957,13 +962,13 @@
       "severity": "HIGH for launch communication, not for engineering truth",
       "current": ".pilot/state.json (updated 2026-09-18, now 2026-09-19) is the only current record",
       "stale": [
-        "docs/pilot-launch/PILOT_CRITICAL_PATH.md \u2014 shows step 2 BLOCKED and step 4 NOT STARTED; both are actually done (staging deployed, L-01C PASS)",
-        "docs/pilot-launch/FEATURE_MATRIX.md \u2014 states 'Nothing in this table is STAGING CERTIFIED yet'; 15 items are now certified on staging",
-        "docs/pilot-launch/RELEASE_STATE.md \u2014 staging API 4c48815 and candidate c5347da; both superseded by 4f69015",
-        "docs/pilot-launch/ARCHITECTURE_CURRENT.md \u2014 written at 1d30522",
-        "docs/pilot-launch/SECURITY_MODEL.md \u2014 written at c5347da",
-        "Development Book Edition 0.2 \u2014 2026-09-17, candidate c5347da",
-        "~/Documents/Loohar/Evidence/README.md \u2014 says 'No UI evidence captured yet' although 8 MFA screenshots are archived"
+        "docs/pilot-launch/PILOT_CRITICAL_PATH.md — shows step 2 BLOCKED and step 4 NOT STARTED; both are actually done (staging deployed, L-01C PASS)",
+        "docs/pilot-launch/FEATURE_MATRIX.md — states 'Nothing in this table is STAGING CERTIFIED yet'; 15 items are now certified on staging",
+        "docs/pilot-launch/RELEASE_STATE.md — staging API 4c48815 and candidate c5347da; both superseded by 4f69015",
+        "docs/pilot-launch/ARCHITECTURE_CURRENT.md — written at 1d30522",
+        "docs/pilot-launch/SECURITY_MODEL.md — written at c5347da",
+        "Development Book Edition 0.2 — 2026-09-17, candidate c5347da",
+        "~/Documents/Loohar/Evidence/README.md — says 'No UI evidence captured yet' although 8 MFA screenshots are archived"
       ],
       "direction": "All drift UNDERSTATES readiness. No document overclaims, which is the safe direction, but an owner reading these would conclude the pilot is further behind than it is.",
       "resolved2026_09_19": [
@@ -972,9 +977,9 @@
         "FEATURE_MATRIX.md corrected: the 'nothing is STAGING CERTIFIED yet' claim removed"
       ],
       "stillStale": [
-        "docs/pilot-launch/ARCHITECTURE_CURRENT.md \u2014 written at 1d30522",
-        "docs/pilot-launch/SECURITY_MODEL.md \u2014 written at c5347da",
-        "Development Book Edition 0.2 \u2014 c5347da, outside Git"
+        "docs/pilot-launch/ARCHITECTURE_CURRENT.md — written at 1d30522",
+        "docs/pilot-launch/SECURITY_MODEL.md — written at c5347da",
+        "Development Book Edition 0.2 — c5347da, outside Git"
       ]
     }
   },
@@ -984,9 +989,9 @@
     "localOnlyCommitsBefore": 22,
     "localOnlyCommitsAfter": 0,
     "backedUpThisSession": [
-      "chore/loohar-pilot-control-v01 \u2014 20 commits, first push to origin, now tracking",
-      "fix/launch-order-payment-public-safety-v01 \u2014 1336e09, pre-rebase original of L-01 (2d85007 in RC)",
-      "feature/stripe-payment-certification \u2014 85e0fb5, superseded Stripe certification work"
+      "chore/loohar-pilot-control-v01 — 20 commits, first push to origin, now tracking",
+      "fix/launch-order-payment-public-safety-v01 — 1336e09, pre-rebase original of L-01 (2d85007 in RC)",
+      "feature/stripe-payment-certification — 85e0fb5, superseded Stripe certification work"
     ],
     "tags": [
       "recovery/2026-09-19-production-baseline",
@@ -998,8 +1003,8 @@
       "Bulk copy of ~/Documents/Loohar into docs/project-record/ was denied by the local permission classifier (Sensitive-Source Provenance). The archive remains outside Git; docs/project-control/EVIDENCE_MANIFEST.md describes it with SHA-256 checksums instead."
     ],
     "archiveAnomalies": [
-      "Evidence/security/authz-tests-c5347da.md and Evidence/kds/kds-and-lifecycle-c5347da.md are byte-identical (7c1a90d168539ef1) \u2014 one is a mis-copy, so either the authorization or the KDS evidence for c5347da is missing.",
-      "Development_Book/LOOHAR_DEVELOPMENT_BOOK.pdf is byte-identical to the archived c5347da edition \u2014 the current Development Book PDF is stale.",
+      "Evidence/security/authz-tests-c5347da.md and Evidence/kds/kds-and-lifecycle-c5347da.md are byte-identical (7c1a90d168539ef1) — one is a mis-copy, so either the authorization or the KDS evidence for c5347da is missing.",
+      "Development_Book/LOOHAR_DEVELOPMENT_BOOK.pdf is byte-identical to the archived c5347da edition — the current Development Book PDF is stale.",
       "Evidence/README.md claims no UI evidence exists although 8 MFA screenshots are archived."
     ]
   },
@@ -1013,18 +1018,18 @@
   "supabase": {
     "organization": "Loohar tvsrfqkbwikvlfxxxfye",
     "projects": {
-      "mgqeamdtcqhhcqqnyinb": "Loohar, us-east-2, created 2026-07-04 \u2014 inferred PRODUCTION",
-      "ilazzxrscfoccvholchi": "loohar-enterprise-pos-staging, us-west-2, created 2026-08-03 \u2014 inferred STAGING"
+      "mgqeamdtcqhhcqqnyinb": "Loohar, us-east-2, created 2026-07-04 — inferred PRODUCTION",
+      "ilazzxrscfoccvholchi": "loohar-enterprise-pos-staging, us-west-2, created 2026-08-03 — inferred STAGING"
     },
     "identificationStatus": "INFERRED, not confirmed. A read-only migration query to confirm was blocked by the local permission classifier; owner to confirm the staging Render DATABASE_URL host.",
-    "mcp": "configured with read_only=true; disconnected after plugin reload 2026-09-19 \u2014 needs owner re-auth via /mcp"
+    "mcp": "configured with read_only=true; disconnected after plugin reload 2026-09-19 — needs owner re-auth via /mcp"
   },
   "incidents": [
     {
       "date": "2026-09-19T19:42Z",
       "severity": "LOW (staging only, no data or schema change)",
       "what": "Setting ALLOW_NATIVE_APP_ORIGINS on loohar-api-staging through the Render MCP tool triggered an automatic redeploy of the service branch HEAD, which is the frozen national-tax branch (1e0562b). Staging served national-tax code for about three minutes.",
-      "impact": "Build log: \"No pending migrations to apply\" \u2014 the two national-tax migrations were already applied to staging in August. No schema or data change. Production untouched (0526862).",
+      "impact": "Build log: \"No pending migrations to apply\" — the two national-tax migrations were already applied to staging in August. No schema or data change. Production untouched (0526862).",
       "recovery": "Redeployed the RC by exact SHA with scripts/deploy-staging.mjs (09e91ab), health ok.",
       "rootCause": "L-53 (staging tracks the frozen branch) was known and recorded an hour earlier; the side effect of the env-var tool (auto-redeploy of branch HEAD) was not checked before use.",
       "prevention": "Do not change staging env vars through the Render MCP until the service branch is repointed to release/loohar-pilot-rc-v01; after any env change, immediately redeploy the RC by exact SHA."
@@ -1041,12 +1046,18 @@
     "ownerAction": "OWNER_ACTIONS.md item 1"
   },
   "nativeApps": {
-    "pos": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
-    "driver": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
-    "restaurant": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
+    "pos": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
+    "driver": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
+    "restaurant": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
     "posDevice": "DESIGNED, NOT STARTED",
-    "uiAutomation": "PASS \u2014 XCUITest drives all three apps through their real interface (9/9); apps/mobile/uitests, generated with XcodeGen",
-    "published": "Nothing signed, submitted or published"
+    "uiAutomation": "PASS on both platforms at 3001f9e — iOS 9/9 (XCUITest, apps/mobile/uitests via XcodeGen) and Android 18/18 (scripts/test-android-ui.mjs, DOM read over the Chrome DevTools Protocol). Each app is checked for launch, routing to its own sign-in screen, a masked password field that accepts typing, and its own live-API indicator reading Connected from a real request. The Android suite was negative-controlled with emulator airplane mode, which failed the live-API check as it should.",
+    "published": "Nothing signed, submitted or published",
+    "androidToolchain": "Android SDK licences accepted by the owner 2026-09-21 (all 7). platform-tools, platforms;android-36, build-tools;36.0.0, emulator and system-images;android-36;google_apis;arm64-v8a installed. AVD loohar-cert (Pixel 7). JDK 21 at /opt/homebrew/opt/openjdk@21.",
+    "androidArtifacts": "Three debug APKs built at 8ec80c1, 5.9MB each: com.loohar.pos, com.loohar.driver, com.loohar.restaurant. Verified distinct by SHA-256, package id and label. Every bundle carries commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. Release AAB still refused: needs a Google Play upload keystore (owner)."
   },
-  "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md \u2014 owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering."
+  "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md — owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering.",
+  "ownerActionsCompleted": [
+    "2026-09-21 — Android SDK licence accepted (all 7). Unblocked APK builds and Android UI certification.",
+    "2026-09-21 — Render loohar-api-staging confirmed tracking release/loohar-pilot-rc-v01 (verified via the Render API, autoDeploy off)."
+  ]
 }

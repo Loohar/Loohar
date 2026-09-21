@@ -1,7 +1,7 @@
 # Loohar — Owner Action Queue
 
 Only genuine owner or external actions live here. Everything else is being worked autonomously.
-Updated 2026-09-20.
+Updated 2026-09-21.
 
 ## 1. BLOCKING the main merge — production deploy path must be made safe
 
@@ -31,15 +31,11 @@ API stayed at `0526862`: an unapproved production release, with the web ahead of
 `/mcp` → supabase → Authenticate. Backup, PITR and restore-drill evidence for L-11 cannot be
 produced without it. L-11 is the only P0 that cannot be started at all.
 
-## 3. Android SDK licence (blocks all Android builds)
+## ~~3. Android SDK licence~~ — DONE 2026-09-21
 
-I will not accept a licence agreement on your behalf. One command:
-
-```
-yes | /opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin/sdkmanager --licenses
-```
-
-Then Android APKs can be built and certified on an emulator.
+You accepted all 7 licences. `platform-tools`, `platforms;android-36` and `build-tools;36.0.0` are
+installed, three debug APKs are built, and all three apps now pass UI certification on an emulator
+(18/18). Nothing further is needed here. What remains for Android is the Play Store path in item 4.
 
 ## 4. Apple Developer Program and Google Play Console
 

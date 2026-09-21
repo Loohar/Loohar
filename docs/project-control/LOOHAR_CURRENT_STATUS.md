@@ -1,15 +1,15 @@
 # Loohar — Current Status
 
-Updated **2026-09-20**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
+Updated **2026-09-21**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
 blockers are not hidden. Anything marked PASS has executable evidence tied to a SHA.
 
 ## Where everything is
 
 | | SHA | Note |
 | --- | --- | --- |
-| **Release candidate** | `8ec80c14e16820d2ae005978cc689751557dd136` | `release/loohar-pilot-rc-v01`, 69 commits ahead of main |
+| **Release candidate** | `3001f9eb0246dccabd234405c11d1aa90b73e9b8` | `release/loohar-pilot-rc-v01`, 70 commits ahead of main |
 | **Main** | `0526862bceb2dc3a483de96561755052076df060` | Unchanged; identical to production |
-| **Staging API** | `8ec80c1` | Healthy, schema 0 issues |
+| **Staging API** | `3001f9e` | Healthy, schema 0 issues, verified live |
 | **Staging web** | `402c4a7` | Vercel skips builds for commits that touch no web code |
 | **Production API** | `0526862` | Untouched throughout |
 | **Production web** | `0526862` | Untouched throughout |
@@ -57,7 +57,7 @@ Database suites: **22 suites, 160 tests, zero skips.**
 | L-11 operations | **PARTIAL** | Render evidence done. Backup/PITR and a restore drill need Supabase re-auth (owner) |
 | Online card / Terminal / refunds on staging | **BLOCKED** | Needs Stripe Connect onboarding for a test tenant (owner) |
 | Physical card-present | **BLOCKED** | Needs a Terminal reader (owner) |
-| Android apps | **BLOCKED** | Android SDK licence not accepted (owner) |
+| Android apps | **PASS** | Debug APKs built; 18/18 UI checks on a Pixel 7 / Android 16 emulator |
 | Signed iOS builds / TestFlight | **BLOCKED** | Apple Developer account (owner) |
 | Restaurant mobile app | **PASS (simulator)** | `com.loohar.restaurant` builds, launches, reaches staging |
 | POS device platform | **NOT STARTED** | Needs hardware decisions |
@@ -67,7 +67,8 @@ Database suites: **22 suites, 160 tests, zero skips.**
 ## What can I install today?
 
 Only on an iOS Simulator: **Loohar POS** and **Loohar Driver**, both pointing at staging, both
-verified to launch and reach the API. No Android APK exists yet, and nothing is signed or published.
+verified to launch and reach the API. Three Android debug APKs now exist and are UI-certified on an
+emulator. Nothing has run on physical hardware, and nothing is signed or published.
 Full detail and commands: `docs/releases/LOOHAR_BUILD_AND_INSTALL_STATUS.md`.
 
 ## What changed today (2026-09-20)
@@ -82,4 +83,4 @@ All deployed to staging and verified by exact SHA, with production untouched.
 2. Fix L-60 tax error mapping.
 3. Build the Restaurant mobile app on the proven Capacitor pattern.
 4. Certify a sale inside the native POS app against staging.
-5. Android builds and the POS device platform once their blockers clear.
+5. The POS device platform, and a signed-in workflow in both UI suites using a certification tenant.
