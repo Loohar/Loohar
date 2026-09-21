@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21T10:35:00Z",
+  "updatedAt": "2026-09-21T11:15:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8",
-      "apiVerifiedAt": "2026-09-21T10:30:00Z",
+      "apiSha": "1361cc6b84fafe3834eba66d985225a38150e558",
+      "apiVerifiedAt": "2026-09-21T11:10:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "0f93841868449f7473e4c6fc75621bd4369523e7"
+      "sha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8",
+      "sha": "1361cc6b84fafe3834eba66d985225a38150e558",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -527,11 +527,12 @@
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
       "priority": "P2",
-      "status": "PARTIAL",
-      "sha": "a765a83",
-      "certification": "PASS (local, real database): 6 cases. Measured 25 concurrent redemptions on a coupon limited to 10: previously redeemedCount reached 25, now capped at 10.",
+      "status": "CLOSED",
+      "sha": "1361cc6",
+      "certification": "All five findings addressed: coupon usage-limit race (a765a83), offline cash into a closed shift (0f93841), SVG upload blocklist (8edac79), logout needing an unexpired token (16d34a6), checkout customer record by email (1361cc6).",
       "remaining": "Checkout creates/matches a customer record by email. That is the last L-28 item.",
-      "knownLimitation": "The window between pricing a quote and settling the payment is not a reservation, so more orders can be placed with a coupon than the limit allows. Those settle (the customer already paid) and are flagged coupon.redeemed_beyond_limit for review. A true reservation is the proper fix and was not attempted."
+      "knownLimitation": "The window between pricing a quote and settling the payment is not a reservation, so more orders can be placed with a coupon than the limit allows. Those settle (the customer already paid) and are flagged coupon.redeemed_beyond_limit for review. A true reservation is the proper fix and was not attempted.",
+      "residual": "An anonymous order still attaches to an existing customer profile; separating guest orders from account-held records needs a schema change to the restaurant-and-email uniqueness and was not attempted before the pilot. The binding is now audited when the record belongs to a registered account."
     },
     "L-29": {
       "title": "Web checkout cannot confirm direct-charge PaymentIntents (Stripe.js missing stripeAccount)",
@@ -828,10 +829,17 @@
       "status": "FIXED",
       "sha": "16d34a6",
       "certification": "PASS (local, real auth routes over HTTP + database): live and expired tokens both revoke; forged, malformed and missing tokens still refused and revoke nothing; repeated logout stays successful; other sessions untouched. Expired-token cases fail on the previous commit."
+    },
+    "L-68": {
+      "title": "Anonymous checkout joining a registered customer account was invisible",
+      "priority": "P2",
+      "status": "FIXED",
+      "sha": "1361cc6",
+      "certification": "PASS (local, real database): no overwrite of an existing customer, no read-back in the checkout response, records stay per restaurant, the account case is audited, ordinary returning guests are not flagged. The audit case fails on the previous commit."
     }
   },
   "tests": {
-    "candidateSha": "16d34a6",
+    "candidateSha": "1361cc6",
     "ranAt": "2026-09-21",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -867,7 +875,7 @@
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
     "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
-    "dbSuitesAllOnSharedDb": "24 suites, 167 tests, 0 skips"
+    "dbSuitesAllOnSharedDb": "25 suites, 172 tests, 0 skips"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -891,7 +899,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Last L-28 item (checkout customer record by email); then an XCUITest target for real app UI automation.",
+  "nextAutonomousTask": "XCUITest target so the native apps can be driven through their real UI; then expand staging certification to online ordering and offline reconnect.",
   "corrections": [
     {
       "date": "2026-09-19",
