@@ -1,0 +1,32 @@
+# A standalone UI test project, deliberately separate from the Capacitor app projects.
+#
+# `npx cap add ios` regenerates apps/mobile/<app>/ios from a template, so a test target added there
+# would be lost the next time a platform is regenerated. XCUITest can drive any installed app by its
+# bundle identifier, so these tests live on their own and attach to whichever Loohar app is asked
+# for. The same tests will later drive a physical device.
+name: LooharUITests
+options:
+  bundleIdPrefix: com.loohar.uitests
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  LooharUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - LooharUITests
+    info:
+      path: LooharUITests/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.loohar.uitests.runner
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  LooharUITests:
+    build:
+      targets:
+        LooharUITests: [test]
+    test:
+      targets:
+        - LooharUITests
