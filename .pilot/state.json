@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-20T14:10:00Z",
+  "updatedAt": "2026-09-21T10:35:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "0f93841868449f7473e4c6fc75621bd4369523e7",
-      "apiVerifiedAt": "2026-09-20T14:05:00Z",
+      "apiSha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8",
+      "apiVerifiedAt": "2026-09-21T10:30:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "ba06e2241aafb4ca4b5c5d6dc97e611ac77a53e7"
+      "sha": "0f93841868449f7473e4c6fc75621bd4369523e7"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "0f93841868449f7473e4c6fc75621bd4369523e7",
+      "sha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -527,10 +527,10 @@
     "L-28": {
       "title": "Low findings: coupon usage-limit race, SVG upload blocklist, offline cash into closed shifts, checkout customer record by email, logout needs unexpired access token",
       "priority": "P2",
-      "status": "PARTIAL \u2014 coupon limit and offline-cash-into-closed-shift both FIXED",
+      "status": "PARTIAL",
       "sha": "a765a83",
       "certification": "PASS (local, real database): 6 cases. Measured 25 concurrent redemptions on a coupon limited to 10: previously redeemedCount reached 25, now capped at 10.",
-      "remaining": "SVG upload blocklist, checkout customer record by email, logout needing an unexpired access token.",
+      "remaining": "Checkout creates/matches a customer record by email. That is the last L-28 item.",
       "knownLimitation": "The window between pricing a quote and settling the payment is not a reservation, so more orders can be placed with a coupon than the limit allows. Those settle (the customer already paid) and are flagged coupon.redeemed_beyond_limit for review. A true reservation is the proper fix and was not attempted."
     },
     "L-29": {
@@ -814,11 +814,25 @@
       "status": "FIXED",
       "sha": "0f93841",
       "certification": "PASS (local, real database): a drawer counted at 10000 became 12000 before the fix and stands at 10000 after, with the sale, ledger and receipt still recorded and the shift flagged pos.offline_cash.settled_after_shift_close for review. Fails on the previous commit."
+    },
+    "L-66": {
+      "title": "SVG uploads screened by a blocklist that known payloads bypass",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "8edac79",
+      "certification": "PASS (local): allowlist of elements and attributes, entity decoding before scanning, DOCTYPE/entity/CDATA refused. Nine bypass payloads refused through the real upload path, a genuine logo still accepted; the suite records that the old blocklist accepted at least six of them."
+    },
+    "L-67": {
+      "title": "Logout required an unexpired access token, so the refresh session survived a sign-out",
+      "priority": "P1",
+      "status": "FIXED",
+      "sha": "16d34a6",
+      "certification": "PASS (local, real auth routes over HTTP + database): live and expired tokens both revoke; forged, malformed and missing tokens still refused and revoke nothing; repeated logout stays successful; other sessions untouched. Expired-token cases fail on the previous commit."
     }
   },
   "tests": {
-    "candidateSha": "0f93841",
-    "ranAt": "2026-09-20",
+    "candidateSha": "16d34a6",
+    "ranAt": "2026-09-21",
     "npmTest": "PASS",
     "lint": "PASS",
     "build": "PASS (staging VITE_API_URL)",
@@ -853,7 +867,7 @@
       "ca08e87+cabf82c+e4c7779 -> 1 critical (dashboard render crash), 4 high, 5 medium fixed in c79f071"
     ],
     "browserSurfaceSmoke": "PASS (8 surfaces) with LOOHAR_REQUIRE_BROWSER_GATE=1",
-    "dbSuitesAllOnSharedDb": "23 suites, 163 tests, 0 skips"
+    "dbSuitesAllOnSharedDb": "24 suites, 167 tests, 0 skips"
   },
   "restaurant1Readiness": {
     "restaurant": "Loohar Restaurant (slug loohar-restaurant)",
@@ -877,7 +891,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Remaining L-28 items (SVG upload blocklist, checkout customer by email, logout token); XCUITest target for real app UI automation; expand staging certification to online ordering and offline reconnect.",
+  "nextAutonomousTask": "Last L-28 item (checkout customer record by email); then an XCUITest target for real app UI automation.",
   "corrections": [
     {
       "date": "2026-09-19",
