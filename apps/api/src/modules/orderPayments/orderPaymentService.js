@@ -648,6 +648,20 @@ export async function createOrderPayment({ body, idempotencyKey }) {
   const quote = await calculateOrderQuote({ restaurantId: body.restaurantId, body });
   const merchant = await readyMerchantFor(quote.restaurant.id);
 
+  // Checkout attaches the order to the restaurant's customer record for that email, which is how a
+  // returning guest keeps one history and their loyalty. Anyone can type someone else's address,
+  // though, so when that record belongs to a registered account an anonymous order is joining a real
+  // person's profile. Nothing of theirs is read back or overwritten — connectOrCreate only writes
+  // when creating, and the tracking payload carries the restaurant's details, not the customer's —
+  // but the restaurant should be able to see that it happened rather than find a stranger's order in
+  // someone's history with no explanation.
+  const existingCustomer = body.customer?.email
+    ? await prisma.customer.findUnique({
+      where: { restaurantId_email: { restaurantId: quote.restaurant.id, email: body.customer.email } },
+      select: { id: true, userId: true }
+    })
+    : null;
+
   const initialTrackingToken = checkoutTrackingToken({ keyHash });
   const createOrderAndPayment = (orderNumber) => {
     return prisma.$transaction(async (tx) => {
@@ -782,6 +796,15 @@ export async function createOrderPayment({ body, idempotencyKey }) {
 
   try {
     const payment = await attachPaymentIntent({ order: created.order, payment: created.payment, merchant });
+    if (existingCustomer?.userId) {
+      await recordAudit({
+        restaurantId: quote.restaurant.id,
+        action: "order.anonymous_checkout_joined_customer_account",
+        entityType: "Customer",
+        entityId: existingCustomer.id,
+        metadata: { orderId: created.order.id, requiresReview: true, note: "An anonymous checkout used the email of a registered customer account." }
+      }).catch(() => {});
+    }
     return checkoutResponse({ order: created.order, payment, trackingToken: initialTrackingToken, idempotentReplay: false, stripeAccountId: merchant.stripeAccountId });
   } catch (error) {
     // A replay of this checkout is already talking to Stripe under the same key; leave state intact.

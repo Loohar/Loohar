@@ -269,7 +269,8 @@
     "build:android": "node scripts/build-android-apps.mjs",
     "test:pos-closed-shift-cash-db": "node --test scripts/pos-closed-shift-cash-db-test.mjs",
     "test:svg-upload-safety": "node --test scripts/svg-upload-safety-test.mjs",
-    "test:logout-expired-token-db": "node --test scripts/logout-expired-token-db-test.mjs"
+    "test:logout-expired-token-db": "node --test scripts/logout-expired-token-db-test.mjs",
+    "test:checkout-customer-binding-db": "node --experimental-test-module-mocks --test scripts/checkout-customer-binding-db-test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"
