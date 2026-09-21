@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21T11:15:00Z",
+  "updatedAt": "2026-09-21T12:05:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "1361cc6b84fafe3834eba66d985225a38150e558",
-      "apiVerifiedAt": "2026-09-21T11:10:00Z",
+      "apiSha": "8ec80c14e16820d2ae005978cc689751557dd136",
+      "apiVerifiedAt": "2026-09-21T12:00:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 \u2014 Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -50,11 +50,11 @@
     "originMain": "0526862bceb2dc3a483de96561755052076df060",
     "previousCandidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "16d34a6a5fe9b254605b3601e2df9ba293e230e8"
+      "sha": "1361cc6b84fafe3834eba66d985225a38150e558"
     },
     "candidate": {
       "branch": "release/loohar-pilot-rc-v01",
-      "sha": "1361cc6b84fafe3834eba66d985225a38150e558",
+      "sha": "8ec80c14e16820d2ae005978cc689751557dd136",
       "pushed": true,
       "worktree": "/Users/rudrabishwokarma/Documents/SaaS_Platform-pilot-rc",
       "chain": [
@@ -760,7 +760,7 @@
         "Production ALLOW_NATIVE_APP_ORIGINS at release"
       ],
       "docs": "docs/mobile/NATIVE_APPS.md",
-      "certification": "Native network contract PASS (staging, 20/20 from capacitor://localhost and https://localhost at 4d2374d). iOS simulator launch PASS for all three apps. UI-level automation NOT DONE \u2014 no XCUITest target, no idb or Appium."
+      "certification": "UI automation PASS: 9 of 9 XCUITest cases across POS, Driver and Restaurant on an iOS Simulator at 1361cc6 (npm run test:native-ui). Native network contract PASS 20/20 from both app origins. Physical device and Android remain owner-blocked."
     },
     "L-59": {
       "title": "apps/api has no real linting (its lint script is `node --check src/server.js`)",
@@ -839,7 +839,7 @@
     }
   },
   "tests": {
-    "candidateSha": "1361cc6",
+    "candidateSha": "8ec80c14e16820d2ae005978cc689751557dd136",
     "ranAt": "2026-09-21",
     "npmTest": "PASS",
     "lint": "PASS",
@@ -899,7 +899,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "XCUITest target so the native apps can be driven through their real UI; then expand staging certification to online ordering and offline reconnect.",
+  "nextAutonomousTask": "Extend the UI suite to a signed-in workflow using a certification tenant; expand staging certification to online ordering and offline reconnect.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1041,11 +1041,11 @@
     "ownerAction": "OWNER_ACTIONS.md item 1"
   },
   "nativeApps": {
-    "pos": "iOS SIMULATOR CERTIFIED; native network contract certified on staging; Android SOURCE READY (licence blocked)",
-    "driver": "same",
-    "restaurant": "same",
+    "pos": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
+    "driver": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
+    "restaurant": "iOS SIMULATOR + UI CERTIFIED; Android SOURCE READY (licence blocked)",
     "posDevice": "DESIGNED, NOT STARTED",
-    "uiAutomation": "NOT DONE \u2014 needs an XCUITest target or Appium",
+    "uiAutomation": "PASS \u2014 XCUITest drives all three apps through their real interface (9/9); apps/mobile/uitests, generated with XcodeGen",
     "published": "Nothing signed, submitted or published"
   },
   "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md \u2014 owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering."

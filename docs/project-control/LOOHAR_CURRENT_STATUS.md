@@ -7,9 +7,9 @@ blockers are not hidden. Anything marked PASS has executable evidence tied to a 
 
 | | SHA | Note |
 | --- | --- | --- |
-| **Release candidate** | `1361cc6b84fafe3834eba66d985225a38150e558` | `release/loohar-pilot-rc-v01`, 68 commits ahead of main |
+| **Release candidate** | `8ec80c14e16820d2ae005978cc689751557dd136` | `release/loohar-pilot-rc-v01`, 69 commits ahead of main |
 | **Main** | `0526862bceb2dc3a483de96561755052076df060` | Unchanged; identical to production |
-| **Staging API** | `1361cc6` | Healthy, schema 0 issues |
+| **Staging API** | `8ec80c1` | Healthy, schema 0 issues |
 | **Staging web** | `402c4a7` | Vercel skips builds for commits that touch no web code |
 | **Production API** | `0526862` | Untouched throughout |
 | **Production web** | `0526862` | Untouched throughout |

@@ -1,6 +1,6 @@
 # Loohar — Build and Install Status
 
-What actually exists and what you can install today. Updated 2026-09-20 against RC `ba06e22`.
+What actually exists and what you can install today. Updated 2026-09-20 against RC `8ec80c1`.
 
 **Status ladder:** NOT STARTED → SOURCE READY → BUILD READY → SIMULATOR CERTIFIED →
 PHYSICAL DEVICE CERTIFIED → INTERNAL DISTRIBUTION READY → STORE SUBMITTED → STORE APPROVED.
@@ -8,9 +8,9 @@ PHYSICAL DEVICE CERTIFIED → INTERNAL DISTRIBUTION READY → STORE SUBMITTED �
 | App | Status today |
 | --- | --- |
 | Loohar Web Platform | **Live.** Production `0526862`; candidate `9a2cc88` on staging |
-| Loohar POS | **SIMULATOR CERTIFIED** (iOS). Android SOURCE READY |
-| Loohar Driver | **SIMULATOR CERTIFIED** (iOS). Android SOURCE READY |
-| Loohar Restaurant | **SIMULATOR CERTIFIED** (iOS). Android SOURCE READY |
+| Loohar POS | **SIMULATOR + UI CERTIFIED** (iOS). Android SOURCE READY |
+| Loohar Driver | **SIMULATOR + UI CERTIFIED** (iOS). Android SOURCE READY |
+| Loohar Restaurant | **SIMULATOR + UI CERTIFIED** (iOS). Android SOURCE READY |
 | Loohar POS Device platform | **NOT STARTED** |
 
 > Nothing is published to the App Store or Google Play, and nothing has been submitted.
@@ -20,7 +20,7 @@ PHYSICAL DEVICE CERTIFIED → INTERNAL DISTRIBUTION READY → STORE SUBMITTED �
 
 ## LOOHAR POS — `com.loohar.pos`
 
-- **Version** 0.1.0 · **SHA** `ba06e22` · connects to **STAGING** (`loohar-api-staging.onrender.com`)
+- **Version** 0.1.0 · **SHA** `8ec80c1` · connects to **STAGING** (`loohar-api-staging.onrender.com`)
 - **iOS: SIMULATOR CERTIFIED.** Built with `xcodebuild` (Debug, unsigned), installed and launched on
   an iPhone 17 Pro simulator running iOS 26.2. It renders its sign-in screen and reports
   **"Live API Connected"** against staging. Evidence:
@@ -49,7 +49,7 @@ a Keychain prompt.
 
 ## LOOHAR DRIVER — `com.loohar.driver`
 
-- **Version** 0.1.0 · **SHA** `ba06e22` · connects to **STAGING**
+- **Version** 0.1.0 · **SHA** `8ec80c1` · connects to **STAGING**
 - **iOS: SIMULATOR CERTIFIED.** Builds, installs, launches, routes to `/driver`, reports
   **"Live API Connected"**. Evidence:
   `~/Documents/Loohar/Evidence/native-apps/ios-driver-01-api-connected-09e91ab.png`
@@ -62,7 +62,7 @@ Same install commands with `--app driver` and `com.loohar.driver`.
 
 ## LOOHAR RESTAURANT — `com.loohar.restaurant`
 
-- **Version** 0.1.0 · **SHA** `ba06e22` · connects to **STAGING**
+- **Version** 0.1.0 · **SHA** `8ec80c1` · connects to **STAGING**
 - **iOS: SIMULATOR CERTIFIED.** Builds, installs, launches, opens `/restaurant` (redirecting a
   signed-out user to the restaurant login exactly as the web does) and reports **"Live API
   Connected"**. Evidence:
@@ -91,13 +91,22 @@ until one is configured, so an unsigned artifact can never be mistaken for a rel
 
 **No APK or AAB file exists yet.** SOURCE READY is not downloadable.
 
+## Driving the apps yourself
+
+```
+npm run test:native-ui -- --app all --env staging
+```
+
+Builds each app, installs it on a simulator and drives it through XCUITest: the sign-in screen, the
+app's own live-API indicator, and typing into the form. Needs Xcode and `brew install xcodegen`.
+
 ## What is certified, and what is not
 
 | | Certified | Not certified |
 | --- | --- | --- |
 | Launch and reach the API | **Yes** — all three apps, iOS Simulator, screenshots | |
 | The workflow over the app's own origin | **Yes** — 20/20 on staging from `capacitor://localhost` and `https://localhost` | |
-| Tapping through the app's UI | | **No.** There is no XCUITest target and neither idb nor Appium is installed |
+| Tapping through the app's UI | **Yes** — 9 of 9 XCUITest cases across all three apps: sign-in screen, live-API indicator, typing into the form | |
 | A physical iPhone or iPad | | **No.** Needs Apple signing |
 | Android emulator or device | | **No.** Needs the SDK licence |
 
