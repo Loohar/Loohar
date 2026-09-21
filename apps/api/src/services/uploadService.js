@@ -1,3 +1,4 @@
+import { isSafeSvgUpload } from "./svgSafety.js";
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 const MIME_EXTENSIONS = new Map([
@@ -44,9 +45,8 @@ function validateMagicBytes(buffer, mimeType) {
     return buffer.length > 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
   }
   if (mimeType === "image/svg+xml") {
-    const svgText = buffer.toString("utf8").trimStart().toLowerCase();
-    if (svgText.includes("<script") || /\son[a-z]+\s*=/.test(svgText) || svgText.includes("javascript:")) return false;
-    return svgText.startsWith("<svg") || svgText.startsWith("<?xml");
+    // Allowlist, not a blocklist: see services/svgSafety.js for the bypasses a blocklist misses.
+    return isSafeSvgUpload(buffer.toString("utf8"));
   }
   return false;
 }
