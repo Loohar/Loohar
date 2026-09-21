@@ -271,7 +271,8 @@
     "test:svg-upload-safety": "node --test scripts/svg-upload-safety-test.mjs",
     "test:logout-expired-token-db": "node --test scripts/logout-expired-token-db-test.mjs",
     "test:checkout-customer-binding-db": "node --experimental-test-module-mocks --test scripts/checkout-customer-binding-db-test.mjs",
-    "test:native-ui": "node scripts/test-native-ui.mjs"
+    "test:native-ui": "node scripts/test-native-ui.mjs",
+    "test:android-ui": "node scripts/test-android-ui.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

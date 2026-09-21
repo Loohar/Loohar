@@ -27,7 +27,7 @@ with no network. That is required for offline cash sales. Native-only behaviour 
 | Platform | Minimum | Status |
 | --- | --- | --- |
 | iOS / iPadOS | per Capacitor 8 template | Simulator build verified; device and store builds need signing |
-| Android | API 24 (Android 7.0), target/compile 36 | Project generated; build blocked on the Android SDK licence (owner) |
+| Android | API 24 (Android 7.0), target/compile 36 | Debug APK built and UI-certified on an emulator; store build needs an upload keystore |
 
 ## 3. Build
 
@@ -53,7 +53,7 @@ xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
 macOS Keychain for github.com credentials before downloading Capacitor's binary frameworks, and it
 **hangs silently** waiting for an approval dialog nobody sees (seen 2026-09-19).
 
-Android (after the SDK licence is accepted): `cd apps/mobile/pos/android && ./gradlew assembleDebug`
+Android: `cd apps/mobile/pos/android && ./gradlew assembleDebug`
 with `JAVA_HOME` pointing at JDK 21 (`/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`)
 and `ANDROID_HOME=/opt/homebrew/share/android-commandlinetools`.
 
@@ -101,9 +101,9 @@ add its usage description (iOS `Info.plist`) or manifest entry (Android) and be 
 
 ## 9. Owner steps before store release
 
-1. **Android:** accept the Android SDK licence once:
-   `yes | /opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin/sdkmanager --licenses`,
-   then install `platforms;android-36`, `build-tools;36.0.0` and `platform-tools`.
+1. ~~**Android:** accept the Android SDK licence.~~ **Done 2026-09-21.** All 7 licences accepted by
+   the owner, and `platform-tools`, `platforms;android-36` and `build-tools;36.0.0` installed. Debug
+   APKs now build and pass UI certification; only the store path below remains.
 2. **Apple Developer Program** membership, an App Store Connect record per app, and a signing team
    selected in Xcode (for device builds and TestFlight).
 3. **Google Play Console** account, an app record per app, and an upload keystore. The keystore must
@@ -111,7 +111,40 @@ add its usage description (iOS `Info.plist`) or manifest entry (Android) and be 
 4. Store listings (privacy details, screenshots from real builds, support URL) and review.
 5. At production release: `ALLOW_NATIVE_APP_ORIGINS=true` on the production API.
 
-## 10. Known limitations
+## 10. UI certification
+
+A launch screenshot proves only that a process started. Both platforms are driven through their real
+interface, against the live view hierarchy or DOM:
+
+```
+npm run test:native-ui  -- --app all --env staging   # iOS, XCUITest on a Simulator
+npm run test:android-ui -- --app all --env staging   # Android, CDP on an emulator
+```
+
+Each app is checked for the same four things: it launches, it routes to its own sign-in screen, the
+form has an email and a masked password field that accept typing, and its **own live-API indicator
+reads "Connected"** — which the app writes only after a real request to the environment it was built
+against, so a refused CORS origin or a wrong API URL fails there.
+
+The Android suite reads the DOM over the **Chrome DevTools Protocol**, not `uiautomator dump`.
+Chromium populates the accessibility tree only when an accessibility service is attached, so a
+uiautomator dump of a Capacitor app contains the WebView node and no text at all. Debug builds enable
+the devtools socket, which is why certification runs against the debug APK. Two further Android
+notes: `adb shell monkey` reports success without starting a Capacitor activity, so the suite uses an
+explicit `am start -W`; and the emulator must be an **arm64-v8a** image on Apple Silicon.
+
+First-time emulator setup (once the SDK licence is accepted):
+
+```
+sdkmanager "emulator" "system-images;android-36;google_apis;arm64-v8a"
+avdmanager create avd -n loohar-cert -k "system-images;android-36;google_apis;arm64-v8a" -d pixel_7
+```
+
+Last run at `8ec80c1`: **iOS 9/9**, **Android 18/18** (POS, Driver, Restaurant). The Android suite was
+negative-controlled by putting the emulator into airplane mode, which failed the live-API check as it
+should — a suite that cannot fail is not evidence.
+
+## 11. Known limitations
 
 - Printing: the POS uses browser printing, which a native WebView does not provide in the same way.
   Printer integration in the apps is **not verified**.
@@ -119,4 +152,6 @@ add its usage description (iOS `Info.plist`) or manifest entry (Android) and be 
   iPhone would need the native Terminal SDK and is **not implemented**.
 - Signed-out `/driver` shows the generic "Platform Login" (same as the web), not a driver-branded
   screen.
-- Android is not yet built or run.
+- Neither suite covers a **signed-in** workflow yet; both stop at the sign-in screen, because that
+  needs a certification tenant.
+- Neither app has been run on **physical hardware**, on either platform.
