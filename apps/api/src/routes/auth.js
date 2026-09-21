@@ -31,7 +31,7 @@ import { createPasswordResetLink, hashPasswordResetToken } from "../services/pas
 import { updateSupabaseAuthPassword } from "../services/supabaseAuthService.js";
 import { authDiagnostic, maskEmail, normalizeEmail, strongPasswordSchema } from "../utils/authSecurity.js";
 import { sanitizeUser } from "../utils/sanitize.js";
-import { signAccessToken, verifyAccessToken } from "../utils/tokens.js";
+import { signAccessToken, verifyAccessTokenForRevocation } from "../utils/tokens.js";
 
 const router = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 20, standardHeaders: true, legacyHeaders: false });
@@ -469,7 +469,11 @@ async function authenticateLogoutRequest(req, res) {
   }
 
   try {
-    const payload = verifyAccessToken(token);
+    // An access token lives 15 minutes. A cashier who steps away and comes back to press "log out"
+    // used to get a 401 while the refresh session stayed alive on a shared restaurant device, so the
+    // sign-out they believed in never happened. An expired token is accepted here, and only here,
+    // because revoking a session is not granting access.
+    const payload = verifyAccessTokenForRevocation(token);
     const session = await loadSessionForAccessToken({ payload, userSelect: authUserSelect() });
     const user = session.user;
     return {
@@ -482,10 +486,6 @@ async function authenticateLogoutRequest(req, res) {
         || (session.sessionVersion || 0) !== (user.sessionVersion || 0)
     };
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      authError(res, 401, "AUTH_ACCESS_TOKEN_EXPIRED", "Access token has expired");
-      return null;
-    }
     if (["JsonWebTokenError", "NotBeforeError"].includes(error.name)) {
       authError(res, 401, "AUTH_ACCESS_TOKEN_INVALID", "Invalid bearer token");
       return null;

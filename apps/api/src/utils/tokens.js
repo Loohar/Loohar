@@ -47,6 +47,13 @@ export function verifyAccessToken(token) {
   return jwt.verify(token, accessSecret(), { algorithms: ["HS256"] });
 }
 
+// Signing out is a deauthorisation, so an expired access token is still proof enough of who is
+// asking: the signature shows Loohar issued it. Only logout uses this. Everything that grants
+// access keeps using verifyAccessToken, which still refuses an expired token.
+export function verifyAccessTokenForRevocation(token) {
+  return jwt.verify(token, accessSecret(), { algorithms: ["HS256"], ignoreExpiration: true });
+}
+
 export function verifyRefreshToken(token) {
   return jwt.verify(token, refreshSecret(), { algorithms: ["HS256"] });
 }
