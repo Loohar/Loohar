@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21T19:52:00Z",
+  "updatedAt": "2026-09-21T19:58:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -307,7 +307,8 @@
       "43bfb40 drawer creation race (L-21)",
       "a765a83 coupon usage limit (L-28)",
       "3b2af70 refund mirroring + stale pending sweep (L-20)"
-    ]
+    ],
+    "mainRef": "origin/main is 0526862, which is exactly what production runs. The LOCAL main branch is dc37c7b, two commits BEHIND origin/main and ahead by zero — stale, not diverged, and checked out in the SaaS_Platform-colorado-tax-component-ui worktree. It was left alone rather than fast-forwarded, because it is another worktree's checkout. Count candidates against origin/main: the RC at 3001f9e is 68 commits ahead of origin/main."
   },
   "items": {
     "L-01": {
