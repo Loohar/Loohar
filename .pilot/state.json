@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-21T19:58:00Z",
+  "updatedAt": "2026-09-23T16:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -17,8 +17,8 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "3001f9eb0246dccabd234405c11d1aa90b73e9b8",
-      "apiVerifiedAt": "2026-09-21T19:50:00Z",
+      "apiSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+      "apiVerifiedAt": "2026-09-23T16:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 — Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
       "webToApiCors": "ALLOWED for exact preview origin (200 + ACAO); unexpected origin 403",
@@ -44,7 +44,7 @@
       "nativeAppOrigins": "ALLOW_NATIVE_APP_ORIGINS=true set 2026-09-19 (merge, not replace)",
       "branchTracked": "release/loohar-pilot-rc-v01 (owner repointed 2026-09-20T05:32Z; autoDeploy still off)",
       "extraCorsOrigins": "EXTRA_CORS_ORIGINS set to the RC staging web branch alias (2026-09-20)",
-      "nativeOriginCertification": "PASS 20/20 at 3001f9e as the native app from origin https://localhost (the Android app origin): signup, starter tenant, MFA enrol/challenge/refusal, category gate, live tax resolution 9.15% for Denver, menu, terminal with exactly one drawer, cashier PIN, shift float, server-priced sale 2900+265=3465, kitchen ticket, cash settled at the server total, day reconciled. Tenant pilot-cert-mubnqqeg372."
+      "nativeOriginCertification": "PASS 19/19 at 15a1f14 (full pilot workflow). 20/20 including the native-origin preflight at 3001f9e."
     }
   },
   "git": {
@@ -845,6 +845,20 @@
       "status": "DONE",
       "sha": "3001f9e",
       "note": "scripts/test-android-ui.mjs installs each debug APK on an emulator, launches it and asserts against the live DOM read over the Chrome DevTools Protocol. uiautomator dump was not usable: Chromium builds the accessibility tree only when an accessibility service is attached, so a dump of a Capacitor app contains the WebView node and no text. Two further Android quirks are handled: adb shell monkey reports success without starting a Capacitor activity, so the suite uses an explicit am start -W and checks for a live pid; and the emulator image must be arm64-v8a on Apple Silicon. 18/18 at 3001f9e. Negative control: emulator airplane mode failed the live-API check, so the suite can fail."
+    },
+    "L-70": {
+      "title": "A used-up plan limit reported as a missing feature",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "15a1f14",
+      "note": "A Starter restaurant using its one POS register and adding a second was told 'POS register is not included in the current plan. Required plan: Professional.' Both halves false: the feature is included on Starter and they were using it; the cause was the register limit of 1, and the remedy may be to retire a register rather than pay more. normalizedPosError keyed only on upgradeRequired, which both a feature gate and a usage limit set, then filled the gaps with 'POS register' and a hardcoded 'Professional' — so every usage limit in the register (seats, menu items, kitchen displays) was misreported. Logic moved to apps/web/src/shared/posErrorMessage.js so it is executed by a test rather than only read; scripts/plan-limit-message-test.mjs builds the error from the server's own usageLimitDecision and was negative-controlled against the old wording."
+    },
+    "L-71": {
+      "title": "XCUITest never selected the app under test",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "15a1f14",
+      "note": "TEST_RUNNER_LOOHAR_APP_BUNDLE_ID never reached the runner; nothing with that prefix arrives. The tests fell back to a default bundle id, so a run asking for an app that is not installed PASSED and every previous run drove com.loohar.pos. The recorded 9/9 across three apps was three tests run three times against one app. Values now pass through the scheme, regenerated per app; the negative control fails as it must and a genuine 9/9 across the three apps was re-established."
     }
   },
   "tests": {
@@ -1061,5 +1075,12 @@
   "ownerActionsCompleted": [
     "2026-09-21 — Android SDK licence accepted (all 7). Unblocked APK builds and Android UI certification.",
     "2026-09-21 — Render loohar-api-staging confirmed tracking release/loohar-pilot-rc-v01 (verified via the Render API, autoDeploy off)."
-  ]
+  ],
+  "productionReleaseCandidate": {
+    "sha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+    "gates": "lint, npm test, 8/8 browser surface renders, Prisma schema valid, staging 19/19",
+    "migrations": "3 pending, all additive; the MFA reset UPDATE matches no production rows because production code has no MFA write path",
+    "cardPayments": "OUT OF SCOPE by owner decision 2026-09-23; fails closed without merchant onboarding",
+    "blockedOn": "production API deploy refused by the automated permission classifier; Vercel loohar scope inaccessible"
+  }
 }
