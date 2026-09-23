@@ -73,6 +73,25 @@ export function deviceTypesForUsageLimit(limitCode) {
 
 export const POS_SESSION_DEVICE_TYPES = deviceTypesForUsageLimit(USAGE_LIMIT.POS_REGISTERS);
 
+// Cheapest-first. Used to answer "would upgrading actually help?" rather than assuming it would.
+export const PLAN_ORDER = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
+
+// The cheapest plan that genuinely raises this limit above what the current plan allows, or null
+// when no higher plan would change anything. Returning null matters: an interface must not offer an
+// upgrade that would not actually lift the limit the person just hit.
+export function nextPlanRaisingLimit(currentPlan, limitCode) {
+  const index = PLAN_ORDER.indexOf(String(currentPlan || "").toUpperCase());
+  if (index < 0 || !limitCode) return null;
+  const currentLimit = (PLAN_USAGE_LIMITS[PLAN_ORDER[index]] || {})[limitCode];
+  // null means unmetered, so there is nothing above it to reach for.
+  if (currentLimit === null || currentLimit === undefined) return null;
+  for (const plan of PLAN_ORDER.slice(index + 1)) {
+    const limit = (PLAN_USAGE_LIMITS[plan] || {})[limitCode];
+    if (limit === null || (typeof limit === "number" && limit > currentLimit)) return plan;
+  }
+  return null;
+}
+
 export function planLimitSummary(planCode) {
   const limits = PLAN_USAGE_LIMITS[planCode] || PLAN_USAGE_LIMITS.STARTER;
   return {

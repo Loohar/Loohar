@@ -98,6 +98,7 @@ import { demoCustomerSummary, demoCustomers, demoDrivers, demoGallery, demoGrowt
 import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reservedSlugs.js";
 import { POS_OFFLINE_SYNC_STATUS, posOfflineRecordsNeedingReview } from "../../shared/posOfflinePricing.js";
 import { planLimitSummary } from "../../shared/planEntitlements.js";
+import { normalizedPosError, posCanManageSubscription } from "./shared/posErrorMessage.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -8160,55 +8161,6 @@ function posDeviceFingerprint() {
   const fingerprint = `browser-${randomPart}`;
   window.localStorage.setItem(storageKey, fingerprint);
   return fingerprint;
-}
-
-const posOwnerRoles = new Set(["TENANT_OWNER", "RESTAURANT_OWNER", "RESTAURANT_ADMIN", "RESTAURANT_MANAGER"]);
-
-function posCanManageSubscription(user) {
-  return posOwnerRoles.has(normalizeRole(user?.role));
-}
-
-function normalizedPosError(error, user) {
-  if (!error) return null;
-  const message = typeof error === "string" ? error : error.message || "";
-  const payload = typeof error === "object" && error ? error.payload || {} : {};
-  const code = String(payload.code || "");
-  const status = Number(error?.status || payload.status || 0);
-  const ownerOperator = posCanManageSubscription(user);
-  if (status === 429 || code === "RATE_LIMITED" || message.includes("429")) {
-    return {
-      tone: "warn",
-      title: "POS is receiving too many requests.",
-      detail: "Please wait a moment and try again. The register will not retry automatically.",
-      action: "Retry POS"
-    };
-  }
-  if (payload.upgradeRequired || code.startsWith("FEATURE_") || code === "PLAN_NOT_INCLUDED" || message.toLowerCase().includes("feature not included")) {
-    return ownerOperator
-      ? {
-          tone: "upgrade",
-          title: `${payload.featureLabel || "POS register"} is not included in the current plan.`,
-          detail: `Current plan: ${payload.currentPlan || "Unknown"}. Required plan: ${payload.requiredPlan || "Professional"}.`,
-          action: "Review subscription"
-        }
-      : {
-          tone: "warn",
-          title: "POS is not enabled for this restaurant.",
-          detail: "Contact your manager before using this register."
-        };
-  }
-  if (status === 403) {
-    return {
-      tone: "warn",
-      title: "POS action is not allowed.",
-      detail: message || "Your account does not have permission for this register action."
-    };
-  }
-  return {
-    tone: "bad",
-    title: message || "POS could not complete the request.",
-    detail: payload.detail || "Try again, or refresh the register if the issue continues."
-  };
 }
 
 function PosNotice({ error, user, onRetry, subscriptionHref }) {

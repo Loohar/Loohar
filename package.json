@@ -136,6 +136,7 @@
     "test:restaurant-settings-routing": "node scripts/restaurant-settings-routing-test.mjs",
     "test:public-layout": "node scripts/public-layout-test.mjs",
     "test:admin-ui": "node scripts/admin-ui-test.mjs",
+    "test:plan-limit-message": "node --test scripts/plan-limit-message-test.mjs",
     "test:accessibility": "node scripts/accessibility-test.mjs",
     "test:homepage": "node scripts/homepage-test.mjs",
     "test:homepage-ui": "node scripts/homepage-ui-test.mjs",
