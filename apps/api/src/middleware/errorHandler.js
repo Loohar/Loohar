@@ -97,8 +97,29 @@ export function errorHandler(error, req, res, next) {
       upgradeRequired: Boolean(error.upgradeRequired)
     });
   }
+  // An unexpected 500 used to return "Internal server error" and log nothing at all. Seven
+  // consecutive failures of two-step verification enrolment in production on 2026-09-23 produced no
+  // log entry, so nothing could have alerted anyone and the cause had to be reasoned out from the
+  // source. Anything reaching here unclassified is a fault worth seeing.
+  const requestId = requestIdFor(req);
+  if (status >= 500) {
+    // The route pattern, never the URL: URLs carry tracking and receipt tokens.
+    const route = req.route?.path ? `${req.baseUrl || ""}${req.route.path}` : req.baseUrl || "unmatched";
+    console.error("Unhandled API error.", {
+      requestId,
+      method: req.method,
+      route,
+      status,
+      code: error.code,
+      message: error.message,
+      stack: error.stack
+    });
+  }
   res.status(status).json({
+    // The message of a 500 is never returned: it can carry connection strings or internal detail.
+    // The request id is, so a person can quote it and it can be found in the logs.
     error: status === 500 ? "Internal server error" : error.message,
+    ...(status === 500 ? { requestId } : {}),
     ...(status !== 500 && error.code ? { code: error.code } : {})
   });
 }

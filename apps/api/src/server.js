@@ -31,6 +31,7 @@ import { apiDeploymentMetadata } from "./utils/deploymentMetadata.js";
 import { buildHealthPayload } from "./utils/healthPayload.js";
 import { configureTrustProxy } from "./config/trustProxy.js";
 import { createCorsPolicy } from "./config/corsPolicy.js";
+import { assertProductionEnv } from "./config/requiredEnv.js";
 import { tenantRootDomain } from "./config/urls.js";
 import { disconnectPrisma } from "./config/prisma.js";
 
@@ -38,6 +39,12 @@ const app = express();
 configureTrustProxy(app);
 
 // CORS policy lives in config/corsPolicy.js so it can be exercised directly by tests.
+// Before anything else: a missing required variable is a deployment fault, and failing here means
+// the health check never passes and the previous version keeps serving.
+for (const warning of assertProductionEnv(process.env)) {
+  console.warn(`Configuration warning: ${warning.name} ${warning.reason} — ${warning.why}.`);
+}
+
 const corsPolicy = createCorsPolicy(process.env);
 function isCorsOriginAllowed(origin = "") {
   return corsPolicy.isCorsOriginAllowed(origin);
