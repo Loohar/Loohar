@@ -1,30 +1,23 @@
 # Loohar — Owner Action Queue
 
 Only genuine owner or external actions live here. Everything else is being worked autonomously.
-Updated 2026-09-21.
+Updated 2026-09-23.
 
-## 1. BLOCKING the main merge — production deploy path must be made safe
+## ~~1. BLOCKING the main merge~~ — RELEASED 2026-09-23
 
-**This is the one blocker that stops otherwise-ready work from reaching `main`.**
+`main` and production both run `15a1f14`. The API was deployed first and `main` fast-forwarded
+after, so the web could never run ahead of the API; Vercel then published the web automatically.
 
-`main` is currently exactly what is live in production (`0526862`, API and web). The release
-candidate is 57 commits ahead. Before merging, the production deployment path has to be provably
-owner-controlled:
+Two things remain from this item:
 
-| Path | Status |
-| --- | --- |
-| Render production API (`loohar-api`) | **Safe.** `autoDeploy: no`, verified through the Render API. Pushing main does not deploy it. |
-| Render blueprint `render.yaml` | **Hazard.** The file in the repo declares `autoDeploy: true`, contradicting the live setting. A Blueprint re-sync would turn production auto-deploy on. |
-| Vercel production web (`loohar.com`) | **UNKNOWN — this is the blocker.** It is served by Vercel from a project in the `loohar` team, which the Vercel account `subash.sunar@loohar.com` cannot see. Vercel deploys production automatically from the production branch by default. |
-
-If Vercel auto-deploys from `main`, merging would put 57 commits of web on `loohar.com` while the
-API stayed at `0526862`: an unapproved production release, with the web ahead of the API it talks to.
-
-**What I need from you — one of:**
-1. Give `subash.sunar@loohar.com` access to the Vercel project serving `loohar.com` so I can verify
-   and, if needed, disable production auto-deploy; **or**
-2. Turn off automatic production deployment for that project yourself and confirm it; **or**
-3. Tell me to merge anyway, understanding it may publish the web to production immediately.
+- **Vercel access.** `loohar.com` is served from the `loohar` scope
+  (`team_3UarI1385VOerIeOPW8kWaLe`), which `subash.sunar@loohar.com` cannot reach — the API answers
+  "You must re-authenticate to this scope". The web deployed itself this time, which also means
+  **any future push to `main` publishes the web automatically**, without review. Worth putting under
+  control before the next release.
+- **The Render deploy permission.** Claude's `trigger_deploy` was refused by the permission
+  classifier. It is an MCP tool, so a Bash rule does not cover it; allow
+  `mcp__plugin_render_render__trigger_deploy` so Claude can run the deploy itself next time.
 
 ## 2. Supabase re-authentication (blocks a P0)
 

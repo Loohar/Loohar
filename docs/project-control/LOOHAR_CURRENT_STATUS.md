@@ -1,15 +1,15 @@
 # Loohar — Current Status
 
-Updated **2026-09-21**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
+Updated **2026-09-23**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
 blockers are not hidden. Anything marked PASS has executable evidence tied to a SHA.
 
 ## Where everything is
 
 | | SHA | Note |
 | --- | --- | --- |
-| **Release candidate** | `3001f9eb0246dccabd234405c11d1aa90b73e9b8` | `release/loohar-pilot-rc-v01`, 68 commits ahead of `origin/main` |
+| **Released to production** | `15a1f14efbdb31993e382c697f93881eae1d7c1a` | `main`, API and `loohar.com` both live on it since 2026-09-23 |
 | **Main** | `0526862bceb2dc3a483de96561755052076df060` | Unchanged; identical to production |
-| **Staging API** | `3001f9e` | Healthy, schema 0 issues, verified live |
+| **Staging API** | `15a1f14` | Healthy, pilot workflow 19/19 |
 | **Staging web** | `402c4a7` | Vercel skips builds for commits that touch no web code |
 | **Production API** | `0526862` | Untouched throughout |
 | **Production web** | `0526862` | Untouched throughout |

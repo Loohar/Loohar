@@ -1,19 +1,30 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-23T16:30:00Z",
+  "updatedAt": "2026-09-23T18:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
     "production": {
       "apiUrl": "https://loohar-api.onrender.com",
       "webUrl": "https://loohar.com",
-      "apiSha": "0526862bceb2dc3a483de96561755052076df060",
-      "webSha": "0526862bceb2dc3a483de96561755052076df060",
-      "verifiedAt": "2026-09-19T07:34:00Z",
-      "frozen": true,
+      "apiSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+      "webSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+      "verifiedAt": "2026-09-23T18:28:00Z",
+      "frozen": false,
       "changeRequiresOwnerApproval": true,
-      "verifiedHow": "Live /version (API) and /version.json (web, build 2026-09-02T16:58:56.705Z)",
-      "renderDeploy": "dep-dac5o9710e5c73bc0dd0 (live since 2026-09-02, unchanged 2026-09-19)"
+      "verifiedHow": "Live /version on the API and /version.json on loohar.com both report 15a1f14; /health schema ok with no issues; all four public routes 200; every page loaded in a real browser with no runtime exception; the sign-in card reports 'Live API Connected'; CORS allows only https://loohar.com and https://www.loohar.com and refuses evil.example.com, loohar.com.evil.com and capacitor://localhost with 403.",
+      "renderDeploy": "dep-dac5o9710e5c73bc0dd0 (live since 2026-09-02, unchanged 2026-09-19)",
+      "release2026_09_23": {
+        "sha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+        "previous": "0526862bceb2dc3a483de96561755052076df060",
+        "approvedBy": "Owner, 2026-09-23",
+        "order": "API deployed first, then main fast-forwarded, so the web could never run ahead of the API. Vercel then published the web automatically.",
+        "deployedBy": "Owner ran the Render deploy: Claude's trigger_deploy was refused by the permission classifier (MCP tool mcp__plugin_render_render__trigger_deploy needs an allow-rule). Owner asked Claude to perform it next time.",
+        "migrations": "3 additive, applied. The MFA reset UPDATE matched no rows: production code at 0526862 never wrote mfaSecret.",
+        "cardPayments": "OUT OF SCOPE by owner decision. Fails closed: POS needs device cardPaymentsEnabled (default false), online needs a fully onboarded Stripe Connect account. Next phase.",
+        "rollback": "Redeploy 0526862 on Render; the migrations are additive so the old code runs against the new schema.",
+        "openHardening": "loohar.com sends no X-Frame-Options or CSP frame-ancestors (Vercel default); the API sends both."
+      }
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
@@ -920,7 +931,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Extend both UI suites to a signed-in workflow using a certification tenant; expand staging certification to online ordering and offline POS reconnect.",
+  "nextAutonomousTask": "Card payment phase: certify online card checkout, Stripe Terminal and refunds once TEST-mode Connect onboarding exists. Also add frame-ancestors/X-Frame-Options to the web, and finish the signed-in workflow suites.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1055,12 +1066,7 @@
     "developmentBook": "Chapter 25 appended 2026-09-20 covering recovery, L-11, dependency advisories, native apps, the staging incident, CORS and L-13. Chapters 1-24 remain at c5347da and are marked as such.",
     "backedUpCopy": "docs/project-record/DEVELOPMENT_BOOK_CH25_2026-09.md (authored in-repo; the external book is still outside Git)"
   },
-  "mainMergeGate": {
-    "status": "BLOCKED",
-    "reason": "main is identical to live production (0526862) and the RC is 57+ commits ahead. Render production API auto-deploy is off (verified), but loohar.com is served by a Vercel project this account cannot enumerate, and Vercel deploys production from the production branch by default. Merging could publish the web to production while the API stayed behind.",
-    "engineeringGates": "All passing at this candidate",
-    "ownerAction": "OWNER_ACTIONS.md item 1"
-  },
+  "mainMergeGate": "CLEARED 2026-09-23. main is 15a1f14 and production runs the same SHA.",
   "nativeApps": {
     "pos": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
     "driver": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
