@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-24T18:20:00Z",
+  "updatedAt": "2026-09-24T19:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -895,9 +895,9 @@
     "L-75": {
       "title": "Two-step verification enrolment by QR",
       "priority": "P1",
-      "status": "DONE",
+      "status": "DONE — verified in production",
       "sha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
-      "note": "Enrolment showed a 32-character base32 key to type by hand, which is where people give up and where one mistyped character produces codes that are never accepted with nothing on screen to explain why. The panel now leads with a scannable QR and keeps the typed key behind a \"Can't scan?\" disclosure, because a QR is useless when the authenticator is on the same device as the screen. Drawn in the browser from the otpauth:// URL the server already returns, so the secret goes nowhere new; qrcode was already an apps/web dependency. A failed draw returns empty rather than throwing, so it can never block enrolment. scripts/mfa-enrolment-qr-test.mjs decodes the generated image with jsqr and asserts it comes back character for character as the server's URL, because a QR that renders but encodes the wrong thing silently adds an account whose codes never work."
+      "note": "Enrolment showed a 32-character base32 key to type by hand, which is where people give up and where one mistyped character produces codes that are never accepted with nothing on screen to explain why. The panel now leads with a scannable QR and keeps the typed key behind a \"Can't scan?\" disclosure, because a QR is useless when the authenticator is on the same device as the screen. Drawn in the browser from the otpauth:// URL the server already returns, so the secret goes nowhere new; qrcode was already an apps/web dependency. A failed draw returns empty rather than throwing, so it can never block enrolment. scripts/mfa-enrolment-qr-test.mjs decodes the generated image with jsqr and asserts it comes back character for character as the server's URL, because a QR that renders but encodes the wrong thing silently adds an account whose codes never work. Verified in production 2026-09-24: the owner enrolled by scanning the QR and the confirm endpoint returned 200."
     }
   },
   "tests": {
@@ -959,7 +959,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Confirm a real two-step verification enrolment completes in production. Then: report required configuration presence as booleans on /health; add frame-ancestors/X-Frame-Options to the web; card payment phase.",
+  "nextAutonomousTask": "Report required-configuration presence as booleans on /health so a missing variable is visible before a deploy rather than discovered by one. Then add frame-ancestors and X-Frame-Options to the web, and begin the card payment phase once Stripe TEST Connect onboarding exists.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1113,7 +1113,9 @@
         "L-74 scripts/env-var-diff.mjs matches process.env.NAME, env.NAME and env['NAME'] and flags any read inside a throw. Run against the incident it reports MFA_ENCRYPTION_KEY as REQUIRED and exits non-zero."
       ],
       "provenNotAssumed": "The guard was proven by failure: the first production deploy of 03ba606 was REFUSED with 'MFA_ENCRYPTION_KEY is not set' and rolled back automatically with production still serving 15a1f14 and zero downtime. After the key was set, the same commit booted.",
-      "residual": "Two-step verification enrolment has still not been confirmed working by a real attempt; the owner has not yet completed one since the fix."
+      "residual": "Resolved. Two POST /api/auth/mfa/enroll/confirm requests returned 200 in production at 18:49:11 and 18:53:10 UTC on 2026-09-24, and no 500 has been seen on any endpoint since. The owner enrolled by scanning the new QR. The 401s in between were wrong-password attempts, which is the confirm step doing its job: binding an authenticator re-checks the password so a stolen session cannot attach an attacker's device.",
+      "status": "CLOSED 2026-09-24",
+      "verifiedHow": "Executable evidence from the production access log, not a report: 200 responses on the confirm endpoint, and an absence of 500s across the service."
     }
   ],
   "documentation": {

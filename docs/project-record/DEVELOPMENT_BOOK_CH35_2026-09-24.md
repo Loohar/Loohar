@@ -76,11 +76,22 @@ and `env['NAME']`, and flags any name read inside a throw. Run against the incid
 `STRIPE_CONNECT_SECRET_KEY` is a warning rather than a boot failure, because card payments are
 deliberately excluded from this deployment and a release without them must still start.
 
-### 35.6 Still not claimed
+### 35.6 Closed, with evidence
 
-Two-step verification enrolment has **not** been confirmed working by a real attempt. The guard
-proves the key is loaded, because the API would not have started otherwise, but that is not the same
-as watching an enrolment succeed. Until one does, this is fixed in principle and unverified in fact.
+Two-step verification enrolment **succeeded in production** on 2026-09-24. The access log records
+`POST /api/auth/mfa/enroll/confirm 200` at 18:49:11 and again at 18:53:10, and no 500 has appeared on
+any endpoint since. That is the executable evidence this needed; the guard proving the key is loaded
+was necessary but was never the same thing as watching an enrolment complete.
+
+The 401s in between were wrong-password attempts. That is the confirm step working as designed:
+binding an authenticator re-checks the password, so a stolen access token or a reset-link session
+alone cannot attach an attacker's device.
+
+### 35.7 What made it finally usable
+
+Enrolment had asked the owner to type a 32-character base32 key by hand, and the attempt that
+produced the incident screenshot showed exactly how that goes wrong. Chapter 36 covers the QR that
+replaced it; it shipped the same day and is what the successful enrolment used.
 
 
 ## Changelog index
