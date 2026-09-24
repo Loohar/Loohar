@@ -1,13 +1,13 @@
 # Loohar — Current Status
 
-Updated **2026-09-23**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
+Updated **2026-09-24**. Statuses are PASS / PARTIAL / BLOCKED / FAIL / NOT STARTED. Failures and
 blockers are not hidden. Anything marked PASS has executable evidence tied to a SHA.
 
 ## Where everything is
 
 | | SHA | Note |
 | --- | --- | --- |
-| **Released to production** | `15a1f14efbdb31993e382c697f93881eae1d7c1a` | `main`, API and `loohar.com` both live on it since 2026-09-23 |
+| **Released to production** | `03ba6064753b497a26f49beae7f741bc3422df56` | `main`, API and `loohar.com` all aligned; includes the post-incident boot guard |
 | **Main** | `0526862bceb2dc3a483de96561755052076df060` | Unchanged; identical to production |
 | **Staging API** | `15a1f14` | Healthy, pilot workflow 19/19 |
 | **Staging web** | `402c4a7` | Vercel skips builds for commits that touch no web code |

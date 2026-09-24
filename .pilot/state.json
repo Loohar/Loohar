@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-23T18:30:00Z",
+  "updatedAt": "2026-09-24T05:30:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
     "production": {
       "apiUrl": "https://loohar-api.onrender.com",
       "webUrl": "https://loohar.com",
-      "apiSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
-      "webSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
-      "verifiedAt": "2026-09-23T18:28:00Z",
+      "apiSha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "webSha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "verifiedAt": "2026-09-24T05:28:00Z",
       "frozen": false,
       "changeRequiresOwnerApproval": true,
       "verifiedHow": "Live /version on the API and /version.json on loohar.com both report 15a1f14; /health schema ok with no issues; all four public routes 200; every page loaded in a real browser with no runtime exception; the sign-in card reports 'Live API Connected'; CORS allows only https://loohar.com and https://www.loohar.com and refuses evil.example.com, loohar.com.evil.com and capacitor://localhost with 403.",
@@ -870,6 +870,27 @@
       "status": "DONE",
       "sha": "15a1f14",
       "note": "TEST_RUNNER_LOOHAR_APP_BUNDLE_ID never reached the runner; nothing with that prefix arrives. The tests fell back to a default bundle id, so a run asking for an app that is not installed PASSED and every previous run drove com.loohar.pos. The recorded 9/9 across three apps was three tests run three times against one app. Values now pass through the scheme, regenerated per app; the negative control fails as it must and a genuine 9/9 across the three apps was re-established."
+    },
+    "L-72": {
+      "title": "Boot-time production configuration guard",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "note": "apps/api/src/config/requiredEnv.js refuses to start when a required production variable is missing or too short. Proven in production: it refused a deploy and rolled back with no downtime."
+    },
+    "L-73": {
+      "title": "Unhandled 5xx were logged nowhere",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "note": "errorHandler's final branch returned 'Internal server error' and logged nothing. Seven production 500s produced no log entry. Now logged with route pattern (never the URL), message, stack and a request id that is also returned to the caller."
+    },
+    "L-74": {
+      "title": "Release check for new required env vars",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "note": "scripts/env-var-diff.mjs replaces a hand-rolled grep that only matched literal process.env.NAME and therefore missed the variable that caused INC-2026-09-23."
     }
   },
   "tests": {
@@ -931,7 +952,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Card payment phase: certify online card checkout, Stripe Terminal and refunds once TEST-mode Connect onboarding exists. Also add frame-ancestors/X-Frame-Options to the web, and finish the signed-in workflow suites.",
+  "nextAutonomousTask": "Confirm two-step verification enrolment works in production with a real attempt. Then: report required-configuration presence as booleans on /health so a missing variable is visible before a deploy; add frame-ancestors/X-Frame-Options to the web; card payment phase.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1060,6 +1081,32 @@
       "recovery": "Redeployed the RC by exact SHA with scripts/deploy-staging.mjs (09e91ab), health ok.",
       "rootCause": "L-53 (staging tracks the frozen branch) was known and recorded an hour earlier; the side effect of the env-var tool (auto-redeploy of branch HEAD) was not checked before use.",
       "prevention": "Do not change staging env vars through the Render MCP until the service branch is repointed to release/loohar-pilot-rc-v01; after any env change, immediately redeploy the RC by exact SHA."
+    },
+    {
+      "id": "INC-2026-09-23-mfa-encryption-key",
+      "severity": "P1 — privileged sign-in blocked, no customer-facing impact",
+      "summary": "The 15a1f14 release introduced a hard production requirement for MFA_ENCRYPTION_KEY. Production did not have it, so every POST /api/auth/mfa/enroll/start returned 500 and no privileged user could enrol in two-step verification. Customer ordering, the POS and the public site were unaffected throughout.",
+      "howItWasFound": "The owner clicked Start setup and saw 'Internal server error'. No alert existed.",
+      "rootCause": "serverSecret() in mfaService.js throws in production when MFA_ENCRYPTION_KEY is absent. The variable is deliberately separate from JWT_SECRET so that rotating JWT_SECRET cannot make stored authenticator secrets unreadable.",
+      "whyItShipped": [
+        "The pre-release check for new required variables was done by hand and grepped for the literal process.env.NAME. The code reads env.MFA_ENCRYPTION_KEY through a function parameter, so the name never appears next to process.env and the check reported 'no new required env vars'.",
+        "Nothing validated configuration at boot, so the API started and /health reported ok while a sign-in path was completely broken.",
+        "The 500s produced no log entry at all: errorHandler's final branch returned 'Internal server error' and logged nothing, so no alert was possible and the cause had to be reasoned out from source."
+      ],
+      "whyTheFixTookThreeAttempts": [
+        "Adding the variable did not help, because a running Node process cannot see variables added after it started and the service has auto-deploy off, so saving changed nothing.",
+        "A redeploy was attempted but no deploy or restart occurred; the unchanged instance id proved the old environment was still in force.",
+        "A deploy requested for 03ba606 while main was still 15a1f14 silently shipped 15a1f14: Render deploys the tracked branch and ignores a commit id that is not on it.",
+        "The key was still absent on loohar-api when the guard first ran in production, which is how we learned it had never been on that service."
+      ],
+      "resolution": "MFA_ENCRYPTION_KEY set on loohar-api; production deployed 03ba606 with the boot guard, which started cleanly and therefore proves the key is loaded.",
+      "preventions": [
+        "L-72 apps/api/src/config/requiredEnv.js: the API refuses to start when required production configuration is missing, so a bad config fails the deploy and the previous version keeps serving.",
+        "L-73 errorHandler now logs every unhandled 5xx with route pattern, message, stack and a request id, and returns that id to the caller. URLs are never logged because they carry tracking and receipt tokens.",
+        "L-74 scripts/env-var-diff.mjs matches process.env.NAME, env.NAME and env['NAME'] and flags any read inside a throw. Run against the incident it reports MFA_ENCRYPTION_KEY as REQUIRED and exits non-zero."
+      ],
+      "provenNotAssumed": "The guard was proven by failure: the first production deploy of 03ba606 was REFUSED with 'MFA_ENCRYPTION_KEY is not set' and rolled back automatically with production still serving 15a1f14 and zero downtime. After the key was set, the same commit booted.",
+      "residual": "Two-step verification enrolment has still not been confirmed working by a real attempt; the owner has not yet completed one since the fix."
     }
   ],
   "documentation": {
