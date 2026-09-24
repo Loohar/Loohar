@@ -138,6 +138,7 @@
     "test:admin-ui": "node scripts/admin-ui-test.mjs",
     "test:plan-limit-message": "node --test scripts/plan-limit-message-test.mjs",
     "test:production-env-guard": "node --test scripts/production-env-guard-test.mjs",
+    "test:mfa-qr": "node --test scripts/mfa-enrolment-qr-test.mjs",
     "release:env-diff": "node scripts/env-var-diff.mjs",
     "test:accessibility": "node scripts/accessibility-test.mjs",
     "test:homepage": "node scripts/homepage-test.mjs",
@@ -278,6 +279,8 @@
     "test:android-ui": "node scripts/test-android-ui.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.61.1"
+    "jsqr": "^1.4.0",
+    "playwright": "^1.61.1",
+    "pngjs": "^7.0.0"
   }
 }

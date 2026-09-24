@@ -99,6 +99,7 @@ import { RESERVED_PLATFORM_SLUGS, validatePublicSlug } from "../../shared/reserv
 import { POS_OFFLINE_SYNC_STATUS, posOfflineRecordsNeedingReview } from "../../shared/posOfflinePricing.js";
 import { planLimitSummary } from "../../shared/planEntitlements.js";
 import { normalizedPosError, posCanManageSubscription } from "./shared/posErrorMessage.js";
+import { otpauthQrDataUrl } from "./shared/otpauthQr.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -6913,6 +6914,21 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
   const [mfaPassword, setMfaPassword] = useState("");
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [mfaEnrollment, setMfaEnrollment] = useState(null);
+  const [mfaQrDataUrl, setMfaQrDataUrl] = useState("");
+
+  // Drawing the QR is asynchronous, so it is produced when the enrolment arrives rather than during
+  // render. If it fails the panel simply shows the typed key, which still works.
+  useEffect(() => {
+    let cancelled = false;
+    if (!mfaEnrollment?.otpauthUrl) {
+      setMfaQrDataUrl("");
+      return undefined;
+    }
+    otpauthQrDataUrl(mfaEnrollment.otpauthUrl).then((dataUrl) => {
+      if (!cancelled) setMfaQrDataUrl(dataUrl);
+    });
+    return () => { cancelled = true; };
+  }, [mfaEnrollment?.otpauthUrl]);
   const [recoveryCodes, setRecoveryCodes] = useState([]);
   const [step, setStep] = useState("login");
   const [error, setError] = useState("");
@@ -7284,10 +7300,18 @@ function AuthPage({ mode = "platform", apiOnline, onLogin }) {
             ) : (
               <form className="grid gap-4" noValidate onSubmit={confirmMfaEnrollment}>
                 <ol className="grid gap-2 text-sm text-slate-600">
-                  <li>1. In your authenticator app, add an account and choose to enter a setup key.</li>
-                  <li>2. Enter this key (time-based):</li>
+                  <li>1. In your authenticator app, add an account and scan this code.</li>
                 </ol>
-                <code className="rounded-md bg-slate-100 px-3 py-2 text-sm font-bold tracking-wider break-all">{mfaEnrollment.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+                {mfaQrDataUrl ? (
+                  <div className="grid justify-items-center gap-2 rounded-md bg-white p-3">
+                    <img alt="Scan this with your authenticator app to add Loohar" src={mfaQrDataUrl} width={208} height={208} />
+                  </div>
+                ) : null}
+                <details className="text-sm text-slate-600">
+                  <summary className="cursor-pointer font-semibold">Can&rsquo;t scan? Enter the key by hand</summary>
+                  <p className="mt-2">In your authenticator app choose to enter a setup key, then type this (time-based):</p>
+                  <code className="mt-2 block rounded-md bg-slate-100 px-3 py-2 text-sm font-bold tracking-wider break-all">{mfaEnrollment.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+                </details>
                 <a className="text-sm font-bold text-mint" href={mfaEnrollment.otpauthUrl}>Open in an authenticator app on this device</a>
                 <label className="text-sm font-semibold text-slate-600">
                   3. Enter the 6-digit code it shows
