@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-24T05:30:00Z",
+  "updatedAt": "2026-09-24T18:20:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
     "production": {
       "apiUrl": "https://loohar-api.onrender.com",
       "webUrl": "https://loohar.com",
-      "apiSha": "03ba6064753b497a26f49beae7f741bc3422df56",
-      "webSha": "03ba6064753b497a26f49beae7f741bc3422df56",
+      "apiSha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
+      "webSha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
       "verifiedAt": "2026-09-24T05:28:00Z",
       "frozen": false,
       "changeRequiresOwnerApproval": true,
@@ -28,7 +28,7 @@
     },
     "staging": {
       "apiUrl": "https://loohar-api-staging.onrender.com",
-      "apiSha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
+      "apiSha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
       "apiVerifiedAt": "2026-09-23T16:25:00Z",
       "webUrl": "https://loohar-git-fix-launch-review3-fixes-v01-loohar.vercel.app",
       "webSha": "402c4a7 — Vercel skipped 4029d39 and 796e830 has its own build; web lags the RC when a commit does not touch apps/web (Vercel skips unaffected projects)",
@@ -891,6 +891,13 @@
       "status": "DONE",
       "sha": "03ba6064753b497a26f49beae7f741bc3422df56",
       "note": "scripts/env-var-diff.mjs replaces a hand-rolled grep that only matched literal process.env.NAME and therefore missed the variable that caused INC-2026-09-23."
+    },
+    "L-75": {
+      "title": "Two-step verification enrolment by QR",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
+      "note": "Enrolment showed a 32-character base32 key to type by hand, which is where people give up and where one mistyped character produces codes that are never accepted with nothing on screen to explain why. The panel now leads with a scannable QR and keeps the typed key behind a \"Can't scan?\" disclosure, because a QR is useless when the authenticator is on the same device as the screen. Drawn in the browser from the otpauth:// URL the server already returns, so the secret goes nowhere new; qrcode was already an apps/web dependency. A failed draw returns empty rather than throwing, so it can never block enrolment. scripts/mfa-enrolment-qr-test.mjs decodes the generated image with jsqr and asserts it comes back character for character as the server's URL, because a QR that renders but encodes the wrong thing silently adds an account whose codes never work."
     }
   },
   "tests": {
@@ -952,7 +959,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Confirm two-step verification enrolment works in production with a real attempt. Then: report required-configuration presence as booleans on /health so a missing variable is visible before a deploy; add frame-ancestors/X-Frame-Options to the web; card payment phase.",
+  "nextAutonomousTask": "Confirm a real two-step verification enrolment completes in production. Then: report required configuration presence as booleans on /health; add frame-ancestors/X-Frame-Options to the web; card payment phase.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1127,7 +1134,8 @@
   "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md — owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering.",
   "ownerActionsCompleted": [
     "2026-09-21 — Android SDK licence accepted (all 7). Unblocked APK builds and Android UI certification.",
-    "2026-09-21 — Render loohar-api-staging confirmed tracking release/loohar-pilot-rc-v01 (verified via the Render API, autoDeploy off)."
+    "2026-09-21 — Render loohar-api-staging confirmed tracking release/loohar-pilot-rc-v01 (verified via the Render API, autoDeploy off).",
+    "2026-09-24 — MFA_ENCRYPTION_KEY set on loohar-api. Confirmed by the boot guard: the API will not start without it, and it started."
   ],
   "productionReleaseCandidate": {
     "sha": "15a1f14efbdb31993e382c697f93881eae1d7c1a",
