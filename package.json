@@ -272,6 +272,7 @@
     "certify:pilot:staging": "node scripts/certify-pilot-staging.mjs",
     "build:android": "node scripts/build-android-apps.mjs",
     "publish:android-download": "node scripts/publish-android-download.mjs",
+    "test:native-app-update": "node --test scripts/native-app-update-test.mjs",
     "android:keystore": "node scripts/android-keystore.mjs",
     "test:pos-closed-shift-cash-db": "node --test scripts/pos-closed-shift-cash-db-test.mjs",
     "test:svg-upload-safety": "node --test scripts/svg-upload-safety-test.mjs",

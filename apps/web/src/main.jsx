@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
+import App, { NativeUpdateNotice } from "./App.jsx";
 import { attachSecureStore, memoryOnlySecureStore } from "./shared/browserStorage.js";
 import { ensureNativeStartPath, isNativeApp } from "./shared/nativeApp.js";
 import "./styles/index.css";
@@ -9,6 +9,8 @@ function renderApp() {
   createRoot(document.getElementById("root")).render(
     <React.StrictMode>
       <App />
+      {/* Outside App so it survives every route and never depends on which surface is showing. */}
+      <NativeUpdateNotice />
     </React.StrictMode>
   );
 }

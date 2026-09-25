@@ -29,7 +29,13 @@ export function resolveWebDeploymentMetadata(env = process.env, { buildTime = ne
     serviceName: "web",
     environment: safeMetadataValue(firstStringValue(env, ["LOOHAR_BUILD_ENVIRONMENT", "VERCEL_ENV", "NODE_ENV"])),
     commitSha: safeCommitSha(firstStringValue(env, ["VERCEL_GIT_COMMIT_SHA", "GIT_COMMIT_SHA", "COMMIT_SHA", "SOURCE_VERSION", "GITHUB_SHA"])),
-    buildTime: safeMetadataValue(firstStringValue(env, ["BUILD_TIME"]) || buildTime)
+    buildTime: safeMetadataValue(firstStringValue(env, ["BUILD_TIME"]) || buildTime),
+    // Present only in a native build. The installed app compares its own versionCode with the one
+    // published beside the APK to know whether a newer build exists, and Android's own ordering is
+    // numeric on versionCode, so that is what is carried here.
+    ...(firstStringValue(env, ["LOOHAR_APP_PACKAGE"]) ? { package: firstStringValue(env, ["LOOHAR_APP_PACKAGE"]) } : {}),
+    ...(firstStringValue(env, ["LOOHAR_VERSION_CODE"]) ? { versionCode: firstStringValue(env, ["LOOHAR_VERSION_CODE"]) } : {}),
+    ...(firstStringValue(env, ["LOOHAR_VERSION_NAME"]) ? { versionName: firstStringValue(env, ["LOOHAR_VERSION_NAME"]) } : {})
   };
 }
 

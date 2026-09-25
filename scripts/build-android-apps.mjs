@@ -25,6 +25,23 @@ import { join, resolve } from "node:path";
 const APPS = ["pos", "driver", "restaurant"];
 const root = resolve(import.meta.dirname, "..");
 
+// Android compares versionCode to decide what is an update, so it must only ever increase. The
+// number of commits reachable from HEAD does exactly that and needs nothing stored anywhere. Every
+// build before this one shipped versionCode 1, which meant "newer version" had no meaning at all.
+function versionFromHistory() {
+  try {
+    const count = Number(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    if (!Number.isFinite(count) || count <= 0) throw new Error("no history");
+    return { code: String(count), name: `1.0.${count}` };
+  } catch {
+    // Without history there is no safe increasing number, and shipping 1 again would make the next
+    // real build look like a downgrade to Android.
+    console.error("Cannot read the commit count, so no version can be assigned. Build from a git checkout.");
+    process.exit(2);
+  }
+}
+const version = versionFromHistory();
+
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : fallback;
@@ -107,13 +124,28 @@ function run(command, args, options) {
 
 for (const app of apps) {
   const appDir = join(root, "apps/mobile", app);
-  console.log(`\n== Loohar ${app} (Android, ${environment}) ==`);
-  run("node", ["scripts/build-native-apps.mjs", "--app", app, "--env", environment], { cwd: root });
+  console.log(`\n== Loohar ${app} (Android, ${environment}) version ${version.name} (${version.code}) ==`);
+  run("node", ["scripts/build-native-apps.mjs", "--app", app, "--env", environment], {
+    cwd: root,
+    env: {
+      ...process.env,
+      LOOHAR_APP_PACKAGE: `com.loohar.${app}`,
+      LOOHAR_VERSION_CODE: version.code,
+      LOOHAR_VERSION_NAME: version.name
+    }
+  });
 
   const task = bundle ? "bundleRelease" : (release ? "assembleRelease" : "assembleDebug");
   run("./gradlew", [task, "--no-daemon"], {
     cwd: join(appDir, "android"),
-    env: { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, ANDROID_SDK_ROOT: androidHome }
+    env: {
+      ...process.env,
+      JAVA_HOME: javaHome,
+      ANDROID_HOME: androidHome,
+      ANDROID_SDK_ROOT: androidHome,
+      LOOHAR_VERSION_CODE: version.code,
+      LOOHAR_VERSION_NAME: version.name
+    }
   });
 
   const outputs = bundle
