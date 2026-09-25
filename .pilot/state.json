@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-24T19:00:00Z",
+  "updatedAt": "2026-09-25T18:40:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
     "production": {
       "apiUrl": "https://loohar-api.onrender.com",
       "webUrl": "https://loohar.com",
-      "apiSha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
-      "webSha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
+      "apiSha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
+      "webSha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
       "verifiedAt": "2026-09-24T05:28:00Z",
       "frozen": false,
       "changeRequiresOwnerApproval": true,
@@ -898,6 +898,34 @@
       "status": "DONE — verified in production",
       "sha": "94f16708dfdf0a0e3669afed1cf80f612ad2f773",
       "note": "Enrolment showed a 32-character base32 key to type by hand, which is where people give up and where one mistyped character produces codes that are never accepted with nothing on screen to explain why. The panel now leads with a scannable QR and keeps the typed key behind a \"Can't scan?\" disclosure, because a QR is useless when the authenticator is on the same device as the screen. Drawn in the browser from the otpauth:// URL the server already returns, so the secret goes nowhere new; qrcode was already an apps/web dependency. A failed draw returns empty rather than throwing, so it can never block enrolment. scripts/mfa-enrolment-qr-test.mjs decodes the generated image with jsqr and asserts it comes back character for character as the server's URL, because a QR that renders but encodes the wrong thing silently adds an account whose codes never work. Verified in production 2026-09-24: the owner enrolled by scanning the QR and the confirm endpoint returned 200."
+    },
+    "L-76": {
+      "title": "Downloadable production Android apps",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
+      "note": "loohar.com/download serves signed production APKs for POS, Driver and Restaurant. Verified by downloading from the live site, confirming the file is byte-identical to what was signed, installing it and running it. ALLOW_NATIVE_APP_ORIGINS=true on production adds exactly two origins; port and scheme variants and all other origins still get 403."
+    },
+    "L-77": {
+      "title": "versionCode was 1 on every build",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
+      "note": "Android decides what is an update by comparing versionCode, so identical codes meant an update had no definition and an installer had no basis to refuse a downgrade. Now derived from the commit count, which only ever increases."
+    },
+    "L-78": {
+      "title": "Each app shipped copies of every APK inside itself",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
+      "note": "The published APKs live in apps/web/public so loohar.com can serve them, and Vite copies public/ into the build, so each app contained all three APKs. 4.9 MB had become 18.8 MB and every release would have compounded it. The native build now strips that directory."
+    },
+    "L-79": {
+      "title": "In-app update check",
+      "priority": "P1",
+      "status": "DONE",
+      "sha": "ff0e1c6b117a93c3c3a640ac5c54b3757ff62db3",
+      "note": "An installed app compares its own bundled versionCode with the manifest published beside the APK and shows a dismissible notice. No auto-install; Android does not permit it. Proven end to end on a device: version 200 installed against a live manifest of 203 showed the notice with the right version, size and link, and 203 installed showed nothing. 14 unit tests, most about staying quiet. One caught a real defect: Number.parseInt(\"1.2.3\") is 1, so a malformed version parsed as plausible and could have offered a downgrade as an update."
     }
   },
   "tests": {
@@ -959,7 +987,7 @@
     "productionRelease": "NOT_REQUESTED",
     "mainMerge": "NOT_REQUESTED"
   },
-  "nextAutonomousTask": "Report required-configuration presence as booleans on /health so a missing variable is visible before a deploy rather than discovered by one. Then add frame-ancestors and X-Frame-Options to the web, and begin the card payment phase once Stripe TEST Connect onboarding exists.",
+  "nextAutonomousTask": "Certify the POS on physical Android hardware — everything so far is emulator-only. Then report required-configuration presence as booleans on /health, and begin the card payment phase once Stripe TEST Connect onboarding exists.",
   "corrections": [
     {
       "date": "2026-09-19",
@@ -1131,7 +1159,8 @@
     "uiAutomation": "PASS on both platforms at 3001f9e — iOS 9/9 (XCUITest, apps/mobile/uitests via XcodeGen) and Android 18/18 (scripts/test-android-ui.mjs, DOM read over the Chrome DevTools Protocol). Each app is checked for launch, routing to its own sign-in screen, a masked password field that accepts typing, and its own live-API indicator reading Connected from a real request. The Android suite was negative-controlled with emulator airplane mode, which failed the live-API check as it should.",
     "published": "Nothing signed, submitted or published",
     "androidToolchain": "Android SDK licences accepted by the owner 2026-09-21 (all 7). platform-tools, platforms;android-36, build-tools;36.0.0, emulator and system-images;android-36;google_apis;arm64-v8a installed. AVD loohar-cert (Pixel 7). JDK 21 at /opt/homebrew/opt/openjdk@21.",
-    "androidArtifacts": "Three debug APKs built at 8ec80c1, 5.9MB each: com.loohar.pos, com.loohar.driver, com.loohar.restaurant. Verified distinct by SHA-256, package id and label. Every bundle carries commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. Release AAB still refused: needs a Google Play upload keystore (owner)."
+    "androidArtifacts": "Three debug APKs built at 8ec80c1, 5.9MB each: com.loohar.pos, com.loohar.driver, com.loohar.restaurant. Verified distinct by SHA-256, package id and label. Every bundle carries commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. Release AAB still refused: needs a Google Play upload keystore (owner).",
+    "distribution": "DIRECT DOWNLOAD, live at https://loohar.com/download. Signed release APKs, 4.9 MB each, built against production. No developer account or licence is involved. The publish step refuses any APK that is unsigned or built against a non-production environment, reading the environment back out of the APK rather than trusting a flag. Signing key at ~/.loohar/android/, outside Git."
   },
   "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md — owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering.",
   "ownerActionsCompleted": [
