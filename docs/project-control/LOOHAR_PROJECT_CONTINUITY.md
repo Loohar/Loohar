@@ -4,13 +4,20 @@
 memory. It contains no secrets. Where it disagrees with the code, the code is authoritative and
 this file is stale — check `git log` and `.pilot/state.json` first.
 
-**Last verified:** 2026-09-19 19:06 UTC (production, staging API and staging web identity re-read live; Render state read through the Render API).
+**Last verified:** 2026-09-24 19:00 UTC (production API, `loohar.com`, staging API and `main` all re-read live).
+
+> **Loohar is LIVE.** The `0526862` freeze ended on 2026-09-23. `main`, the production API,
+> `loohar.com` and staging all run `94f1670`. Anything in this file that still describes
+> production as frozen or `main` as unmerged is stale; trust `git log` and `.pilot/state.json`.
 
 ---
 
 > **Read `LOOHAR_OPERATING_DIRECTIVE.md` first.** It records the owner's standing instructions:
-> what Loohar is, the 0% Loohar transaction fee principle, the priority order, and why nothing is
-> merged to main yet.
+> what Loohar is, the 0% Loohar transaction fee principle and the priority order.
+>
+> **To resume work, read in this order:** this file → `.pilot/state.json` (machine-readable, the
+> single source of truth for item status) → `LOOHAR_CURRENT_STATUS.md` → `OWNER_ACTIONS.md` for
+> what is waiting on the owner. `nextAutonomousTask` in the state file says what to pick up.
 
 ## 1. What Loohar is
 
@@ -50,8 +57,8 @@ Single Git repository, `git@github.com:Loohar/Loohar.git` (private), checked out
 
 | Branch | SHA | Meaning |
 | --- | --- | --- |
-| `main` | `0526862` | Production baseline |
-| `release/loohar-pilot-rc-v01` | `8ec80c1` | Release candidate. 2026-09-19 chain: log-noise fix, CI, uptime+runbooks, dependency advisories, native apps. Previous: `9256ce6`, `4f69015` |
+| `main` | `94f1670` | **Live in production.** Fast-forwarded from `0526862` on 2026-09-23 |
+| `release/loohar-pilot-rc-v01` | `94f1670` | Release candidate, currently identical to `main` |
 | `chore/loohar-pilot-control-v01` | control docs | `.pilot/state.json`, `docs/pilot-launch/`, `docs/project-control/` |
 
 Recovery tags: `recovery/2026-09-19-production-baseline`, `recovery/2026-09-19-staging-candidate`,
@@ -73,9 +80,9 @@ Browser (loohar.com, tenant sites, staff PWA, driver PWA)
 
 | Environment | Component | SHA | Verified |
 | --- | --- | --- | --- |
-| Production | API `https://loohar-api.onrender.com` | `0526862bceb2dc3a483de96561755052076df060` | 2026-09-19 live |
-| Production | Web `https://loohar.com` | `0526862bceb2dc3a483de96561755052076df060` (build 2026-09-02) | 2026-09-19 live |
-| Staging | API `https://loohar-api-staging.onrender.com` | `3b2af70e272f1a36a2229a6413083522096fb134` | 2026-09-20 live, `/health` ok, schema 0 issues, `ALLOW_NATIVE_APP_ORIGINS=true`, `EXTRA_CORS_ORIGINS` set |
+| Production | API `https://loohar-api.onrender.com` | `94f16708dfdf0a0e3669afed1cf80f612ad2f773` | 2026-09-24 live, `/health` ok, schema 0 issues |
+| Production | Web `https://loohar.com` | `94f16708dfdf0a0e3669afed1cf80f612ad2f773` | 2026-09-24 live, renders clean, "Live API Connected" |
+| Staging | API `https://loohar-api-staging.onrender.com` | `94f16708dfdf0a0e3669afed1cf80f612ad2f773` | 2026-09-24 live, pilot workflow 19/19 |
 | Staging | Web (Vercel) | `9256ce67c73ae71245faee3ad9921e6ac98978f5` | 2026-09-19, Vercel `dpl_BeT8oDeUuJG7ACof8kHgqbMoRj6t` READY |
 
 **Staging web project:** Vercel project `loohar-kds-staging`
