@@ -1,11 +1,11 @@
 {
   "app": "restaurant",
   "package": "com.loohar.restaurant",
-  "versionName": "1.0.203",
-  "versionCode": "203",
+  "versionName": "1.0.205",
+  "versionCode": "205",
   "environment": "production",
-  "commitSha": "6884670459692acce33f030e192c9cb216e273d1",
+  "commitSha": "af60481b48192379f4460205c1681a863653eea3",
   "certificateSha256": "7c4dac2c6a3a0745aa6776268d6a1e88e5a17d21fcd587f8864e28e77602df42",
-  "bytes": 5164705,
-  "builtAt": "2026-09-25T18:28:24.237Z"
+  "bytes": 5164861,
+  "builtAt": "2026-09-25T18:34:50.188Z"
 }

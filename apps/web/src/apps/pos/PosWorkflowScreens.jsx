@@ -38,6 +38,7 @@ import {
   quickCashTenderAmounts
 } from "./cashTender.js";
 import { canModifyPosItem, shouldOpenCustomization } from "./customization.js";
+import { isNativeApp } from "../../shared/nativeApp.js";
 
 function money(cents = 0) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100);
@@ -692,6 +693,21 @@ export function RegisterSettingsScreen({ device, deviceForm, setDeviceForm, loca
   return (
     <section className="pos-workflow-screen">
       <PosScreenHeader eyebrow="Manager workspace" title="Register settings" detail="Device, location, lock, payment, and kiosk controls stay outside order entry." onBack={device ? onBack : null} />
+      {/* Loohar's apps are installed from loohar.com rather than a store, so a restaurant running the
+          register in a browser has no way to discover that a dedicated app exists. Shown only there:
+          inside the app it would be an invitation to install what you are already using. */}
+      {!isNativeApp() ? (
+        <div className="pos-notice">
+          <MonitorCog size={20} aria-hidden="true" />
+          <div>
+            <strong>Use the Loohar POS app on this device</strong>
+            <span>
+              Android tablets and phones run the register better than a browser tab.{" "}
+              <a href="https://loohar.com/download" target="_blank" rel="noreferrer">Download the app</a>.
+            </span>
+          </div>
+        </div>
+      ) : null}
       {!ownerOperator ? <div className="pos-notice warn"><Settings2 size={20} /><div><strong>Manager permission required</strong><span>Ask a restaurant owner or manager to configure this register.</span></div></div> : null}
       <form className="pos-settings-grid" onSubmit={onRegister}>
         <label><span>Register name</span><input value={deviceForm.name} onChange={(event) => setDeviceForm((current) => ({ ...current, name: event.target.value }))} disabled={!ownerOperator} /></label>
