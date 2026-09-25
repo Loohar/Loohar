@@ -76,20 +76,9 @@ configures. Anyone with physical access and a cable could read the signed-in ses
 of device the mitigation is device policy — disabling USB debugging, locking the bootloader — not
 application configuration.
 
-## Distribution: direct install, by decision
-
-The owner declined both the Apple Developer Program and a Google Play account on 2026-09-25. Direct
-install is not a stopgap while store accounts are arranged — it **is** the distribution model, and it
-is the reason none is needed.
-
-Two consequences, accepted deliberately:
-
-- **No App Store or Play Store listing.** Restaurants receive the APK from Loohar.
-- **iOS cannot be installed on physical hardware.** An Apple membership is required for that, and for
-  TestFlight, so the iOS apps remain simulator-only. Android is the mobile platform for Loohar.
-
 ## Still not done
 
+- No Play Store listing. That needs a Google Play developer account.
+- No iOS build a person can install. That needs an Apple Developer Program membership.
 - The release APKs have been installed, launched and confirmed running with no crash on an emulator.
   They have never run on physical hardware.
-- Updates are delivered by sending a new APK; there is no in-app update check yet.
