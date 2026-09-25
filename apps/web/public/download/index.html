@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Install Loohar POS</title>
+<link rel="icon" href="/favicon/favicon.ico" />
+<style>
+  :root {
+    --navy: #0A1929;
+    --cyan: #00D9FF;
+    --soft: #F8FAFC;
+    --dark-gray: #111827;
+    --light-gray: #9CA3AF;
+    --line: #E2E8F0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--soft);
+    color: var(--dark-gray);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; }
+  .mark {
+    width: 36px; height: 36px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--navy), var(--cyan));
+  }
+  .brand { font-weight: 800; letter-spacing: -0.02em; color: var(--navy); font-size: 20px; }
+  h1 { font-size: 28px; line-height: 1.25; letter-spacing: -0.02em; margin: 0 0 8px; color: var(--navy); }
+  .lede { color: #475569; margin: 0 0 28px; }
+  .app {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; margin-bottom: 14px;
+  }
+  .app h2 { margin: 0 0 4px; font-size: 18px; color: var(--navy); }
+  .app p { margin: 0 0 14px; color: #475569; font-size: 14px; }
+  a.get {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--navy); color: #fff; text-decoration: none;
+    padding: 11px 18px; border-radius: 9px; font-weight: 700; font-size: 15px;
+  }
+  a.get:hover { background: #12263c; }
+  .meta { margin-top: 10px; font-size: 12px; color: var(--light-gray); font-variant-numeric: tabular-nums; }
+  ol { padding-left: 20px; }
+  li { margin-bottom: 10px; }
+  .note {
+    border-left: 3px solid var(--cyan); background: #fff;
+    padding: 14px 16px; border-radius: 0 10px 10px 0; margin: 22px 0;
+    font-size: 14px; color: #334155;
+  }
+  h3 { color: var(--navy); margin: 32px 0 10px; font-size: 17px; }
+  footer { margin-top: 44px; font-size: 13px; color: var(--light-gray); }
+  @media (prefers-color-scheme: dark) {
+    :root { --soft: #0b1220; --dark-gray: #e5e7eb; --line: #1e293b; }
+    body { background: var(--soft); color: var(--dark-gray); }
+    .app, .note { background: #111a2b; }
+    h1, h2, h3, .brand { color: #e8f6ff; }
+    .lede, .app p, .note { color: #a8b7cc; }
+    a.get { background: var(--cyan); color: #06121f; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="mark"></div><div class="brand">Loohar</div></header>
+
+  <h1>Install Loohar on your Android device</h1>
+  <p class="lede">
+    Download the app, open it, and allow the install. It takes about a minute. These apps are
+    distributed by Loohar directly rather than through the Play Store.
+  </p>
+
+  <div class="app">
+    <h2>Loohar POS</h2>
+    <p>The register: take orders, take payment, open and close the till.</p>
+    <a class="get" href="/download/loohar-pos.apk" download>Download Loohar POS</a>
+    <div class="meta" data-meta-for="loohar-pos.apk"></div>
+  </div>
+
+  <div class="app">
+    <h2>Loohar Driver</h2>
+    <p>For your delivery drivers: assigned runs, navigation and drop-off.</p>
+    <a class="get" href="/download/loohar-driver.apk" download>Download Loohar Driver</a>
+    <div class="meta" data-meta-for="loohar-driver.apk"></div>
+  </div>
+
+  <div class="app">
+    <h2>Loohar Restaurant</h2>
+    <p>Day-to-day management: orders, menu, staff and reporting.</p>
+    <a class="get" href="/download/loohar-restaurant.apk" download>Download Loohar Restaurant</a>
+    <div class="meta" data-meta-for="loohar-restaurant.apk"></div>
+  </div>
+
+  <h3>Installing</h3>
+  <ol>
+    <li>Tap <strong>Download</strong> above on the Android device itself.</li>
+    <li>Open the downloaded file. Android will say it cannot install from this source.</li>
+    <li>Tap <strong>Settings</strong> and turn on installs for the app you downloaded with, usually
+      Chrome or Files. Then go back and tap <strong>Install</strong>.</li>
+    <li>Open the app and sign in with your Loohar account.</li>
+  </ol>
+
+  <div class="note">
+    <strong>The “unsafe” or “unknown source” warning is expected.</strong> Android shows it for
+    every app installed outside the Play Store. It is not a sign that anything is wrong with the
+    app. Only ever install a Loohar app downloaded from <strong>loohar.com</strong>.
+  </div>
+
+  <h3>Setting up the register</h3>
+  <ol>
+    <li>Sign in as the owner or a manager the first time.</li>
+    <li>The POS asks to register this device as a terminal. Give it a name such as
+      “Front counter” and register it.</li>
+    <li>Unlock the register with the cashier PIN, then open a shift with the opening cash.</li>
+  </ol>
+
+  <h3>Requirements</h3>
+  <p style="color:#475569;font-size:14px;margin-top:0">
+    Android 7.0 or newer, and an internet connection. Roughly 5&nbsp;MB per app.
+    iPhone and iPad are not supported yet.
+  </p>
+
+  <footer>
+    Trouble installing? Email <a href="mailto:support@loohar.com">support@loohar.com</a>.
+  </footer>
+</div>
+
+<script>
+  // Build details come from each APK's own manifest file, written at build time, so this page can
+  // never claim a version that was not actually published beside it.
+  document.querySelectorAll("[data-meta-for]").forEach(async (node) => {
+    const file = node.getAttribute("data-meta-for");
+    try {
+      const response = await fetch(`/download/${file}.json`, { cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      const meta = await response.json();
+      const size = meta.bytes ? `${(meta.bytes / 1048576).toFixed(1)} MB` : "";
+      node.textContent = [`Version ${meta.versionName || "?"}`, size, `Built ${meta.builtAt ? meta.builtAt.slice(0, 10) : "?"}`]
+        .filter(Boolean).join(" · ");
+    } catch {
+      node.textContent = "";
+    }
+  });
+</script>
+</body>
+</html>
