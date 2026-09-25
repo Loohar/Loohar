@@ -2,9 +2,18 @@
 //
 //   node scripts/build-android-apps.mjs --app pos|driver|restaurant|all --env staging|production [--release]
 //
-// Debug builds produce an APK that can be installed on an emulator or a device with USB debugging.
-// --release produces an AAB for Play, which needs an upload keystore (owner action) and is refused
-// here unless one is configured, so an unsigned artifact can never be mistaken for a releasable one.
+// Debug builds produce an APK for an emulator or a device with USB debugging.
+//
+// --release produces a SIGNED APK that a restaurant can download and install directly. This is the
+// downloadable POS: it needs no Google Play account and no licence, only a signing key, because
+// Android installs any correctly signed APK once the device allows installs from that source.
+//
+// --bundle produces an AAB instead, which is the format Google Play requires and is useless outside
+// it. That path additionally needs a Play developer account, which is an owner action.
+//
+// Signing comes from LOOHAR_ANDROID_KEYSTORE_PROPERTIES (see scripts/android-keystore.mjs). A
+// release build without it is refused rather than shipped unsigned, because an unsigned artifact
+// looks like a real one and cannot be installed.
 //
 // Everything this script needs is installed except the Android SDK licence, which must be accepted
 // by a person. The script checks for it first and prints the exact command rather than failing deep
@@ -21,6 +30,7 @@ function argument(name, fallback) {
   return index >= 0 ? process.argv[index + 1] : fallback;
 }
 const release = process.argv.includes("--release");
+const bundle = process.argv.includes("--bundle");
 const environment = argument("env", "staging");
 const selected = argument("app", "all");
 const apps = selected === "all" ? APPS : [selected];
@@ -42,8 +52,29 @@ const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || 
   join(process.env.HOME || "", "Library/Android/sdk")
 ]);
 
+// The newest installed build-tools, so apksigner can be found without hard-coding a version.
+function buildToolsVersion(sdkRoot) {
+  try {
+    return readdirSync(join(sdkRoot, "build-tools")).sort().pop() || "";
+  } catch {
+    return "";
+  }
+}
+
 const problems = [];
 if (!javaHome) problems.push("JDK 21 not found. Install it with: brew install openjdk@21");
+if ((release || bundle) && !process.env.LOOHAR_ANDROID_KEYSTORE_PROPERTIES) {
+  problems.push([
+    "A release build must be signed, or it cannot be installed.",
+    "Create the signing key once:",
+    "",
+    "  node scripts/android-keystore.mjs",
+    "",
+    "then point the build at it:",
+    "",
+    "  export LOOHAR_ANDROID_KEYSTORE_PROPERTIES=$HOME/.loohar/android/keystore.properties"
+  ].join("\n"));
+}
 if (!androidHome) problems.push("Android SDK not found. Install it with: brew install --cask android-commandlinetools");
 
 // The licence is recorded as files under <sdk>/licenses. Only a person may accept it.
@@ -79,20 +110,15 @@ for (const app of apps) {
   console.log(`\n== Loohar ${app} (Android, ${environment}) ==`);
   run("node", ["scripts/build-native-apps.mjs", "--app", app, "--env", environment], { cwd: root });
 
-  const keystore = process.env.LOOHAR_ANDROID_KEYSTORE || "";
-  if (release && !keystore) {
-    console.error("A release AAB needs an upload keystore. Set LOOHAR_ANDROID_KEYSTORE (owner action).");
-    process.exit(2);
-  }
-  const task = release ? "bundleRelease" : "assembleDebug";
+  const task = bundle ? "bundleRelease" : (release ? "assembleRelease" : "assembleDebug");
   run("./gradlew", [task, "--no-daemon"], {
     cwd: join(appDir, "android"),
     env: { ...process.env, JAVA_HOME: javaHome, ANDROID_HOME: androidHome, ANDROID_SDK_ROOT: androidHome }
   });
 
-  const outputs = release
+  const outputs = bundle
     ? join(appDir, "android/app/build/outputs/bundle/release")
-    : join(appDir, "android/app/build/outputs/apk/debug");
+    : join(appDir, "android/app/build/outputs/apk", release ? "release" : "debug");
   const artifacts = existsSync(outputs) ? readdirSync(outputs).filter((name) => /\.(apk|aab)$/.test(name)) : [];
   let sha = "";
   try {
@@ -101,7 +127,22 @@ for (const app of apps) {
     sha = "unknown";
   }
   for (const artifact of artifacts) {
-    console.log(`Built ${join(outputs, artifact)}  (${environment}, ${sha})`);
+    const path = join(outputs, artifact);
+    // An unsigned artifact cannot be installed, so verify rather than trust the build.
+    if (release || bundle) {
+      const apksigner = join(androidHome, `build-tools/${buildToolsVersion(androidHome)}/apksigner`);
+      const verified = spawnSync(apksigner, ["verify", "--print-certs", path], { encoding: "utf8" });
+      if (verified.status !== 0) {
+        console.error(`Refusing to report ${artifact} as built: it is not correctly signed.`);
+        console.error(String(verified.stderr || verified.stdout).slice(0, 400));
+        process.exit(1);
+      }
+      const digest = (String(verified.stdout).match(/SHA-256 digest: (\S+)/) || [])[1] || "unknown";
+      console.log(`Built ${path}  (${environment}, ${sha})`);
+      console.log(`      signed, certificate SHA-256 ${digest}`);
+    } else {
+      console.log(`Built ${path}  (${environment}, ${sha})`);
+    }
   }
   if (!artifacts.length) console.warn(`No artifact found in ${outputs}.`);
 }
