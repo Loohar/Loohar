@@ -1,6 +1,34 @@
 apply plugin: 'com.android.application'
 
+// Release signing. The keystore and its passwords live OUTSIDE this repository — a committed
+// keystore is a compromised keystore — and are found through LOOHAR_ANDROID_KEYSTORE_PROPERTIES,
+// which points at a properties file written by scripts/android-keystore.mjs.
+//
+// When that variable is absent the release build is left unsigned rather than failing, so a
+// developer can still run `assembleRelease` locally; the build script refuses to publish an
+// unsigned artifact, which is where that check belongs.
+def looharKeystoreProperties = new Properties()
+def looharHasKeystore = false
+def looharKeystorePath = System.getenv("LOOHAR_ANDROID_KEYSTORE_PROPERTIES")
+if (looharKeystorePath) {
+    def looharKeystoreFile = file(looharKeystorePath)
+    if (looharKeystoreFile.exists()) {
+        looharKeystoreFile.withInputStream { looharKeystoreProperties.load(it) }
+        looharHasKeystore = true
+    }
+}
+
 android {
+    signingConfigs {
+        if (looharHasKeystore) {
+            release {
+                storeFile file(looharKeystoreProperties['storeFile'])
+                storePassword looharKeystoreProperties['storePassword']
+                keyAlias looharKeystoreProperties['keyAlias']
+                keyPassword looharKeystoreProperties['keyPassword']
+            }
+        }
+    }
     namespace = "com.loohar.driver"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
@@ -18,6 +46,9 @@ android {
     }
     buildTypes {
         release {
+            if (looharHasKeystore) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
