@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-25T00:00:00Z",
+  "updatedAt": "2026-09-24T19:00:00Z",
   "updatedBy": "claude-code autonomous program",
   "repository": "Loohar/Loohar",
   "environments": {
@@ -811,7 +811,7 @@
     "L-63": {
       "title": "Android APK/AAB build pipeline",
       "priority": "P1",
-      "status": "DONE — signed release APKs; AAB path unused by owner decision",
+      "status": "DONE for debug APKs — release AAB still owner-blocked",
       "sha": "3001f9e",
       "note": "Owner accepted all 7 Android SDK licences on 2026-09-21. platform-tools, platforms;android-36 and build-tools;36.0.0 installed. npm run build:android -- --app all --env staging produces three 5.9MB debug APKs, verified distinct by SHA-256, package id and label, each carrying commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. A release AAB is still refused without a Google Play upload keystore, so an unsigned artifact cannot be mistaken for a releasable one."
     },
@@ -950,6 +950,7 @@
   },
   "humanActionsRequired": [
     "Supabase: re-authenticate the Supabase MCP (/mcp → supabase). Unblocks backup/PITR evidence (L-11) and the staging/production project mapping.",
+    "Apple Developer Program and Google Play Console accounts for signed app builds and store release.",
     "Stripe TEST-mode Connect onboarding for a staging tenant (card, Terminal and refund certification).",
     "Physical Stripe Terminal reader for card-present acceptance.",
     "Geocoding provider decision (delivery zones); Colorado category guidance decision."
@@ -1123,15 +1124,14 @@
   },
   "mainMergeGate": "CLEARED 2026-09-23. main is 15a1f14 and production runs the same SHA.",
   "nativeApps": {
-    "pos": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, distributed directly as a signed APK; no store listing by owner decision",
-    "driver": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, distributed directly as a signed APK; no store listing by owner decision",
-    "restaurant": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, distributed directly as a signed APK; no store listing by owner decision",
+    "pos": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
+    "driver": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
+    "restaurant": "iOS SIMULATOR + UI CERTIFIED; Android EMULATOR + UI CERTIFIED (debug APK, Pixel 7 / Android 16 arm64); no physical device, nothing store-signed",
     "posDevice": "DESIGNED, NOT STARTED",
     "uiAutomation": "PASS on both platforms at 3001f9e — iOS 9/9 (XCUITest, apps/mobile/uitests via XcodeGen) and Android 18/18 (scripts/test-android-ui.mjs, DOM read over the Chrome DevTools Protocol). Each app is checked for launch, routing to its own sign-in screen, a masked password field that accepts typing, and its own live-API indicator reading Connected from a real request. The Android suite was negative-controlled with emulator airplane mode, which failed the live-API check as it should.",
     "published": "Nothing signed, submitted or published",
     "androidToolchain": "Android SDK licences accepted by the owner 2026-09-21 (all 7). platform-tools, platforms;android-36, build-tools;36.0.0, emulator and system-images;android-36;google_apis;arm64-v8a installed. AVD loohar-cert (Pixel 7). JDK 21 at /opt/homebrew/opt/openjdk@21.",
-    "androidArtifacts": "Three debug APKs built at 8ec80c1, 5.9MB each: com.loohar.pos, com.loohar.driver, com.loohar.restaurant. Verified distinct by SHA-256, package id and label. Every bundle carries commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. Release AAB still refused: needs a Google Play upload keystore (owner).",
-    "distribution": "DIRECT INSTALL ONLY by owner decision 2026-09-25. Signed release APKs from scripts/build-android-apps.mjs --release, signing key at ~/.loohar/android/ (outside Git). No store distribution on either platform."
+    "androidArtifacts": "Three debug APKs built at 8ec80c1, 5.9MB each: com.loohar.pos, com.loohar.driver, com.loohar.restaurant. Verified distinct by SHA-256, package id and label. Every bundle carries commitSha 8ec80c14e168, environment staging, the staging API origin and no production origin. Release AAB still refused: needs a Google Play upload keystore (owner)."
   },
   "operatingDirective": "docs/project-control/LOOHAR_OPERATING_DIRECTIVE.md — owner doctrine: product identity, 0% Loohar transaction fee principle, POS responsiveness, priority order, release engineering.",
   "ownerActionsCompleted": [
@@ -1145,8 +1145,5 @@
     "migrations": "3 pending, all additive; the MFA reset UPDATE matches no production rows because production code has no MFA write path",
     "cardPayments": "OUT OF SCOPE by owner decision 2026-09-23; fails closed without merchant onboarding",
     "blockedOn": "production API deploy refused by the automated permission classifier; Vercel loohar scope inaccessible"
-  },
-  "ownerDecisions": [
-    "2026-09-25 — No Apple Developer Program and no Google Play account. Loohar mobile apps are distributed directly as signed Android APKs, which needs no developer account or licence. Consequence, accepted: iOS cannot be installed on physical hardware and stays simulator-only; there will be no App Store or Play Store listing. Closed decision — not to be raised again."
-  ]
+  }
 }

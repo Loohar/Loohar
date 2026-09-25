@@ -30,15 +30,10 @@ You accepted all 7 licences. `platform-tools`, `platforms;android-36` and `build
 installed, three debug APKs are built, and all three apps now pass UI certification on an emulator
 (18/18). Nothing further is needed here. What remains for Android is the Play Store path in item 4.
 
-## ~~4. Apple Developer Program and Google Play Console~~ — DECLINED 2026-09-25
+## 4. Apple Developer Program and Google Play Console
 
-The owner decided against both. Loohar mobile apps are distributed **directly** as signed Android
-APKs, which needs no developer account and no licence. This is a closed decision and is not to be
-raised again.
-
-Accepted consequences: there will be no App Store or Play Store listing, and iOS cannot be installed
-on physical hardware, so the iOS apps remain simulator-only. See
-`docs/pos/LOOHAR_POS_ANDROID_INSTALL.md` for the delivery path that is in use.
+Needed for signed device builds, TestFlight, internal distribution and store release. Enrolment
+takes days, so starting early matters. iOS simulator builds already work without it.
 
 ## 5. Stripe TEST Connect onboarding (~2 minutes)
 
