@@ -100,6 +100,8 @@ import { POS_OFFLINE_SYNC_STATUS, posOfflineRecordsNeedingReview } from "../../s
 import { planLimitSummary } from "../../shared/planEntitlements.js";
 import { normalizedPosError, posCanManageSubscription } from "./shared/posErrorMessage.js";
 import { otpauthQrDataUrl } from "./shared/otpauthQr.js";
+import { checkForUpdate, dismissUpdate } from "./shared/nativeAppUpdate.js";
+import { isNativeApp as isNativeAppShell } from "./shared/nativeApp.js";
 
 const platformNavItems = [
   { id: "admin", label: "Master Admin", icon: Shield },
@@ -15445,6 +15447,51 @@ function DiscoveryPage({ apiOnline }) {
           </section>
         )}
       </main>
+    </div>
+  );
+}
+
+// Loohar's Android apps are installed directly rather than from a store, so nothing would otherwise
+// tell a restaurant that a newer build exists. This is the whole of that: a dismissible line at the
+// bottom of the screen that opens the download. It never blocks anything, never auto-installs, and
+// is invisible in a browser.
+export function NativeUpdateNotice() {
+  const [update, setUpdate] = useState(null);
+
+  useEffect(() => {
+    if (!isNativeAppShell()) return undefined;
+    let cancelled = false;
+    const look = async () => {
+      try {
+        const response = await fetch("/version.json", { cache: "no-store" });
+        const installed = await response.json();
+        const found = await checkForUpdate({ installed });
+        if (!cancelled) setUpdate(found);
+      } catch {
+        // Never surfaces. A till mid-order must not learn about a failed update check.
+      }
+    };
+    look();
+    // Tills stay open for days, so a long-running app would otherwise never look again.
+    const timer = window.setInterval(look, 6 * 60 * 60 * 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  if (!update) return null;
+  return (
+    <div className="loohar-update-notice" role="status">
+      <span>
+        <strong>Update available</strong>
+        {update.versionName ? ` — version ${update.versionName}` : ""}
+        {update.bytes ? ` (${(update.bytes / 1048576).toFixed(1)} MB)` : ""}
+      </span>
+      <span className="loohar-update-actions">
+        {/* Android installs the downloaded file; an app cannot replace itself silently, by design. */}
+        <a href={update.url} rel="noreferrer">Download</a>
+        <button type="button" onClick={() => { dismissUpdate(update.versionCode); setUpdate(null); }}>
+          Not now
+        </button>
+      </span>
     </div>
   );
 }

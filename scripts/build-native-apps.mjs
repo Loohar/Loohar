@@ -9,7 +9,7 @@
 // app itself and the POS would believe the API is offline. The API must also run with
 // ALLOW_NATIVE_APP_ORIGINS=true (see apps/api/src/config/corsPolicy.js).
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ENVIRONMENTS = {
@@ -72,9 +72,23 @@ for (const app of apps) {
       LOOHAR_BUILD_ENVIRONMENT: environment,
       VITE_API_URL: `${apiOrigin}/api`,
       VITE_API_HEALTH_URL: `${apiOrigin}/health`,
-      VITE_REALTIME_URL: apiOrigin
+      VITE_REALTIME_URL: apiOrigin,
+      // Passed through from the Android build so the bundle knows which build it belongs to.
+      LOOHAR_APP_PACKAGE: process.env.LOOHAR_APP_PACKAGE || `com.loohar.${app}`,
+      LOOHAR_VERSION_CODE: process.env.LOOHAR_VERSION_CODE || "",
+      LOOHAR_VERSION_NAME: process.env.LOOHAR_VERSION_NAME || ""
     }
   });
+  // apps/web/public holds the published APKs so loohar.com can serve them, and Vite copies
+  // everything in public/ into the build. Left alone, each app would ship a copy of all three APKs
+  // inside itself — 4.9 MB became 18.8 MB — and every release would compound it. The download page
+  // belongs on the website, never inside an installed app.
+  const bundledDownloads = join(outDir, "download");
+  if (existsSync(bundledDownloads)) {
+    rmSync(bundledDownloads, { recursive: true, force: true });
+    console.log("Removed the website download directory from the app bundle.");
+  }
+
   const platforms = ["ios", "android"].filter((platform) => existsSync(join(appDir, platform)));
   if (platforms.length) {
     run("npx", ["cap", "sync"], { cwd: appDir });

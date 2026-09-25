@@ -5929,3 +5929,39 @@ html.loohar-native body::before {
   z-index: 100;
   pointer-events: none;
 }
+
+/* Update notice for the directly-installed Android apps. Anchored to the bottom and deliberately
+   compact: a till mid-order must never have its controls covered by a version announcement. */
+.loohar-update-notice {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #0A1929;
+  color: #F8FAFC;
+  box-shadow: 0 10px 30px rgba(10, 25, 41, 0.28);
+  font-size: 14px;
+}
+.loohar-update-notice strong { color: #00D9FF; }
+.loohar-update-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.loohar-update-notice a,
+.loohar-update-notice button {
+  font: inherit;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 8px 14px;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+}
+.loohar-update-notice a { background: #00D9FF; color: #06121f; }
+.loohar-update-notice button { background: transparent; color: #9CA3AF; }
+.loohar-update-notice button:hover { color: #F8FAFC; }

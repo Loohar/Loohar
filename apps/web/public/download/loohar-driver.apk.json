@@ -1,11 +1,11 @@
 {
   "app": "driver",
   "package": "com.loohar.driver",
-  "versionName": "1.0",
-  "versionCode": "1",
+  "versionName": "1.0.203",
+  "versionCode": "203",
   "environment": "production",
-  "commitSha": "e8cd58947edb706fd37b8688ea5f4f715b7b3aaf",
+  "commitSha": "6884670459692acce33f030e192c9cb216e273d1",
   "certificateSha256": "7c4dac2c6a3a0745aa6776268d6a1e88e5a17d21fcd587f8864e28e77602df42",
-  "bytes": 5166068,
-  "builtAt": "2026-09-25T18:13:24.479Z"
+  "bytes": 5164637,
+  "builtAt": "2026-09-25T18:28:24.094Z"
 }

@@ -7,6 +7,13 @@ apply plugin: 'com.android.application'
 // When that variable is absent the release build is left unsigned rather than failing, so a
 // developer can still run `assembleRelease` locally; the build script refuses to publish an
 // unsigned artifact, which is where that check belongs.
+// Every build used to ship versionCode 1. Android decides what counts as an update by comparing
+// versionCode, so identical codes meant "newer version" had no meaning and an installer had no
+// basis to refuse a downgrade. These come from the build, which derives them from the commit
+// history so they only ever increase.
+def looharVersionCode = (System.getenv("LOOHAR_VERSION_CODE") ?: "1").toInteger()
+def looharVersionName = System.getenv("LOOHAR_VERSION_NAME") ?: "1.0"
+
 def looharKeystoreProperties = new Properties()
 def looharHasKeystore = false
 def looharKeystorePath = System.getenv("LOOHAR_ANDROID_KEYSTORE_PROPERTIES")
@@ -35,8 +42,8 @@ android {
         applicationId "com.loohar.driver"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode looharVersionCode
+        versionName looharVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
